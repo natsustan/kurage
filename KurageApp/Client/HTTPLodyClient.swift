@@ -217,8 +217,12 @@ final class HTTPLodyClient: LodyClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             throw LodyClientError.unreachable
         }
+        try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw LodyClientError.signInFailed }
         return (http.statusCode, data)
     }

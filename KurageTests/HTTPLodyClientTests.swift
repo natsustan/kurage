@@ -59,6 +59,36 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test func cancellingInFlightRequestThrowsCancellation() async throws {
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        HangingAuthURLProtocol.onStart = { _ = continuation.yield(()) }
+        defer { HangingAuthURLProtocol.onStart = nil }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [HangingAuthURLProtocol.self]
+        let client = HTTPLodyClient(
+            session: URLSession(configuration: configuration),
+            tokenStore: MemoryAuthTokenStore(),
+            baseURL: URL(string: "https://backend.lody.ai")!
+        )
+
+        let authorization = DeviceAuthorization(
+            userCode: "ABCD-EFGH",
+            verificationURL: URL(string: "https://lody.ai/device")!,
+            deviceCode: "device-1",
+            expiresIn: 30,
+            interval: 0.01
+        )
+        let task = Task { try await client.finishDeviceAuthorization(authorization) }
+        var iterator = started.makeAsyncIterator()
+        await iterator.next()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+    }
+
     @Test func restoreSessionReadsBearerSession() async {
         let store = MemoryAuthTokenStore()
         #expect(store.write("session-token"))
@@ -238,6 +268,18 @@ private final class AuthURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didLoad: result.1)
         client?.urlProtocolDidFinishLoading(self)
     }
+
+    override func stopLoading() {}
+}
+
+private final class HangingAuthURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var onStart: (@Sendable () -> Void)?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() { Self.onStart?() }
 
     override func stopLoading() {}
 }
