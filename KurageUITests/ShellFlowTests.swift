@@ -10,12 +10,13 @@ final class ShellFlowTests: XCTestCase {
         let connect = app.buttons["sign-in-button"]
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["See running sessions when you step away."].exists)
-        XCTAssertTrue(app.staticTexts["Connect Lody Cloud"].exists)
+        XCTAssertEqual(connect.label, "Connect Lody Cloud")
         attachScreen(app, name: "sign-in")
         tap(connect)
 
         let session = app.descendants(matching: .any)["session-session-tests"]
         XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.state, .runningForeground)
         XCTAssertTrue(app.staticTexts["fix flaky tests"].exists)
         XCTAssertTrue(app.staticTexts["review the PR"].exists)
         attachScreen(app, name: "sessions")

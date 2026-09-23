@@ -62,7 +62,9 @@ final class AppModel {
             do {
                 let authorization = try await client.beginDeviceAuthorization()
                 deviceAuthorization = authorization
-                open(authorization.verificationURL)
+                if client.requiresExternalAuthorization {
+                    open(authorization.verificationURL)
+                }
                 try await client.finishDeviceAuthorization(authorization)
                 account = client.account
                 deviceAuthorization = nil
@@ -82,7 +84,8 @@ final class AppModel {
     }
 
     func reopenAuthorization(open: @MainActor (URL) -> Void) {
-        guard let url = deviceAuthorization?.verificationURL else { return }
+        guard client.requiresExternalAuthorization,
+              let url = deviceAuthorization?.verificationURL else { return }
         open(url)
     }
 

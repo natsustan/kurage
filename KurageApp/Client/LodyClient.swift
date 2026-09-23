@@ -7,6 +7,7 @@ import Foundation
 @MainActor
 protocol LodyClient: AnyObject {
     var account: Account? { get }
+    var requiresExternalAuthorization: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
@@ -21,4 +22,8 @@ protocol LodyClient: AnyObject {
         requestID: PermissionPrompt.ID,
         sessionID: SessionSummary.ID
     ) async throws
+}
+
+extension LodyClient {
+    var requiresExternalAuthorization: Bool { true }
 }
