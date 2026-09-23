@@ -1,6 +1,6 @@
 import Foundation
 
-/// Device authorization against Lody better-auth. Session documents are not synced yet.
+/// Device authorization and read-only workspace session metadata from Lody.
 @MainActor
 final class HTTPLodyClient: LodyClient {
     private let session: URLSession
@@ -8,6 +8,7 @@ final class HTTPLodyClient: LodyClient {
     private let baseURL: URL
     private(set) var account: Account?
     private var authenticationGeneration = 0
+    private var sessionBridge: SessionSyncBridge?
 
     init(
         session: URLSession = .shared,
@@ -122,6 +123,7 @@ final class HTTPLodyClient: LodyClient {
         authenticationGeneration += 1
         tokenStore.delete()
         account = nil
+        sessionBridge = nil
     }
 
     func workspaces() async throws -> [WorkspaceSummary] {
@@ -138,22 +140,68 @@ final class HTTPLodyClient: LodyClient {
         }
     }
 
-    func sessions() async throws -> [SessionSummary] {
+    /// Exchanges the account credential for a short-lived token scoped to one workspace.
+    /// The session transport will consume this token; it is never persisted with the login token.
+    func streamsAccess(workspaceID: WorkspaceSummary.ID) async throws -> StreamsAccess {
+        guard account != nil, let accountToken = tokenStore.read() else {
+            throw LodyClientError.signedOut
+        }
+        let generation = authenticationGeneration
+        let data = try await send(
+            path: "api/loro-streams/token",
+            method: "POST",
+            json: StreamsTokenRequest(workspaceId: workspaceID),
+            token: accountToken
+        )
+        guard generation == authenticationGeneration, tokenStore.read() == accountToken else {
+            throw LodyClientError.signedOut
+        }
+        let response = try JSONDecoder().decode(StreamsTokenResponse.self, from: data)
+        guard !response.token.isEmpty, response.expiresIn > 0 else {
+            throw LodyClientError.notConnected
+        }
+        let gatewayBaseURL: URL?
+        if let rawURL = response.gatewayBaseUrl {
+            guard let url = URL(string: rawURL), url.scheme == "https", url.host != nil else {
+                throw LodyClientError.notConnected
+            }
+            gatewayBaseURL = url
+        } else {
+            gatewayBaseURL = nil
+        }
+        return StreamsAccess(
+            token: response.token,
+            expiresIn: response.expiresIn,
+            gatewayBaseURL: gatewayBaseURL,
+            shardHostSuffix: response.shardHostSuffix
+        )
+    }
+
+    func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        let bridge = sessionBridge ?? SessionSyncBridge()
+        sessionBridge = bridge
+        let sessions = try await bridge.sessions(workspaceID: workspaceID, access: access)
+        guard generation == authenticationGeneration, account != nil else {
+            throw LodyClientError.signedOut
+        }
+        return sessions
+    }
+
+    func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         throw LodyClientError.notConnected
     }
 
-    func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
-        throw LodyClientError.notConnected
-    }
-
-    func send(_ text: String, sessionID: SessionSummary.ID) async throws {
+    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
         throw LodyClientError.notConnected
     }
 
     func respond(
         _ decision: PermissionDecision,
         requestID: PermissionPrompt.ID,
-        sessionID: SessionSummary.ID
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
     ) async throws {
         throw LodyClientError.notConnected
     }
@@ -341,4 +389,22 @@ private struct OrganizationBody: Decodable {
 private struct OrganizationListBody: Decodable {
     var organizations: [OrganizationBody]?
     var data: [OrganizationBody]?
+}
+
+struct StreamsAccess: Equatable, Sendable {
+    let token: String
+    let expiresIn: TimeInterval
+    let gatewayBaseURL: URL?
+    let shardHostSuffix: String?
+}
+
+private struct StreamsTokenRequest: Encodable {
+    let workspaceId: String
+}
+
+private struct StreamsTokenResponse: Decodable {
+    let token: String
+    let expiresIn: TimeInterval
+    let gatewayBaseUrl: String?
+    let shardHostSuffix: String?
 }

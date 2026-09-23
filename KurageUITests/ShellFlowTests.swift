@@ -2,6 +2,36 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testSessionListModesAndMoreMenu() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        let connect = app.buttons["sign-in-button"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        tap(connect)
+
+        let projectHeading = app.staticTexts["kurage"]
+        XCTAssertTrue(projectHeading.waitForExistence(timeout: 5))
+
+        let more = app.buttons["more-options"]
+        tap(more)
+        let byTime = app.buttons["By Time"]
+        XCTAssertTrue(byTime.waitForExistence(timeout: 2))
+        tap(byTime)
+        XCTAssertFalse(projectHeading.exists)
+        XCTAssertTrue(app.descendants(matching: .any)["session-session-tests"].exists)
+
+        tap(more)
+        let byProject = app.buttons["By Project"]
+        XCTAssertTrue(byProject.waitForExistence(timeout: 2))
+        tap(byProject)
+        XCTAssertTrue(projectHeading.exists)
+
+        tap(more)
+        XCTAssertTrue(app.buttons["Sign out"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testSignInOpenSessionAllowAndSend() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -17,8 +47,8 @@ final class ShellFlowTests: XCTestCase {
         let session = app.descendants(matching: .any)["session-session-tests"]
         XCTAssertTrue(session.waitForExistence(timeout: 5))
         XCTAssertEqual(app.state, .runningForeground)
-        XCTAssertTrue(app.staticTexts["fix flaky tests"].exists)
-        XCTAssertTrue(app.staticTexts["review the PR"].exists)
+        XCTAssertTrue(session.label.contains("fix flaky tests"))
+        XCTAssertTrue(app.descendants(matching: .any)["session-session-pr"].exists)
         attachScreen(app, name: "sessions")
         tap(session)
 

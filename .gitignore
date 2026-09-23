@@ -5,3 +5,4 @@ DerivedData/
 xcuserdata/
 *.moved-aside
 .agents
+SessionBridge/node_modules/

@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@loro-dev/flock-wasm": "0.4.3",
+    "@loro-dev/streams-crdt": "0.15.1",
+    "loro-crdt": "1.15.1",
+    "loro-repo": "0.20.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

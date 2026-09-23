@@ -330,7 +330,7 @@ struct HTTPLodyClientTests {
         #expect(workspaces == [WorkspaceSummary(id: "org-1", name: "Spike", slug: "spike")])
     }
 
-    @Test func sessionsAreNotConnectedYet() async throws {
+    @Test func streamsAccessUsesSelectedWorkspaceAndAccountToken() async throws {
         let log = AuthRequestLog()
         log.install { request in
             switch request.url?.path {
@@ -340,6 +340,45 @@ struct HTTPLodyClientTests {
                 return (200, Data(#"{"access_token":"session-token"}"#.utf8))
             case "/api/auth/get-session":
                 return (200, Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8))
+            case "/api/loro-streams/token":
+                guard request.httpMethod == "POST",
+                      request.value(forHTTPHeaderField: "Authorization") == "Bearer session-token"
+                else { return (401, Data()) }
+                return (200, Data(#"{"token":"streams-token","expiresIn":300,"gatewayBaseUrl":"https://streams.lody.ai","shardHostSuffix":"streams.lody.ai"}"#.utf8))
+            default:
+                return (404, Data())
+            }
+        }
+        let client = HTTPLodyClient(
+            session: log.session,
+            tokenStore: MemoryAuthTokenStore(),
+            baseURL: log.baseURL
+        )
+        let authorization = try await client.beginDeviceAuthorization()
+        try await client.finishDeviceAuthorization(authorization)
+
+        let access = try await client.streamsAccess(workspaceID: "org-1")
+
+        #expect(access.token == "streams-token")
+        #expect(access.expiresIn == 300)
+        #expect(access.gatewayBaseURL == URL(string: "https://streams.lody.ai"))
+        #expect(access.shardHostSuffix == "streams.lody.ai")
+        let request = try JSONDecoder().decode(StreamsTokenProbe.self, from: try #require(log.bodies.last))
+        #expect(request.workspaceId == "org-1")
+    }
+
+    @Test func sessionsRequireStreamsGateway() async throws {
+        let log = AuthRequestLog()
+        log.install { request in
+            switch request.url?.path {
+            case "/api/auth/device/code":
+                return (200, Data(deviceCodeJSON.utf8))
+            case "/api/auth/device/token":
+                return (200, Data(#"{"access_token":"session-token"}"#.utf8))
+            case "/api/auth/get-session":
+                return (200, Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8))
+            case "/api/loro-streams/token":
+                return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
             default:
                 return (404, Data())
             }
@@ -352,7 +391,7 @@ struct HTTPLodyClientTests {
         let authorization = try await client.beginDeviceAuthorization()
         try await client.finishDeviceAuthorization(authorization)
         await #expect(throws: LodyClientError.notConnected) {
-            try await client.sessions()
+            try await client.sessions(workspaceID: "org-1")
         }
     }
 }
@@ -381,6 +420,10 @@ private struct DeviceCodeProbe: Decodable {
     enum CodingKeys: String, CodingKey {
         case clientID = "client_id"
     }
+}
+
+private struct StreamsTokenProbe: Decodable {
+    let workspaceId: String
 }
 
 private final class PollCount: @unchecked Sendable {

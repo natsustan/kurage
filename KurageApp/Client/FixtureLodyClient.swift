@@ -44,13 +44,15 @@ final class FixtureLodyClient: LodyClient {
         return [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")]
     }
 
-    func sessions() async throws -> [SessionSummary] {
+    func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
         try requireAccount()
+        try requireWorkspace(workspaceID)
         return records.map(\.summary)
     }
 
-    func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
+    func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         try requireAccount()
+        try requireWorkspace(workspaceID)
         let record = try record(sessionID)
         return Conversation(
             sessionID: record.summary.id,
@@ -59,8 +61,9 @@ final class FixtureLodyClient: LodyClient {
         )
     }
 
-    func send(_ text: String, sessionID: SessionSummary.ID) async throws {
+    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
         try requireAccount()
+        try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
 
@@ -74,9 +77,11 @@ final class FixtureLodyClient: LodyClient {
     func respond(
         _ decision: PermissionDecision,
         requestID: PermissionPrompt.ID,
-        sessionID: SessionSummary.ID
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
     ) async throws {
         try requireAccount()
+        try requireWorkspace(workspaceID)
         try update(sessionID) { record in
             guard record.permission?.id == requestID else {
                 throw LodyClientError.permissionMissing
@@ -93,6 +98,10 @@ final class FixtureLodyClient: LodyClient {
 
     private func requireAccount() throws {
         guard account != nil else { throw LodyClientError.signedOut }
+    }
+
+    private func requireWorkspace(_ workspaceID: WorkspaceSummary.ID) throws {
+        guard workspaceID == "ws-demo" else { throw LodyClientError.notConnected }
     }
 
     private func record(_ sessionID: SessionSummary.ID) throws -> SessionRecord {
@@ -132,7 +141,9 @@ extension SessionRecord {
                 title: "fix flaky tests",
                 agentName: "codex",
                 activity: .running,
-                preview: "Running npm test"
+                preview: "Running npm test",
+                projectID: "local:machine-1:kurage",
+                projectName: "kurage"
             ),
             turns: [
                 ConversationTurn(id: "tests-user", author: .user, text: "Run the tests again"),
@@ -150,7 +161,9 @@ extension SessionRecord {
                 title: "review the PR",
                 agentName: "claude",
                 activity: .idle,
-                preview: "Waiting for you"
+                preview: "Waiting for you",
+                projectID: "local:machine-1:prism",
+                projectName: "prism"
             ),
             turns: [
                 ConversationTurn(id: "pr-user", author: .user, text: "Look at this PR"),
