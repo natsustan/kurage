@@ -22,6 +22,7 @@ final class AppModel {
     private(set) var statusNote: StatusNote?
     private(set) var deviceAuthorization: DeviceAuthorization?
     private var signInTask: Task<Void, Never>?
+    private var authenticationGeneration = 0
 
     init(client: any LodyClient) {
         self.client = client
@@ -41,8 +42,11 @@ final class AppModel {
 
     /// Picks up a stored Lody session, or an account the fixture already holds.
     func adoptExistingAccount() async {
-        if account == nil {
-            account = await client.restoreSession()
+        if account == nil && signInTask == nil {
+            let generation = authenticationGeneration
+            let restored = await client.restoreSession()
+            guard generation == authenticationGeneration, signInTask == nil, account == nil else { return }
+            account = restored
         }
         guard account != nil else { return }
         await refreshWorkspaces()
@@ -51,6 +55,7 @@ final class AppModel {
 
     func connect(open: @escaping @MainActor (URL) -> Void) {
         guard signInTask == nil else { return }
+        authenticationGeneration += 1
         signInTask = Task {
             defer {
                 signInTask = nil
@@ -94,6 +99,7 @@ final class AppModel {
     }
 
     func signOut() {
+        authenticationGeneration += 1
         client.signOut()
         account = nil
         workspaces = []

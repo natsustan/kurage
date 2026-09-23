@@ -89,6 +89,86 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test func cancellingAccountLoadDoesNotPersistToken() async throws {
+        let store = MemoryAuthTokenStore()
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        DeferredAuthURLProtocol.onStart = { request in
+            switch request.request.url?.path {
+            case "/api/auth/device/token":
+                request.respond(status: 200, data: Data(#"{"access_token":"new-token"}"#.utf8))
+            case "/api/auth/get-session":
+                _ = continuation.yield(())
+            default:
+                request.respond(status: 404, data: Data())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let task = Task { try await client.finishDeviceAuthorization(testAuthorization) }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(store.read() == nil)
+        #expect(client.account == nil)
+    }
+
+    @Test(arguments: [200, 401])
+    func staleRestorationCannotReplaceNewSignIn(status: Int) async throws {
+        let store = MemoryAuthTokenStore()
+        #expect(store.write("old-token"))
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        let oldRequest = PendingAuthRequest()
+        DeferredAuthURLProtocol.onStart = { request in
+            switch request.request.url?.path {
+            case "/api/auth/device/code":
+                request.respond(status: 200, data: Data(deviceCodeJSON.utf8))
+            case "/api/auth/device/token":
+                request.respond(status: 200, data: Data(#"{"access_token":"new-token"}"#.utf8))
+            case "/api/auth/get-session":
+                if request.request.value(forHTTPHeaderField: "Authorization") == "Bearer old-token" {
+                    oldRequest.capture(request)
+                    _ = continuation.yield(())
+                } else {
+                    request.respond(status: 200, data: Data(#"{"user":{"email":"new@lody.ai"}}"#.utf8))
+                }
+            case "/api/auth/organization/list":
+                request.respond(status: 200, data: Data("[]".utf8))
+            default:
+                request.respond(status: 404, data: Data())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let model = AppModel(client: client)
+        let restoration = Task { await model.adoptExistingAccount() }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+
+        model.connect(open: { _ in })
+        for _ in 0..<100 {
+            if model.account == Account(email: "new@lody.ai") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.account == Account(email: "new@lody.ai"))
+        #expect(store.read() == "new-token")
+
+        let oldResponse = status == 200
+            ? Data(#"{"user":{"email":"old@lody.ai"}}"#.utf8)
+            : Data()
+        oldRequest.respond(status: status, data: oldResponse)
+        await restoration.value
+
+        #expect(model.account == Account(email: "new@lody.ai"))
+        #expect(client.account == Account(email: "new@lody.ai"))
+        #expect(store.read() == "new-token")
+    }
+
     @Test func restoreSessionReadsBearerSession() async {
         let store = MemoryAuthTokenStore()
         #expect(store.write("session-token"))
@@ -173,6 +253,20 @@ struct HTTPLodyClientTests {
 private let deviceCodeJSON = """
 {"device_code":"device-1","user_code":"ABCD-EFGH","verification_uri_complete":"https://backend.lody.ai/device?user_code=ABCD-EFGH","expires_in":30,"interval":0.01}
 """
+
+private let testAuthorization = DeviceAuthorization(
+    userCode: "ABCD-EFGH",
+    verificationURL: URL(string: "https://lody.ai/device")!,
+    deviceCode: "device-1",
+    expiresIn: 30,
+    interval: 0.01
+)
+
+private func deferredSession() -> URLSession {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [DeferredAuthURLProtocol.self]
+    return URLSession(configuration: configuration)
+}
 
 private struct DeviceCodeProbe: Decodable {
     var clientID: String
@@ -282,4 +376,46 @@ private final class HangingAuthURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() { Self.onStart?() }
 
     override func stopLoading() {}
+}
+
+private final class DeferredAuthURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var onStart: (@Sendable (DeferredAuthURLProtocol) -> Void)?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() { Self.onStart?(self) }
+
+    override func stopLoading() {}
+
+    func respond(status: Int, data: Data) {
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "https://backend.lody.ai")!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+private final class PendingAuthRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: DeferredAuthURLProtocol?
+
+    func capture(_ request: DeferredAuthURLProtocol) {
+        lock.lock()
+        self.request = request
+        lock.unlock()
+    }
+
+    func respond(status: Int, data: Data) {
+        lock.lock()
+        let request = self.request
+        lock.unlock()
+        request?.respond(status: status, data: data)
+    }
 }

@@ -7,6 +7,7 @@ final class HTTPLodyClient: LodyClient {
     private let tokenStore: any AuthTokenStore
     private let baseURL: URL
     private(set) var account: Account?
+    private var authenticationGeneration = 0
 
     init(
         session: URLSession = .shared,
@@ -19,6 +20,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization {
+        authenticationGeneration += 1
         let (_, data) = try await perform(
             path: "api/auth/device/code",
             method: "POST",
@@ -38,6 +40,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
+        authenticationGeneration += 1
         var interval = authorization.interval
         let deadline = Date().addingTimeInterval(authorization.expiresIn)
         while Date() < deadline {
@@ -59,8 +62,10 @@ final class HTTPLodyClient: LodyClient {
             )
             let body = try JSONDecoder().decode(DeviceTokenBody.self, from: data)
             if let token = body.accessToken, !token.isEmpty {
+                let loadedAccount = try await loadAccount(token: token)
+                try Task.checkCancellation()
                 guard tokenStore.write(token) else { throw LodyClientError.signInFailed }
-                account = try await loadAccount(token: token)
+                account = loadedAccount
                 return
             }
             switch body.error {
@@ -81,12 +86,14 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func restoreSession() async -> Account? {
+        let generation = authenticationGeneration
         guard let token = tokenStore.read(), !token.isEmpty else {
             account = nil
             return nil
         }
         do {
             let data = try await send(path: "api/auth/get-session", method: "GET", json: Optional<String>.none, token: token)
+            guard generation == authenticationGeneration, tokenStore.read() == token else { return nil }
             if data == Data("null".utf8) {
                 tokenStore.delete()
                 account = nil
@@ -102,15 +109,17 @@ final class HTTPLodyClient: LodyClient {
             account = restored
             return restored
         } catch LodyClientError.signedOut {
+            guard generation == authenticationGeneration, tokenStore.read() == token else { return nil }
             tokenStore.delete()
             account = nil
             return nil
         } catch {
-            return account
+            return generation == authenticationGeneration ? account : nil
         }
     }
 
     func signOut() {
+        authenticationGeneration += 1
         tokenStore.delete()
         account = nil
     }
