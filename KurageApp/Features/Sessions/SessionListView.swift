@@ -141,17 +141,27 @@ private struct SessionList: View {
 
     private func sessionLink(_ session: SessionSummary) -> some View {
         NavigationLink(value: session.id) {
-            Text(session.title)
-                .font(.body)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 28)
-                .padding(.vertical, 16)
-                .contentShape(Rectangle())
+            HStack(spacing: 8) {
+                if session.activity == .running {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 20, height: 20)
+                        .accessibilityHidden(true)
+                } else {
+                    Color.clear.frame(width: 20, height: 20)
+                }
+                Text(session.title)
+                    .font(.body)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 16)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(session.title)
+        .accessibilityValue(session.activity == .running ? Text("Running") : Text("Idle"))
         .accessibilityIdentifier("session-\(session.id)")
     }
 }

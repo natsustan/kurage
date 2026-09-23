@@ -43,6 +43,7 @@ final class HTTPLodyClient: LodyClient {
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
         authenticationGeneration += 1
         var interval = authorization.interval
+        var lastPollFailedToConnect = false
         let deadline = Date().addingTimeInterval(authorization.expiresIn)
         while Date() < deadline {
             let remaining = deadline.timeIntervalSinceNow
@@ -51,16 +52,28 @@ final class HTTPLodyClient: LodyClient {
             try Task.checkCancellation()
             if Date() >= deadline { break }
 
-            let (_, data) = try await perform(
-                path: "api/auth/device/token",
-                method: "POST",
-                json: DeviceTokenRequest(
-                    clientID: LodyEndpoints.deviceClientID,
-                    deviceCode: authorization.deviceCode
-                ),
-                token: nil,
-                acceptAnyStatus: true
-            )
+            let status: Int
+            let data: Data
+            do {
+                (status, data) = try await perform(
+                    path: "api/auth/device/token",
+                    method: "POST",
+                    json: DeviceTokenRequest(
+                        clientID: LodyEndpoints.deviceClientID,
+                        deviceCode: authorization.deviceCode
+                    ),
+                    token: nil,
+                    acceptAnyStatus: true
+                )
+            } catch LodyClientError.unreachable {
+                lastPollFailedToConnect = true
+                continue
+            }
+            if status >= 500 {
+                lastPollFailedToConnect = true
+                continue
+            }
+            lastPollFailedToConnect = false
             let body = try JSONDecoder().decode(DeviceTokenBody.self, from: data)
             if let token = body.accessToken, !token.isEmpty {
                 let loadedAccount = try await loadAccount(token: token)
@@ -83,7 +96,7 @@ final class HTTPLodyClient: LodyClient {
                 throw LodyClientError.signInFailed
             }
         }
-        throw LodyClientError.codeExpired
+        throw lastPollFailedToConnect ? LodyClientError.unreachable : LodyClientError.codeExpired
     }
 
     func restoreSession() async -> Account? {
@@ -178,11 +191,14 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
+        try Task.checkCancellation()
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
         let bridge = sessionBridge ?? SessionSyncBridge()
         sessionBridge = bridge
         let sessions = try await bridge.sessions(workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else {
             throw LodyClientError.signedOut
         }
@@ -228,6 +244,11 @@ final class HTTPLodyClient: LodyClient {
         acceptAnyStatus: Bool
     ) async throws -> (Int, Data) {
         let (status, data) = try await request(path: path, method: method, json: json, token: token)
+        if status >= 500 {
+            #if DEBUG
+            print("Kurage Lody HTTP failure: \(method) /\(path) status=\(status)")
+            #endif
+        }
         if acceptAnyStatus || (200..<300).contains(status) {
             return (status, data)
         }
@@ -277,6 +298,10 @@ final class HTTPLodyClient: LodyClient {
             if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
                 throw CancellationError()
             }
+            #if DEBUG
+            let networkError = error as NSError
+            print("Kurage Lody transport failure: \(method) /\(path) domain=\(networkError.domain) code=\(networkError.code)")
+            #endif
             throw LodyClientError.unreachable
         }
         try Task.checkCancellation()

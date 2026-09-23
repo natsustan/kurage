@@ -26,6 +26,8 @@ final class AppModel {
     private var signInTask: Task<Void, Never>?
     private var authenticationGeneration = 0
     private var sessionRefreshGeneration = 0
+    private var sessionRefreshTask: Task<[SessionSummary], Error>?
+    private var sessionRefreshWorkspaceID: WorkspaceSummary.ID?
 
     init(client: any LodyClient) {
         self.client = client
@@ -99,13 +101,12 @@ final class AppModel {
     func signOut() {
         signInTask?.cancel()
         authenticationGeneration += 1
+        cancelSessionRefresh()
         client.signOut()
         account = nil
         workspaces = []
         selectedWorkspaceID = nil
         sessions = []
-        sessionRefreshGeneration += 1
-        isRefreshingSessions = false
         statusNote = nil
     }
 
@@ -117,11 +118,13 @@ final class AppModel {
             guard isCurrentAuthentication(generation) else { return }
             workspaces = loaded
             if !loaded.contains(where: { $0.id == selectedWorkspaceID }) {
+                cancelSessionRefresh()
                 selectedWorkspaceID = loaded.first?.id
                 sessions = []
             }
         } catch {
             guard isCurrentAuthentication(generation) else { return }
+            cancelSessionRefresh()
             workspaces = []
             selectedWorkspaceID = nil
             sessions = []
@@ -132,29 +135,46 @@ final class AppModel {
     func selectWorkspace(_ workspaceID: WorkspaceSummary.ID) async {
         guard workspaces.contains(where: { $0.id == workspaceID }),
               selectedWorkspaceID != workspaceID else { return }
+        cancelSessionRefresh()
         selectedWorkspaceID = workspaceID
         sessions = []
         statusNote = nil
         await refreshSessions()
     }
 
-    func refreshSessions() async {
-        guard account != nil, let workspaceID = selectedWorkspaceID else { return }
+    func refreshSessions(restart: Bool = false) async {
+        guard !Task.isCancelled, account != nil, let workspaceID = selectedWorkspaceID else { return }
         let generation = authenticationGeneration
-        sessionRefreshGeneration += 1
+        if restart || (sessionRefreshTask != nil && sessionRefreshWorkspaceID != workspaceID) {
+            cancelSessionRefresh()
+        }
+        let refreshTask: Task<[SessionSummary], Error>
+        if let currentTask = sessionRefreshTask {
+            refreshTask = currentTask
+        } else {
+            sessionRefreshGeneration += 1
+            isRefreshingSessions = true
+            let client = self.client
+            refreshTask = Task { try await client.sessions(workspaceID: workspaceID) }
+            sessionRefreshTask = refreshTask
+            sessionRefreshWorkspaceID = workspaceID
+        }
         let refreshGeneration = sessionRefreshGeneration
-        isRefreshingSessions = true
         defer {
             if sessionRefreshGeneration == refreshGeneration {
+                sessionRefreshTask = nil
+                sessionRefreshWorkspaceID = nil
                 isRefreshingSessions = false
             }
         }
         do {
-            let loaded = try await client.sessions(workspaceID: workspaceID)
+            let loaded = try await refreshTask.value
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
                   sessionRefreshGeneration == refreshGeneration else { return }
             sessions = loaded
             statusNote = nil
+        } catch is CancellationError {
+            return
         } catch LodyClientError.notConnected {
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
                   sessionRefreshGeneration == refreshGeneration else { return }
@@ -175,9 +195,8 @@ final class AppModel {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         try await client.send(text, sessionID: sessionID, workspaceID: workspaceID)
-        if let sessions = try? await client.sessions(workspaceID: workspaceID),
-           isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
-            self.sessions = sessions
+        if isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
+            await refreshSessions(restart: true)
         }
     }
 
@@ -189,10 +208,17 @@ final class AppModel {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         try await client.respond(decision, requestID: requestID, sessionID: sessionID, workspaceID: workspaceID)
-        if let sessions = try? await client.sessions(workspaceID: workspaceID),
-           isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
-            self.sessions = sessions
+        if isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
+            await refreshSessions(restart: true)
         }
+    }
+
+    private func cancelSessionRefresh() {
+        sessionRefreshTask?.cancel()
+        sessionRefreshTask = nil
+        sessionRefreshWorkspaceID = nil
+        sessionRefreshGeneration += 1
+        isRefreshingSessions = false
     }
 
     private func isCurrentAuthentication(_ generation: Int) -> Bool {

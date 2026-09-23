@@ -8,8 +8,10 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     private let fetchHandler = StreamFetchHandler()
     private let webView: WKWebView
     private var loadTask: Task<Void, Error>?
+    private var pageNavigation: WKNavigation?
     private var navigationContinuation: CheckedContinuation<Void, Error>?
     private var isLoaded = false
+    private var loadGeneration = 0
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -26,7 +28,9 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
 
     func sessions(workspaceID: String, access: StreamsAccess) async throws -> [SessionSummary] {
         guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
+        try Task.checkCancellation()
         try await ensureLoaded()
+        try Task.checkCancellation()
         let result = try await webView.callAsyncJavaScript(
             "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL))",
             arguments: [
@@ -64,30 +68,59 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
                         return
                     }
                     navigationContinuation = continuation
-                    webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                    guard let navigation = webView.loadFileURL(
+                        url,
+                        allowingReadAccessTo: url.deletingLastPathComponent()
+                    ) else {
+                        navigationContinuation = nil
+                        continuation.resume(throwing: LodyClientError.notConnected)
+                        return
+                    }
+                    pageNavigation = navigation
                 }
             }
         }
+        let generation = loadGeneration
+        let task = loadTask
         do {
-            try await loadTask?.value
-            isLoaded = true
+            try await task?.value
+            guard generation == loadGeneration, isLoaded else {
+                throw LodyClientError.notConnected
+            }
         } catch {
-            loadTask = nil
+            if generation == loadGeneration {
+                loadTask = nil
+            }
             throw error
         }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        navigationContinuation?.resume()
+        guard navigation === pageNavigation, let continuation = navigationContinuation else { return }
+        isLoaded = true
         navigationContinuation = nil
+        continuation.resume()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        navigationContinuation?.resume(throwing: error)
-        navigationContinuation = nil
+        guard navigation === pageNavigation else { return }
+        invalidatePage(with: error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard navigation === pageNavigation else { return }
+        invalidatePage(with: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        invalidatePage(with: LodyClientError.notConnected)
+    }
+
+    private func invalidatePage(with error: Error) {
+        loadGeneration += 1
+        isLoaded = false
+        loadTask = nil
+        pageNavigation = nil
         navigationContinuation?.resume(throwing: error)
         navigationContinuation = nil
     }

@@ -59,6 +59,34 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test func deviceFlowRetriesDroppedTokenConnection() async throws {
+        let store = MemoryAuthTokenStore()
+        let polls = PollCount()
+        DeferredAuthURLProtocol.onStart = { request in
+            switch request.request.url?.path {
+            case "/api/auth/device/token":
+                polls.value += 1
+                if polls.value == 1 {
+                    request.fail(URLError(.networkConnectionLost))
+                } else {
+                    request.respond(status: 200, data: Data(#"{"access_token":"session-token"}"#.utf8))
+                }
+            case "/api/auth/get-session":
+                request.respond(status: 200, data: Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8))
+            default:
+                request.respond(status: 404, data: Data())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        try await client.finishDeviceAuthorization(testAuthorization)
+
+        #expect(polls.value == 2)
+        #expect(client.account == Account(email: "ada@lody.ai"))
+        #expect(store.read() == "session-token")
+    }
+
     @Test func cancellingInFlightRequestThrowsCancellation() async throws {
         let (started, continuation) = AsyncStream<Void>.makeStream()
         HangingAuthURLProtocol.onStart = { _ = continuation.yield(()) }
@@ -564,6 +592,10 @@ private final class DeferredAuthURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
+    }
+
+    func fail(_ error: Error) {
+        client?.urlProtocol(self, didFailWithError: error)
     }
 }
 
