@@ -1,0 +1,608 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153B4F2F19120EAF70238123 /* ConversationView.swift */; };
+		0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */; };
+		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
+		4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DECA865E619085D6495AE9 /* SignInView.swift */; };
+		731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */; };
+		7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9509B93A448677F2BA6F70 /* KurageApp.swift */; };
+		91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12912BB0B079CC40470DF3DC /* LodyModels.swift */; };
+		AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C39757158A6D291B6DF642 /* AuthTokenStore.swift */; };
+		B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */; };
+		B6F2FE2DDB58D20C08631D68 /* LodyEndpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */; };
+		C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */; };
+		C35151C7EE8619D3E22458FB /* LodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */; };
+		C614E10AF67B279394205AED /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */; };
+		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
+		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1CFAF6DBC42B9D28C0009A85 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DCA9EB984FDABC20A6A90413 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 916545DECCA9CB31B4D2CD75;
+			remoteInfo = Kurage;
+		};
+		5188644AAB4D2874E4279D1F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DCA9EB984FDABC20A6A90413 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 916545DECCA9CB31B4D2CD75;
+			remoteInfo = Kurage;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		12912BB0B079CC40470DF3DC /* LodyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyModels.swift; sourceTree = "<group>"; };
+		153B4F2F19120EAF70238123 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
+		1A83DD40C8A260803B91A452 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLodyClient.swift; sourceTree = "<group>"; };
+		2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellFlowTests.swift; sourceTree = "<group>"; };
+		2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLodyClientTests.swift; sourceTree = "<group>"; };
+		49C39757158A6D291B6DF642 /* AuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenStore.swift; sourceTree = "<group>"; };
+		5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClientTests.swift; sourceTree = "<group>"; };
+		627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyClient.swift; sourceTree = "<group>"; };
+		7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClient.swift; sourceTree = "<group>"; };
+		84497201224F3906A5EACF8A /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyEndpoints.swift; sourceTree = "<group>"; };
+		8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
+		91DECA865E619085D6495AE9 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
+		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		17C2C17D269499AF4A93B2C3 /* Conversation */ = {
+			isa = PBXGroup;
+			children = (
+				153B4F2F19120EAF70238123 /* ConversationView.swift */,
+			);
+			path = Conversation;
+			sourceTree = "<group>";
+		};
+		1950DEAE703DD1786CADF75B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				D8AB4457E0D00261BF02F78D /* Kurage.app */,
+				F29673DBA060CA471CBB7B12 /* KurageTests.xctest */,
+				627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		1F694F2C65A87B77E8DDDBC7 /* SignIn */ = {
+			isa = PBXGroup;
+			children = (
+				91DECA865E619085D6495AE9 /* SignInView.swift */,
+			);
+			path = SignIn;
+			sourceTree = "<group>";
+		};
+		33DDC15280666DDA3A90F842 /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
+		4066EC103822F26E6ECD3E47 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				84497201224F3906A5EACF8A /* AppModel.swift */,
+				1A83DD40C8A260803B91A452 /* RootView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		587BF2E19CD1BC1127CAD945 /* KurageApp */ = {
+			isa = PBXGroup;
+			children = (
+				4066EC103822F26E6ECD3E47 /* App */,
+				A2CC7796F76FBB2AF738BD85 /* Client */,
+				FD3F733F77DE39EA9D21F9F1 /* Features */,
+				CF9509B93A448677F2BA6F70 /* KurageApp.swift */,
+			);
+			path = KurageApp;
+			sourceTree = "<group>";
+		};
+		76D81568C25B69EFE26D8E9A = {
+			isa = PBXGroup;
+			children = (
+				587BF2E19CD1BC1127CAD945 /* KurageApp */,
+				B749D250F7F3622E43370F96 /* KurageTests */,
+				E987D242A0CEF1167D8F9DEE /* KurageUITests */,
+				1950DEAE703DD1786CADF75B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A2CC7796F76FBB2AF738BD85 /* Client */ = {
+			isa = PBXGroup;
+			children = (
+				49C39757158A6D291B6DF642 /* AuthTokenStore.swift */,
+				230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */,
+				7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */,
+				72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */,
+				8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */,
+				12912BB0B079CC40470DF3DC /* LodyModels.swift */,
+			);
+			path = Client;
+			sourceTree = "<group>";
+		};
+		B749D250F7F3622E43370F96 /* KurageTests */ = {
+			isa = PBXGroup;
+			children = (
+				2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */,
+				5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */,
+			);
+			path = KurageTests;
+			sourceTree = "<group>";
+		};
+		E987D242A0CEF1167D8F9DEE /* KurageUITests */ = {
+			isa = PBXGroup;
+			children = (
+				2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */,
+			);
+			path = KurageUITests;
+			sourceTree = "<group>";
+		};
+		FD3F733F77DE39EA9D21F9F1 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				17C2C17D269499AF4A93B2C3 /* Conversation */,
+				33DDC15280666DDA3A90F842 /* Sessions */,
+				1F694F2C65A87B77E8DDDBC7 /* SignIn */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		916545DECCA9CB31B4D2CD75 /* Kurage */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7258D20FF1D2A914AE99E5C4 /* Build configuration list for PBXNativeTarget "Kurage" */;
+			buildPhases = (
+				90346D40B824DFEA12785C56 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Kurage;
+			packageProductDependencies = (
+			);
+			productName = Kurage;
+			productReference = D8AB4457E0D00261BF02F78D /* Kurage.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AC0473877888F75F2515FBE6 /* KurageTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 33974E8728C71776E7C59974 /* Build configuration list for PBXNativeTarget "KurageTests" */;
+			buildPhases = (
+				C87042B03C2A48A31DBE5DC5 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EC871511AA16ED448AB84F85 /* PBXTargetDependency */,
+			);
+			name = KurageTests;
+			packageProductDependencies = (
+			);
+			productName = KurageTests;
+			productReference = F29673DBA060CA471CBB7B12 /* KurageTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		E7EEEE0E3B691F4E8C5560AC /* KurageUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4EDEACB62EE10C732AF23D65 /* Build configuration list for PBXNativeTarget "KurageUITests" */;
+			buildPhases = (
+				48772CC97E68FB05331648A0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F4753973FDF3C57EFC31665C /* PBXTargetDependency */,
+			);
+			name = KurageUITests;
+			packageProductDependencies = (
+			);
+			productName = KurageUITests;
+			productReference = 627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		DCA9EB984FDABC20A6A90413 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					916545DECCA9CB31B4D2CD75 = {
+						DevelopmentTeam = V6GTS74AND;
+						ProvisioningStyle = Automatic;
+					};
+					E7EEEE0E3B691F4E8C5560AC = {
+						TestTargetID = 916545DECCA9CB31B4D2CD75;
+					};
+				};
+			};
+			buildConfigurationList = 59D29E14E9F0B4A9D5850EE8 /* Build configuration list for PBXProject "Kurage" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 76D81568C25B69EFE26D8E9A;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 1950DEAE703DD1786CADF75B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				916545DECCA9CB31B4D2CD75 /* Kurage */,
+				AC0473877888F75F2515FBE6 /* KurageTests */,
+				E7EEEE0E3B691F4E8C5560AC /* KurageUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		48772CC97E68FB05331648A0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		90346D40B824DFEA12785C56 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				37374D0737827CAF63322595 /* AppModel.swift in Sources */,
+				AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */,
+				058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */,
+				731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */,
+				C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */,
+				7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */,
+				C35151C7EE8619D3E22458FB /* LodyClient.swift in Sources */,
+				B6F2FE2DDB58D20C08631D68 /* LodyEndpoints.swift in Sources */,
+				91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */,
+				E610F04E9116BF949CD86F67 /* RootView.swift in Sources */,
+				C614E10AF67B279394205AED /* SessionListView.swift in Sources */,
+				4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C87042B03C2A48A31DBE5DC5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */,
+				E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EC871511AA16ED448AB84F85 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 916545DECCA9CB31B4D2CD75 /* Kurage */;
+			targetProxy = 1CFAF6DBC42B9D28C0009A85 /* PBXContainerItemProxy */;
+		};
+		F4753973FDF3C57EFC31665C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 916545DECCA9CB31B4D2CD75 /* Kurage */;
+			targetProxy = 5188644AAB4D2874E4279D1F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0051F96817EDF71830AF95B5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = V6GTS74AND;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage;
+				PRODUCT_MODULE_NAME = Kurage;
+				PRODUCT_NAME = Kurage;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5A45467485656C2E813DD5EA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = V6GTS74AND;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage;
+				PRODUCT_MODULE_NAME = Kurage;
+				PRODUCT_NAME = Kurage;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6FC63EE66E661E17927FAE4C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Kurage;
+			};
+			name = Debug;
+		};
+		70ECA468097EEA5A2AC6A630 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kurage.app/Kurage";
+			};
+			name = Release;
+		};
+		8224E6674DAA81C66E0C4A8E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		8F4737411B7EE1F16A8F7DB4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Kurage.app/Kurage";
+			};
+			name = Debug;
+		};
+		95DE9238791F19000EE36F68 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Kurage;
+			};
+			name = Release;
+		};
+		D8B9EA50B93989D2ED53E447 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		33974E8728C71776E7C59974 /* Build configuration list for PBXNativeTarget "KurageTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8F4737411B7EE1F16A8F7DB4 /* Debug */,
+				70ECA468097EEA5A2AC6A630 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4EDEACB62EE10C732AF23D65 /* Build configuration list for PBXNativeTarget "KurageUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6FC63EE66E661E17927FAE4C /* Debug */,
+				95DE9238791F19000EE36F68 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		59D29E14E9F0B4A9D5850EE8 /* Build configuration list for PBXProject "Kurage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8224E6674DAA81C66E0C4A8E /* Debug */,
+				D8B9EA50B93989D2ED53E447 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7258D20FF1D2A914AE99E5C4 /* Build configuration list for PBXNativeTarget "Kurage" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0051F96817EDF71830AF95B5 /* Debug */,
+				5A45467485656C2E813DD5EA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = DCA9EB984FDABC20A6A90413 /* Project object */;
+}
