@@ -393,6 +393,9 @@ struct HTTPLodyClientTests {
         #expect(access.shardHostSuffix == "streams.lody.ai")
         let request = try JSONDecoder().decode(StreamsTokenProbe.self, from: try #require(log.bodies.last))
         #expect(request.workspaceId == "org-1")
+        let requestCount = log.bodies.count
+        #expect(try await client.streamsAccess(workspaceID: "org-1") == access)
+        #expect(log.bodies.count == requestCount)
     }
 
     @Test func sessionsRequireStreamsGateway() async throws {

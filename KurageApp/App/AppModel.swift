@@ -28,12 +28,14 @@ final class AppModel {
     private var sessionRefreshGeneration = 0
     private var sessionRefreshTask: Task<[SessionSummary], Error>?
     private var sessionRefreshWorkspaceID: WorkspaceSummary.ID?
+    private var conversationCache: [WorkspaceSummary.ID: [SessionSummary.ID: Conversation]] = [:]
 
     init(client: any LodyClient) {
         self.client = client
     }
 
     var isSignedIn: Bool { account != nil }
+    var supportsConversationActions: Bool { client.supportsConversationActions }
 
     var workspaceLabel: String {
         selectedWorkspace?.name ?? account?.email ?? ""
@@ -107,6 +109,7 @@ final class AppModel {
         workspaces = []
         selectedWorkspaceID = nil
         sessions = []
+        conversationCache = [:]
         statusNote = nil
     }
 
@@ -188,7 +191,15 @@ final class AppModel {
 
     func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
-        return try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
+        let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
+        guard account != nil, selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
+        conversationCache[workspaceID, default: [:]][sessionID] = loaded
+        return loaded
+    }
+
+    func cachedConversation(sessionID: SessionSummary.ID) -> Conversation? {
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return conversationCache[workspaceID]?[sessionID]
     }
 
     func send(_ text: String, sessionID: SessionSummary.ID) async throws {

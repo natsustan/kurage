@@ -16,12 +16,19 @@ settings:
     TARGETED_DEVICE_FAMILY: "1"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
+packages:
+  MarkdownView:
+    url: https://github.com/LiYanan2004/MarkdownView.git
+    exactVersion: 3.0.0
+
 targets:
   Kurage:
     type: application
     platform: iOS
     sources:
       - path: KurageApp
+    dependencies:
+      - package: MarkdownView
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage

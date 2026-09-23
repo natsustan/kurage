@@ -2,7 +2,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node --test conversation-projection.test.mjs"
   },
   "dependencies": {
     "@loro-dev/flock-wasm": "0.4.3",

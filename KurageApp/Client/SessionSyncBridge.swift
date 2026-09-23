@@ -27,23 +27,12 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     }
 
     func sessions(workspaceID: String, access: StreamsAccess) async throws -> [SessionSummary] {
-        guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
-        try Task.checkCancellation()
-        try await ensureLoaded()
-        try Task.checkCancellation()
-        let result = try await webView.callAsyncJavaScript(
+        let json = try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL))",
-            arguments: [
-                "workspaceID": workspaceID,
-                "token": access.token,
-                "baseURL": gatewayBaseURL.absoluteString,
-            ],
-            in: nil,
-            contentWorld: .page
+            workspaceID: workspaceID,
+            access: access
         )
-        guard let json = result as? String, let data = json.data(using: .utf8) else {
-            throw LodyClientError.notConnected
-        }
+        guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: data)
         return snapshot.sessions.map { metadata in
             SessionSummary(
@@ -56,6 +45,48 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
                 projectName: metadata.projectName
             )
         }
+    }
+
+    func conversation(
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID,
+        access: StreamsAccess
+    ) async throws -> Conversation {
+        let json = try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, token, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            sessionID: sessionID
+        )
+        guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
+        return try JSONDecoder().decode(Conversation.self, from: data)
+    }
+
+    private func callBridge(
+        _ script: String,
+        workspaceID: String,
+        access: StreamsAccess,
+        sessionID: String? = nil
+    ) async throws -> String {
+        guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
+        try Task.checkCancellation()
+        try await ensureLoaded()
+        try Task.checkCancellation()
+        var arguments = [
+            "workspaceID": workspaceID,
+            "token": access.token,
+            "baseURL": gatewayBaseURL.absoluteString,
+        ]
+        if let sessionID { arguments["sessionID"] = sessionID }
+        let result = try await webView.callAsyncJavaScript(
+            script,
+            arguments: arguments,
+            in: nil,
+            contentWorld: .page
+        )
+        try Task.checkCancellation()
+        guard let json = result as? String else { throw LodyClientError.notConnected }
+        return json
     }
 
     private func ensureLoaded() async throws {

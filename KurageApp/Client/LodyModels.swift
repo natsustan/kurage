@@ -19,24 +19,24 @@ struct SessionSummary: Identifiable, Equatable, Sendable {
     var projectName: String? = nil
 }
 
-enum TurnAuthor: Equatable, Sendable {
+enum TurnAuthor: String, Codable, Equatable, Sendable {
     case user
     case agent
 }
 
-struct ConversationTurn: Identifiable, Equatable, Sendable {
+struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var author: TurnAuthor
     var text: String
 }
 
-struct PermissionPrompt: Identifiable, Equatable, Sendable {
+struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var title: String
     var detail: String
 }
 
-struct Conversation: Equatable, Sendable {
+struct Conversation: Codable, Equatable, Sendable {
     var sessionID: SessionSummary.ID
     var turns: [ConversationTurn]
     var permission: PermissionPrompt?
