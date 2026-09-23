@@ -96,6 +96,7 @@ final class AppModel {
     }
 
     func signOut() {
+        signInTask?.cancel()
         authenticationGeneration += 1
         client.signOut()
         account = nil

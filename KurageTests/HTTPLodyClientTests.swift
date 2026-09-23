@@ -225,6 +225,57 @@ struct HTTPLodyClientTests {
         #expect(model.workspaces == newWorkspaces)
     }
 
+    @Test func signOutCancelsInFlightSignInRefresh() async throws {
+        let store = MemoryAuthTokenStore()
+        let tokens = AuthTokenSequence()
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        DeferredAuthURLProtocol.onStart = { request in
+            switch request.request.url?.path {
+            case "/api/auth/device/code":
+                request.respond(status: 200, data: Data(deviceCodeJSON.utf8))
+            case "/api/auth/device/token":
+                let token = tokens.next()
+                request.respond(status: 200, data: Data(#"{"access_token":"\#(token)"}"#.utf8))
+            case "/api/auth/get-session":
+                let email = request.request.value(forHTTPHeaderField: "Authorization") == "Bearer old-token"
+                    ? "old@lody.ai" : "new@lody.ai"
+                request.respond(status: 200, data: Data(#"{"user":{"email":"\#(email)"}}"#.utf8))
+            case "/api/auth/organization/list":
+                if request.request.value(forHTTPHeaderField: "Authorization") == "Bearer old-token" {
+                    _ = continuation.yield(())
+                } else {
+                    request.respond(status: 200, data: Data(#"[{"id":"new","name":"New","slug":"new"}]"#.utf8))
+                }
+            default:
+                request.respond(status: 404, data: Data())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+
+        let model = AppModel(client: HTTPLodyClient(session: deferredSession(), tokenStore: store))
+        model.connect(open: { _ in })
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        #expect(model.account == Account(email: "old@lody.ai"))
+        #expect(model.isSigningIn)
+
+        model.signOut()
+        for _ in 0..<100 {
+            if !model.isSigningIn { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!model.isSigningIn)
+        #expect(model.account == nil)
+
+        model.connect(open: { _ in })
+        for _ in 0..<100 {
+            if model.account == Account(email: "new@lody.ai") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.account == Account(email: "new@lody.ai"))
+        #expect(store.read() == "new-token")
+    }
+
     @Test func restoreSessionReadsBearerSession() async {
         let store = MemoryAuthTokenStore()
         #expect(store.write("session-token"))
@@ -334,6 +385,21 @@ private struct DeviceCodeProbe: Decodable {
 
 private final class PollCount: @unchecked Sendable {
     var value = 0
+}
+
+private final class AuthTokenSequence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isFirst = true
+
+    func next() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        if isFirst {
+            isFirst = false
+            return "old-token"
+        }
+        return "new-token"
+    }
 }
 
 @MainActor
