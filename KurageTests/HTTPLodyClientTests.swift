@@ -169,6 +169,62 @@ struct HTTPLodyClientTests {
         #expect(store.read() == "new-token")
     }
 
+    @Test(arguments: [200, 500])
+    func staleWorkspaceRefreshCannotChangeNewAccount(status: Int) async throws {
+        let store = MemoryAuthTokenStore()
+        #expect(store.write("old-token"))
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        let oldWorkspaceRequest = PendingAuthRequest()
+        DeferredAuthURLProtocol.onStart = { request in
+            switch request.request.url?.path {
+            case "/api/auth/get-session":
+                let email = request.request.value(forHTTPHeaderField: "Authorization") == "Bearer old-token"
+                    ? "old@lody.ai" : "new@lody.ai"
+                request.respond(status: 200, data: Data(#"{"user":{"email":"\#(email)"}}"#.utf8))
+            case "/api/auth/organization/list":
+                if request.request.value(forHTTPHeaderField: "Authorization") == "Bearer old-token" {
+                    oldWorkspaceRequest.capture(request)
+                    _ = continuation.yield(())
+                } else {
+                    request.respond(status: 200, data: Data(#"[{"id":"new","name":"New","slug":"new"}]"#.utf8))
+                }
+            case "/api/auth/device/code":
+                request.respond(status: 200, data: Data(deviceCodeJSON.utf8))
+            case "/api/auth/device/token":
+                request.respond(status: 200, data: Data(#"{"access_token":"new-token"}"#.utf8))
+            default:
+                request.respond(status: 404, data: Data())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let model = AppModel(client: client)
+        let restoration = Task { await model.adoptExistingAccount() }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        #expect(model.account == Account(email: "old@lody.ai"))
+
+        model.signOut()
+        model.connect(open: { _ in })
+        let newWorkspaces = [WorkspaceSummary(id: "new", name: "New", slug: "new")]
+        for _ in 0..<100 {
+            if model.workspaces == newWorkspaces { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(model.account == Account(email: "new@lody.ai"))
+        #expect(model.workspaces == newWorkspaces)
+
+        let oldResponse = status == 200
+            ? Data(#"[{"id":"old","name":"Old","slug":"old"}]"#.utf8)
+            : Data()
+        oldWorkspaceRequest.respond(status: status, data: oldResponse)
+        await restoration.value
+
+        #expect(model.account == Account(email: "new@lody.ai"))
+        #expect(model.workspaces == newWorkspaces)
+    }
+
     @Test func restoreSessionReadsBearerSession() async {
         let store = MemoryAuthTokenStore()
         #expect(store.write("session-token"))

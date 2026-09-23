@@ -78,10 +78,7 @@ final class AppModel {
             } catch is CancellationError {
                 deviceAuthorization = nil
             } catch {
-                client.signOut()
-                account = nil
-                workspaces = []
-                sessions = []
+                signOut()
                 deviceAuthorization = nil
                 statusNote = StatusNote(tone: .failure, text: Self.signInMessage(for: error))
             }
@@ -109,24 +106,33 @@ final class AppModel {
 
     func refreshWorkspaces() async {
         guard account != nil else { return }
+        let generation = authenticationGeneration
         do {
-            workspaces = try await client.workspaces()
+            let loaded = try await client.workspaces()
+            guard isCurrentAuthentication(generation) else { return }
+            workspaces = loaded
         } catch {
+            guard isCurrentAuthentication(generation) else { return }
             workspaces = []
         }
     }
 
     func refreshSessions() async {
         guard account != nil else { return }
+        let generation = authenticationGeneration
         do {
-            sessions = try await client.sessions()
+            let loaded = try await client.sessions()
+            guard isCurrentAuthentication(generation) else { return }
+            sessions = loaded
             if statusNote?.tone == .info {
                 statusNote = nil
             }
         } catch LodyClientError.notConnected {
+            guard isCurrentAuthentication(generation) else { return }
             sessions = []
             statusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
         } catch {
+            guard isCurrentAuthentication(generation) else { return }
             statusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
         }
     }
@@ -136,8 +142,9 @@ final class AppModel {
     }
 
     func send(_ text: String, sessionID: SessionSummary.ID) async throws {
+        let generation = authenticationGeneration
         try await client.send(text, sessionID: sessionID)
-        if let sessions = try? await client.sessions() {
+        if let sessions = try? await client.sessions(), isCurrentAuthentication(generation) {
             self.sessions = sessions
         }
     }
@@ -147,10 +154,15 @@ final class AppModel {
         requestID: PermissionPrompt.ID,
         sessionID: SessionSummary.ID
     ) async throws {
+        let generation = authenticationGeneration
         try await client.respond(decision, requestID: requestID, sessionID: sessionID)
-        if let sessions = try? await client.sessions() {
+        if let sessions = try? await client.sessions(), isCurrentAuthentication(generation) {
             self.sessions = sessions
         }
+    }
+
+    private func isCurrentAuthentication(_ generation: Int) -> Bool {
+        generation == authenticationGeneration && account != nil
     }
 
     private static func signInMessage(for error: Error) -> String {
