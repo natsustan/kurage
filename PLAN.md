@@ -4,7 +4,7 @@
 
 - 设备码登录、账号恢复、退出登录和工作区列表已经接入 Lody。
 - 工作区选择和下拉刷新已接入真实会话列表；所有会话操作都明确携带工作区 ID。
-- 会话列表默认按项目分组，项目按最近会话排序；右上角菜单可切换到按时间排序，也包含退出登录。项目名称优先从机器 Flock 文档读取。
+- 会话列表默认按项目分组，项目按最近会话排序；点击项目名称行可折叠/展开该项目下的会话，折叠显示闭合文件夹图标、展开显示开口文件夹图标（MGC cute light 系列，已做成 template 资产）。右上角菜单可切换到按时间排序，也包含退出登录。项目名称优先从机器 Flock 文档读取。
 - `HTTPLodyClient.streamsAccess(workspaceID:)` 按 Lody 的 `/api/loro-streams/token` 协议取得短期令牌，不会把 Streams 令牌写入 Keychain。
 - `SessionSyncBridge` 使用与 Lody 相同版本的 LoroRepo、Flock 和 Streams 库，在本地 WebKit 页面中读取目录与会话文档。原生层通过 URLSession 代理只读 Streams 请求。
 - 真实客户端已支持只读会话正文和实时更新：当前详情页通过 `joinRoom()` 订阅 Session 文档与 workspace metadata，持续显示正文和运行状态。只投影用户和 Agent 的普通文本，工具记录等结构化内容暂不显示。

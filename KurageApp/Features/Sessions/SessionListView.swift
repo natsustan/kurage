@@ -78,6 +78,7 @@ private struct SessionList: View {
     let supportsConversations: Bool
     let isRefreshing: Bool
     let statusNote: StatusNote?
+    @State private var collapsedProjectIDs: Set<String> = []
 
     var body: some View {
         ScrollView {
@@ -131,19 +132,50 @@ private struct SessionList: View {
     }
 
     private func projectGroup(_ group: SessionProjectGroup) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
-                Image(systemName: group.id == "unassigned" ? "bubble.left" : "folder")
-                    .frame(width: 24, alignment: .leading)
-                Text(group.name)
+        let isCollapsed = collapsedProjectIDs.contains(group.id)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.snappy) {
+                    if isCollapsed {
+                        collapsedProjectIDs.remove(group.id)
+                    } else {
+                        collapsedProjectIDs.insert(group.id)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    groupIcon(group, isCollapsed: isCollapsed)
+                        .frame(width: 24, alignment: .leading)
+                    Text(group.name)
+                    Spacer(minLength: 0)
+                }
+                .font(.headline)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
+                .contentShape(Rectangle())
             }
-            .font(.headline)
-            .padding(.top, 18)
-            .padding(.bottom, 8)
+            .buttonStyle(.plain)
+            .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+            .accessibilityHint("Collapses or expands this project's sessions")
+            .accessibilityIdentifier("project-header-\(group.id)")
 
-            ForEach(group.sessions) { session in
-                sessionRow(session)
+            if !isCollapsed {
+                ForEach(group.sessions) { session in
+                    sessionRow(session)
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func groupIcon(_ group: SessionProjectGroup, isCollapsed: Bool) -> some View {
+        if group.id == SessionProjectGroup.unassignedID {
+            Image(systemName: isCollapsed ? "bubble.left" : "bubble.left.fill")
+        } else {
+            Image(isCollapsed ? "folder-closed" : "folder-open")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 18, height: 18)
         }
     }
 
