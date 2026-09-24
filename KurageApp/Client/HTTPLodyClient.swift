@@ -3,6 +3,8 @@ import Foundation
 /// Device authorization and read-only workspace session metadata from Lody.
 @MainActor
 final class HTTPLodyClient: LodyClient {
+    let supportsConversations = true
+
     private let session: URLSession
     private let tokenStore: any AuthTokenStore
     private let baseURL: URL

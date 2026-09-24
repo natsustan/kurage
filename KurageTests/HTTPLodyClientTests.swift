@@ -6,6 +6,13 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
+    @Test func realConversationsAreReadableButActionsAreUnavailable() {
+        let model = AppModel(client: HTTPLodyClient(tokenStore: MemoryAuthTokenStore()))
+
+        #expect(model.supportsConversations)
+        #expect(!model.supportsConversationActions)
+    }
+
     @Test func deviceFlowStoresTokenAndRewritesHost() async throws {
         let store = MemoryAuthTokenStore()
         let log = AuthRequestLog()

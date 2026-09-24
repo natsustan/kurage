@@ -8,7 +8,10 @@ import Foundation
 protocol LodyClient: AnyObject {
     var account: Account? { get }
     var requiresExternalAuthorization: Bool { get }
+    /// Whether conversation history and updates can be read.
     var supportsConversations: Bool { get }
+    /// Whether messages can be sent and permission prompts answered.
+    var supportsConversationActions: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
@@ -38,4 +41,5 @@ extension LodyClient {
 
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
+    var supportsConversationActions: Bool { false }
 }

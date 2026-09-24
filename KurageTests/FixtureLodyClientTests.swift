@@ -3,6 +3,13 @@ import Testing
 
 @MainActor
 struct FixtureLodyClientTests {
+    @Test func fixtureConversationsSupportReadingAndActions() {
+        let model = AppModel(client: FixtureLodyClient())
+
+        #expect(model.supportsConversations)
+        #expect(model.supportsConversationActions)
+    }
+
     @Test func sessionsRequireSignIn() async {
         let client = FixtureLodyClient()
         await #expect(throws: LodyClientError.signedOut) {

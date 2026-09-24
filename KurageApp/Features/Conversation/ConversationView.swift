@@ -34,7 +34,7 @@ struct ConversationView: View {
                     isSending: isSending,
                     banner: banner,
                     connectionStatus: connectionStatus,
-                    supportsActions: model.supportsConversations,
+                    supportsActions: model.supportsConversationActions,
                     onSend: sendDraft,
                     onDecision: respond
                 )
