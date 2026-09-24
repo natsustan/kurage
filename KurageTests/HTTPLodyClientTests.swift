@@ -652,7 +652,12 @@ struct StreamFetchHandlerTests {
         configuration.protocolClasses = [StreamingTestURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let handler = StreamFetchHandler(session: session) { _, _ in throw LodyClientError.signedOut }
+        let handler = StreamFetchHandler(session: session) { _, _ in
+            StreamsAccess(
+                token: "synthetic-test-token", expiresIn: 300,
+                gatewayBaseURL: URL(string: "https://example.test"), shardHostSuffix: nil
+            )
+        }
         let sink = StreamEventSink()
         var events = sink.events.makeAsyncIterator()
         let webConfiguration = WKWebViewConfiguration()
@@ -670,9 +675,12 @@ struct StreamFetchHandlerTests {
             """, baseURL: nil)
         #expect(await events.next() == "ready")
         _ = try await webView.callAsyncJavaScript("""
+            const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+              command: 'auth', workspaceID: 'test-workspace'
+            });
             return await window.webkit.messageHandlers.streamFetch.postMessage({
               command: 'start', id: 'test', url: 'https://example.test/ds/lody/s', method: 'GET',
-              headers: {authorization: 'Bearer synthetic-test-token'}
+              headers: {authorization: 'Bearer ' + access.token}
             });
             """, arguments: [:], in: nil, contentWorld: .page)
         _ = await requests.next()

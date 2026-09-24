@@ -35,7 +35,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         let operationID = UUID().uuidString
         let json = try await withTaskCancellationHandler {
             try await callBridge(
-                "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL, operationID))",
+                "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, baseURL, operationID))",
                 workspaceID: workspaceID,
                 access: access,
                 operationID: operationID
@@ -64,7 +64,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         access: StreamsAccess
     ) async throws -> Conversation {
         let json = try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, token, baseURL))",
+            "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL))",
             workspaceID: workspaceID,
             access: access,
             sessionID: sessionID
@@ -82,7 +82,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             guard let self else { return }
             do {
                 _ = try await callBridge(
-                    "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, token, baseURL, observationID))",
+                    "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, baseURL, observationID))",
                     workspaceID: workspaceID, access: access, sessionID: sessionID, observationID: id
                 )
             } catch {
@@ -147,7 +147,6 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         try Task.checkCancellation()
         var arguments = [
             "workspaceID": workspaceID,
-            "token": access.token,
             "baseURL": gatewayBaseURL.absoluteString,
         ]
         if let sessionID { arguments["sessionID"] = sessionID }

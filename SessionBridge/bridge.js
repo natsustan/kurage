@@ -2,6 +2,7 @@ import { LoroRepo } from 'loro-repo';
 import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
 import { projectConversation } from './conversation-projection.mjs';
+import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation } from './conversation-observer.mjs';
@@ -29,7 +30,7 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
-function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refreshMeta = true, signal) {
+function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal) {
   // The session list has already synced metadata. Keep its in-memory repo so
   // opening a conversation needs only the session document sync.
   const operation = workspaceOperation.then(async () => {
@@ -43,7 +44,7 @@ function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refre
     signal?.throwIfAborted();
     if (!state) {
       const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
-      state = { repo, workspaceID, gatewayBaseURL, accessToken, metaReady: false };
+      state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
       try {
         const transport = new StreamsTransportAdapter({
           bucketId: 'lody',
@@ -69,7 +70,6 @@ function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refre
         throw error;
       }
     }
-    state.accessToken = accessToken;
     if (refreshMeta || !state.metaReady) {
       const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
       if (!report.ok) throw new Error('Workspace metadata sync failed');
@@ -82,10 +82,10 @@ function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refre
   return operation;
 }
 
-window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL, operationID) => {
+window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
-  try { return await withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async (repo) => {
+  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
     const rows = await repo.listDoc();
     const visibleSessions = rows.filter((row) => row.docId.startsWith('session-') &&
       !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta.isArchived &&
@@ -137,8 +137,7 @@ window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL, operati
         title: typeof row.meta.title === 'string' && row.meta.title.length > 0
           ? row.meta.title : 'Untitled session',
         agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
-        activity: ['running', 'initializing', 'requestPermission'].includes(row.meta.status?.type)
-          ? 'running' : 'idle',
+        activity: projectSessionActivity(row.meta.status),
         preview: row.meta.repoFullName ?? '',
         projectID,
         projectName,
@@ -152,8 +151,8 @@ window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL, operati
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 
-window.kurageConversation = async (workspaceID, sessionID, accessToken, gatewayBaseURL) =>
-  withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async (repo) => {
+window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL) =>
+  withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
     const docID = `session-${sessionID}`;
     const rows = await repo.listDoc();
     if (!rows.some((row) => row.docId === docID && !row.deleted)) {
@@ -171,11 +170,11 @@ window.kurageStopConversation = (id) => {
   observations.delete(id);
   observation?.abort();
 };
-window.kurageObserveConversation = async (workspaceID, sessionID, accessToken, gatewayBaseURL, id) => {
+window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id) => {
   const controller = new AbortController();
   observations.set(id, controller);
   try {
-    await withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async repo => {
+    await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
       if (controller.signal.aborted) return;
       await observeConversation({ repo, sessionID, signal: controller.signal,
         emit: update => window.webkit.messageHandlers.streamFetch.postMessage({

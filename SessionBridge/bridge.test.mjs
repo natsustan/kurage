@@ -32,6 +32,7 @@ function makeBridge(sync = async () => ({ ok: true })) {
     decompressZstd: async (bytes) => bytes,
     createNativeFetch: () => ({ fetch: async () => {}, receive: async () => {} }),
     projectConversation: () => ({}),
+    projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
     fetch: async () => {},
     AbortController,
@@ -42,14 +43,14 @@ function makeBridge(sync = async () => ({ ok: true })) {
 
 test('refresh reuses the workspace repo', async () => {
   const { window, repos, transports } = makeBridge();
-  await window.kurageSessions('workspace', 'first', 'https://gateway.lody.ai', 'first');
-  await window.kurageSessions('workspace', 'second', 'https://gateway.lody.ai', 'second');
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'first');
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'second');
 
   assert.equal(repos.length, 1);
   assert.equal(repos[0].destroyed, false);
   assert.equal(typeof transports[0].auth, 'function');
 
-  await window.kurageSessions('another-workspace', 'third', 'https://gateway.lody.ai', 'third');
+  await window.kurageSessions('another-workspace', 'https://gateway.lody.ai', 'third');
   assert.equal(repos.length, 2);
   assert.equal(repos[0].destroyed, true);
 });
@@ -69,9 +70,9 @@ test('cancelling a queued refresh leaves the current workspace intact', async ()
     return { ok: true };
   });
 
-  const first = window.kurageSessions('workspace', 'first', 'https://gateway.lody.ai', 'first');
+  const first = window.kurageSessions('workspace', 'https://gateway.lody.ai', 'first');
   await started;
-  const cancelled = window.kurageSessions('another-workspace', 'cancelled', 'https://gateway.lody.ai', 'cancelled');
+  const cancelled = window.kurageSessions('another-workspace', 'https://gateway.lody.ai', 'cancelled');
   window.kurageCancel('cancelled');
   finishSync({ ok: true });
 
@@ -90,7 +91,7 @@ test('cancelling an active refresh aborts its sync', async () => {
     signal.addEventListener('abort', () => reject(signal.reason), { once: true });
   }));
 
-  const refresh = window.kurageSessions('workspace', 'active', 'https://gateway.lody.ai', 'active');
+  const refresh = window.kurageSessions('workspace', 'https://gateway.lody.ai', 'active');
   await started;
   window.kurageCancel('active');
 

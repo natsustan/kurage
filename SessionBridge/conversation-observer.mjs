@@ -1,4 +1,5 @@
 import { projectConversation } from './conversation-projection.mjs';
+import { projectSessionActivity } from './session-activity.mjs';
 
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
@@ -53,7 +54,7 @@ export async function observeConversation({ repo, sessionID, signal, emit, sched
           ? projectConversation(sessionID, handle.doc.getList('history').toJSON()) : previous;
         historyChanged = false;
         const update = conversationPatch(previous, next);
-        update.activity = ['running', 'initializing', 'requestPermission'].includes(meta.meta.status?.type) ? 'running' : 'idle';
+        update.activity = projectSessionActivity(meta.meta.status);
         update.syncState = rooms.length === 2 && rooms.every(room => room.status === 'joined') ? 'live' : 'connecting';
         await emit(update);
         previous = next;
@@ -70,7 +71,9 @@ export async function observeConversation({ repo, sessionID, signal, emit, sched
       if (ready && !stopped && timer === undefined) timer = schedule(() => { void publish(); }, 80);
     };
     own(handle.doc.subscribe(() => { historyChanged = true; queue(); }));
-    const watch = repo.watch(queue);
+    const watch = repo.watch(queue, {
+      docIds: [docID], kinds: ['doc-metadata', 'doc-existence-changed'],
+    });
     own(() => watch.unsubscribe());
     for (const join of [() => handle.joinRoom(), () => repo.joinMetaRoom()]) {
       const room = await join();
