@@ -126,6 +126,9 @@ struct ConversationView: View {
             } catch LodyClientError.deliveryUnconfirmed {
                 draft = text
                 banner = "Send could not be confirmed. Retry to resume the same message."
+            } catch LodyClientError.sendSuperseded {
+                draft = text
+                banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
                 draft = text
                 banner = "Wait for the current reply before sending."

@@ -33,9 +33,10 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp)
     if (row.meta.lastHandledUserMsgId === turnID ||
         ['completed', 'cancelled', 'failed'].includes(existing.status)) return 'sent';
     const newerActivation = row.meta.latestUserMsgId;
-    if (newerActivation && newerActivation !== turnID &&
-        entries.findIndex(entry => entry?.id === newerActivation) > entries.indexOf(existing)) {
-      return 'unconfirmed';
+    if (newerActivation && newerActivation !== turnID) {
+      const activationIndex = entries.findIndex(entry => entry?.id === newerActivation);
+      if (activationIndex < 0) return 'unconfirmed';
+      if (activationIndex > entries.indexOf(existing)) return 'superseded';
     }
   } else {
     // Direct dispatch is for an idle session. Steering a running turn and

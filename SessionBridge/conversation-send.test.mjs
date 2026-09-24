@@ -54,11 +54,24 @@ test('busy sessions cannot create a direct dispatch turn', async () => {
   assert.equal(doc.getList('history').length, 0);
 });
 
-test('a retry does not replace a newer activation', async () => {
+test('a superseded retry can be followed by a fresh send', async () => {
   const { repo, doc, meta } = fixture();
   await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now');
   doc.getList('history').insert(1, { id: 'turn-2', role: 'user', items: [{ type: 'text', text: 'Second' }] });
   doc.commit();
+  meta.latestUserMsgId = 'turn-2';
+  assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now'),
+    'superseded');
+  assert.equal(meta.latestUserMsgId, 'turn-2');
+  meta.lastHandledUserMsgId = 'turn-2';
+  assert.equal(await sendText(repo, 'chat', 'turn-3', 'current-user', 'First', 'now'), 'sent');
+  assert.equal(meta.latestUserMsgId, 'turn-3');
+  assert.equal(doc.getList('history').length, 3);
+});
+
+test('a retry does not replace an activation missing from synced history', async () => {
+  const { repo, meta } = fixture();
+  await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now');
   meta.latestUserMsgId = 'turn-2';
   assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now'),
     'unconfirmed');

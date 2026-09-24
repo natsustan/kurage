@@ -367,6 +367,10 @@ final class HTTPLodyClient: LodyClient {
             if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
             throw LodyClientError.sessionBusy
         }
+        if result == "superseded" {
+            if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+            throw LodyClientError.sendSuperseded
+        }
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
         if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
     }

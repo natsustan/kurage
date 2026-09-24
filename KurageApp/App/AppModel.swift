@@ -277,10 +277,13 @@ final class AppModel {
             throw CancellationError()
         }
         if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
-            sessions[index].preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            var session = sessions.remove(at: index)
+            session.preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            sessions.insert(session, at: 0)
             sessionsByWorkspace[workspaceID] = sessions
             persistSession()
         }
+        await refreshSessions(restart: true)
     }
 
     func respond(

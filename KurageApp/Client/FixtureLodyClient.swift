@@ -77,6 +77,9 @@ final class FixtureLodyClient: LodyClient {
             record.turns.append(turn)
             record.summary.preview = trimmed
         }
+        if let index = records.firstIndex(where: { $0.summary.id == sessionID }) {
+            records.insert(records.remove(at: index), at: 0)
+        }
     }
 
     func respond(
