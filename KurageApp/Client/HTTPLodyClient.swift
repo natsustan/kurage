@@ -351,8 +351,10 @@ final class HTTPLodyClient: LodyClient {
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
-        let turnID = pendingSends[key].flatMap { $0.text == trimmed ? $0.turnID : nil }
-            ?? UUID().uuidString.lowercased()
+        if let pending = pendingSends[key], pending.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.text)
+        }
+        let turnID = pendingSends[key]?.turnID ?? UUID().uuidString.lowercased()
         pendingSends[key] = PendingSend(text: trimmed, turnID: turnID)
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()

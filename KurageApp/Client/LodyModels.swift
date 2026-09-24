@@ -68,6 +68,7 @@ enum LodyClientError: Error, Equatable {
     case permissionMissing
     case emptyMessage
     case deliveryUnconfirmed
+    case previousSendPending(String)
     case sendSuperseded
     case sessionBusy
     case notConnected

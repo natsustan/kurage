@@ -11,6 +11,7 @@ function fixture() {
   const calls = [];
   const repo = {
     listDoc: async () => [{ docId: 'session-chat', meta }],
+    getDocMeta: async () => ({ meta }),
     openPersistedDoc: async () => ({ doc }),
     sync: async options => { calls.push(options); return { outcome: 'synced' }; },
     upsertDocMeta: async (_id, patch) => { Object.assign(meta, patch); },
@@ -30,7 +31,7 @@ test('a text turn syncs before its dispatch pointer and retry keeps one ID', asy
   assert.deepEqual(entry.inputConfig.inputBlocks, [{ type: 'text', text: 'Hello' }]);
   assert.equal(entry.status, 'pending');
   assert.equal(meta.latestUserMsgId, 'turn-1');
-  assert.deepEqual(calls.map(call => call.scope), ['doc', 'doc', 'meta']);
+  assert.deepEqual(calls.map(call => call.scope), ['doc', 'doc', 'meta', 'meta']);
 
   assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'Hello', timestamp), 'sent');
   assert.equal(doc.getList('history').length, 1);
@@ -73,6 +74,38 @@ test('a retry does not replace an activation missing from synced history', async
   const { repo, meta } = fixture();
   await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now');
   meta.latestUserMsgId = 'turn-2';
+  assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now'),
+    'unconfirmed');
+  assert.equal(meta.latestUserMsgId, 'turn-2');
+});
+
+test('a new activation during body sync is not overwritten', async () => {
+  const { repo, doc, meta } = fixture();
+  let docSyncs = 0;
+  repo.sync = async options => {
+    if (options.scope === 'doc' && ++docSyncs === 2) {
+      doc.getList('history').insert(1, {
+        id: 'turn-2', role: 'user', items: [{ type: 'text', text: 'Second' }],
+      });
+      doc.commit();
+      meta.latestUserMsgId = 'turn-2';
+    }
+    return { outcome: 'synced' };
+  };
+  assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now'),
+    'superseded');
+  assert.equal(meta.latestUserMsgId, 'turn-2');
+});
+
+test('a competing activation after metadata write is not reported as sent', async () => {
+  const { repo, meta } = fixture();
+  let metaSyncs = 0;
+  repo.sync = async options => {
+    if (options.scope === 'meta' && ++metaSyncs === 2) {
+      meta.latestUserMsgId = 'turn-2';
+    }
+    return { outcome: 'synced' };
+  };
   assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'First', 'now'),
     'unconfirmed');
   assert.equal(meta.latestUserMsgId, 'turn-2');

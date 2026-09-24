@@ -17,6 +17,8 @@ struct ConversationView: View {
     @State private var isLoading = true
     @State private var banner: String?
     @State private var connectionStatus: String?
+    @State private var previousPendingText: String?
+    @State private var previousPendingWorkspaceID: String?
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -43,6 +45,9 @@ struct ConversationView: View {
                 supportsTextSending: model.supportsTextSending,
                 supportsPermissionResponses: model.supportsPermissionResponses,
                 onSend: sendDraft,
+                canRetryPrevious: previousPendingText != nil &&
+                    previousPendingWorkspaceID == model.selectedWorkspaceID,
+                onRetryPrevious: retryPreviousSend,
                 onDecision: respond
             )
         }
@@ -120,14 +125,23 @@ struct ConversationView: View {
             defer { isSending = false }
             do {
                 try await model.send(text, sessionID: sessionID)
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
                 if let latest = try? await model.conversation(sessionID: sessionID) {
                     conversation = latest
                 }
             } catch LodyClientError.deliveryUnconfirmed {
                 draft = text
                 banner = "Send could not be confirmed. Retry to resume the same message."
+            } catch LodyClientError.previousSendPending(let previousText) {
+                draft = text
+                previousPendingText = previousText
+                previousPendingWorkspaceID = model.selectedWorkspaceID
+                banner = "An earlier send is unconfirmed. Retry it before sending different text."
             } catch LodyClientError.sendSuperseded {
                 draft = text
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
                 banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
                 draft = text
@@ -137,6 +151,33 @@ struct ConversationView: View {
             } catch {
                 draft = text
                 banner = "Could not confirm send. Retry to resume the same message."
+            }
+        }
+    }
+
+    private func retryPreviousSend() {
+        guard !isSending, let text = previousPendingText,
+              previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
+        isSending = true
+        banner = nil
+        Task {
+            defer { isSending = false }
+            do {
+                try await model.send(text, sessionID: sessionID)
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                banner = "Earlier message confirmed. Review your draft before sending."
+                if let latest = try? await model.conversation(sessionID: sessionID) {
+                    conversation = latest
+                }
+            } catch LodyClientError.sendSuperseded {
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                banner = "Earlier message was replaced. You can send your draft as a new message."
+            } catch is CancellationError {
+                return
+            } catch {
+                banner = "Earlier send is still unconfirmed. Retry it before sending different text."
             }
         }
     }
@@ -228,6 +269,8 @@ private struct ConversationFooter: View {
     let supportsTextSending: Bool
     let supportsPermissionResponses: Bool
     let onSend: () -> Void
+    let canRetryPrevious: Bool
+    let onRetryPrevious: () -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
@@ -246,6 +289,11 @@ private struct ConversationFooter: View {
                 Text(banner)
                     .font(.footnote)
                     .foregroundStyle(.red)
+            }
+            if canRetryPrevious {
+                Button("Retry earlier message", action: onRetryPrevious)
+                    .font(.footnote)
+                    .disabled(isSending)
             }
             if let permission, supportsPermissionResponses {
                 PermissionCard(permission: permission, onDecision: onDecision)

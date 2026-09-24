@@ -25,6 +25,24 @@ struct HTTPLodyClientTests {
         #expect(client.supportsTextSending)
     }
 
+    @Test func changedTextCannotAbandonAnUnconfirmedSend() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store,
+                                    baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        log.install { _ in (503, Data()) }
+
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.send("First", sessionID: "chat", workspaceID: "work")
+        }
+        await #expect(throws: LodyClientError.previousSendPending("First")) {
+            try await client.send("Edited", sessionID: "chat", workspaceID: "work")
+        }
+    }
+
     private static var isolatedCacheURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
