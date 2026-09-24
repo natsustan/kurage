@@ -1,6 +1,8 @@
 import Foundation
 
 struct SessionProjectGroup: Identifiable, Equatable {
+    static let unassignedID = "unassigned"
+
     let id: String
     let name: String
     let sessions: [SessionSummary]
@@ -11,7 +13,7 @@ struct SessionProjectGroup: Identifiable, Equatable {
         var orderedIDs: [String] = []
 
         for session in sessions {
-            let id = session.projectID ?? "unassigned"
+            let id = session.projectID ?? Self.unassignedID
             if grouped[id] == nil { orderedIDs.append(id) }
             grouped[id, default: []].append(session)
             if names[id] == nil, let name = session.projectName, !name.isEmpty {
@@ -22,7 +24,7 @@ struct SessionProjectGroup: Identifiable, Equatable {
         return orderedIDs.map { id in
             Self(
                 id: id,
-                name: names[id] ?? (id == "unassigned" ? "Chats" : "Project"),
+                name: names[id] ?? (id == Self.unassignedID ? "Chats" : "Project"),
                 sessions: grouped[id] ?? []
             )
         }
