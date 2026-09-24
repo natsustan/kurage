@@ -188,7 +188,7 @@ window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL
           command: 'conversation', id, update,
         }),
       });
-    }, false);
+    }, false, controller.signal);
     return 'ok';
   } catch (error) {
     window.kurageStopConversation(id);

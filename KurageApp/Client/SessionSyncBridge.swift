@@ -364,41 +364,74 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
             guard let self else { return }
             defer { requests.removeValue(forKey: id) }
             do {
-                let (bytes, response) = try await session.bytes(
-                    for: request,
-                    delegate: StreamRedirectValidator(policy: policy, token: access.token)
-                )
-                guard let http = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
-                let responseHeaders = http.allHeaderFields.reduce(into: [String: String]()) { result, field in
-                    if let name = field.key as? String, let value = field.value as? String { result[name] = value }
+                try await Self.readResponse(session: session, request: request, policy: policy, token: access.token) { event in
+                    try await self.emit(event, id: id)
                 }
-                try await emit(["id": id, "type": "headers", "status": http.statusCode, "headers": responseHeaders])
-                let isSSE = http.mimeType == "text/event-stream"
-                var chunk = Data()
-                for try await byte in bytes {
-                    try Task.checkCancellation()
-                    chunk.append(byte)
-                    if chunk.count >= 16_384 || (isSSE && byte == 10) {
-                        try await emit(["id": id, "type": "chunk", "body": chunk.base64EncodedString()])
-                        chunk.removeAll(keepingCapacity: true)
-                    }
-                }
-                if !chunk.isEmpty {
-                    try await emit(["id": id, "type": "chunk", "body": chunk.base64EncodedString()])
-                }
-                try await emit(["id": id, "type": "end"])
             } catch {
-                if !Task.isCancelled { try? await emit(["id": id, "type": "error"]) }
+                if !Task.isCancelled { try? await emit(.error, id: id) }
             }
         }
         return (true, nil)
     }
 
-    private func emit(_ event: [String: Any]) async throws {
+    private enum FetchEvent: Sendable {
+        case headers(status: Int, fields: [String: String])
+        case chunk(String)
+        case end
+        case error
+    }
+
+    // Keep byte aggregation and encoding off the UI executor. Awaiting each
+    // delivery preserves WebKit backpressure and the request task's cancellation.
+    @concurrent
+    nonisolated private static func readResponse(
+        session: URLSession,
+        request: URLRequest,
+        policy: StreamsHostPolicy,
+        token: String,
+        deliver: @MainActor @Sendable (FetchEvent) async throws -> Void
+    ) async throws {
+        let (bytes, response) = try await session.bytes(
+            for: request, delegate: StreamRedirectValidator(policy: policy, token: token)
+        )
+        guard let http = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
+        let responseHeaders = http.allHeaderFields.reduce(into: [String: String]()) { result, field in
+            if let name = field.key as? String, let value = field.value as? String { result[name] = value }
+        }
+        try await deliver(.headers(status: http.statusCode, fields: responseHeaders))
+        let isSSE = http.mimeType == "text/event-stream"
+        var chunk = Data()
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            chunk.append(byte)
+            if chunk.count >= 16_384 || (isSSE && byte == 10) {
+                try await deliver(.chunk(chunk.base64EncodedString()))
+                chunk.removeAll(keepingCapacity: true)
+            }
+        }
+        if !chunk.isEmpty {
+            try await deliver(.chunk(chunk.base64EncodedString()))
+        }
+        try await deliver(.end)
+    }
+
+    private func emit(_ event: FetchEvent, id: String) async throws {
         try Task.checkCancellation()
         guard let webView else { throw CancellationError() }
+        var payload: [String: Any] = ["id": id]
+        switch event {
+        case let .headers(status, fields):
+            payload["type"] = "headers"
+            payload["status"] = status
+            payload["headers"] = fields
+        case let .chunk(body):
+            payload["type"] = "chunk"
+            payload["body"] = body
+        case .end: payload["type"] = "end"
+        case .error: payload["type"] = "error"
+        }
         _ = try await webView.callAsyncJavaScript(
-            "await window.kurageFetchEvent(event)", arguments: ["event": event], in: nil, contentWorld: .page
+            "await window.kurageFetchEvent(event)", arguments: ["event": payload], in: nil, contentWorld: .page
         )
     }
 }

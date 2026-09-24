@@ -109,6 +109,40 @@ const localSession = {
   meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' } },
 };
 
+test('stopping observation during metadata setup releases the next refresh', async () => {
+  let beginSync;
+  const started = new Promise(resolve => { beginSync = resolve; });
+  let finishSync;
+  let aborted = false;
+  let syncCount = 0;
+  const { window } = makeBridge(({ signal }) => {
+    if (++syncCount > 1) return { ok: true };
+    return new Promise((resolve, reject) => {
+      finishSync = () => resolve({ ok: true });
+      signal?.addEventListener('abort', () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true });
+      beginSync();
+    });
+  });
+  const observation = window.kurageObserveConversation('workspace', 'session', 'https://gateway.lody.ai', 'observe');
+  const outcome = observation.then(() => null, error => error);
+  await started;
+  const refresh = window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh');
+  try {
+    window.kurageStopConversation('observe');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(aborted, true);
+    assert.equal((await outcome)?.name, 'AbortError');
+    assert.equal(syncCount, 2);
+    assert.deepEqual(JSON.parse(await refresh), { sessions: [] });
+  } finally {
+    finishSync();
+    await Promise.allSettled([observation, refresh]);
+  }
+});
+
 test('cancelling machine sync releases the queued workspace refresh', async () => {
   let beginSync;
   const started = new Promise(resolve => { beginSync = resolve; });

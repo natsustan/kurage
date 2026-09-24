@@ -696,6 +696,12 @@ struct StreamFetchHandlerTests {
         // Deliberately keep the response open: a buffered data(for:) bridge hangs here.
         pendingRequest.sendChunk(Data("data: 你好\n".utf8))
         #expect(await events.next() == "data: 你好\n")
+        // A long SSE line must flush bounded chunks without waiting for a newline.
+        let fullChunk = String(repeating: "x", count: 16_384)
+        pendingRequest.sendChunk(Data((fullChunk + fullChunk + "tail\n").utf8))
+        #expect(await events.next() == fullChunk)
+        #expect(await events.next() == fullChunk)
+        #expect(await events.next() == "tail\n")
         _ = try await webView.callAsyncJavaScript("""
             return await window.webkit.messageHandlers.streamFetch.postMessage({command: 'cancel', id: 'test'});
             """, arguments: [:], in: nil, contentWorld: .page)
