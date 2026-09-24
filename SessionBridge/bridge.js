@@ -98,7 +98,12 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
     await Promise.all([...machineIDs].map(async (machineID) => {
       try {
         const document = await repo.openFlockDoc(`${workspaceID}:mf:${machineID}`);
-        const sync = await document.syncOnce();
+        const sync = await repo.sync({
+          scope: 'doc',
+          flockDocIds: [`${workspaceID}:mf:${machineID}`],
+          requireTransports: ['cloud'],
+          signal: controller.signal,
+        });
         if (!sync.ok) return;
         for (const row of document.flock.scan({ prefix: ['localProject'] })) {
           if (typeof row.key?.[1] === 'string' && typeof row.value?.name === 'string') {
@@ -106,9 +111,11 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
           }
         }
       } catch {
+        controller.signal.throwIfAborted();
         // Project names are optional; session metadata still gives stable group IDs.
       }
     }));
+    controller.signal.throwIfAborted();
     for (const machineID of machineIDs) {
       const legacy = rows.find((row) => row.docId === `machine-${machineID}`)?.meta?.localProjects;
       if (legacy && typeof legacy === 'object') {

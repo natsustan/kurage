@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source = (await readFile(new URL('./bridge.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\n/gm, '');
 
-function makeBridge(sync = async () => ({ ok: true })) {
+function makeBridge(sync = async () => ({ ok: true }), rows = []) {
   const repos = [];
   const transports = [];
   class Repo {
@@ -18,7 +18,13 @@ function makeBridge(sync = async () => ({ ok: true })) {
     }
     async addTransport(_id, transport) { transports.push(transport.options); }
     async sync(options) { return sync(options); }
-    async listDoc() { return []; }
+    async listDoc() { return rows; }
+    async openFlockDoc(docID) {
+      return {
+        syncOnce: () => sync({ scope: 'doc', flockDocIds: [docID] }),
+        flock: { scan: () => [] },
+      };
+    }
     async destroy() { this.destroyed = true; }
   }
   class Transport {
@@ -96,4 +102,56 @@ test('cancelling an active refresh aborts its sync', async () => {
   window.kurageCancel('active');
 
   await assert.rejects(refresh, { name: 'AbortError' });
+});
+
+const localSession = {
+  docId: 'session-local',
+  meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' } },
+};
+
+test('cancelling machine sync releases the queued workspace refresh', async () => {
+  let beginSync;
+  const started = new Promise(resolve => { beginSync = resolve; });
+  let finishSync;
+  let aborted = false;
+  const { window, repos } = makeBridge(options => {
+    if (options.scope !== 'doc' || options.flockDocIds[0] !== 'workspace:mf:machine') {
+      return { ok: true };
+    }
+    return new Promise((resolve, reject) => {
+      finishSync = () => resolve({ ok: true });
+      options.signal?.addEventListener('abort', () => {
+        aborted = true;
+        reject(options.signal.reason);
+      }, { once: true });
+      beginSync();
+    });
+  }, [localSession]);
+
+  const refresh = window.kurageSessions('workspace', 'https://gateway.lody.ai', 'active');
+  const outcome = refresh.then(() => null, error => error);
+  await started;
+  const replacement = window.kurageSessions('another-workspace', 'https://gateway.lody.ai', 'next');
+  try {
+    window.kurageCancel('active');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(aborted, true);
+    assert.equal((await outcome)?.name, 'AbortError');
+    assert.equal(repos.length, 2);
+    assert.equal(repos[0].destroyed, true);
+    assert.equal(JSON.parse(await replacement).sessions[0].id, 'local');
+  } finally {
+    finishSync();
+    await Promise.allSettled([refresh, replacement]);
+  }
+});
+
+test('optional machine sync failure still returns sessions with a fallback project name', async () => {
+  const { window } = makeBridge(({ scope }) => {
+    if (scope === 'doc') throw new Error('Machine unavailable');
+    return { ok: true };
+  }, [localSession]);
+
+  const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
+  assert.equal(result.sessions[0].projectName, 'Local Project');
 });
