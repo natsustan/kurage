@@ -15,6 +15,8 @@ struct SessionSummary: Identifiable, Equatable, Sendable {
     var agentName: String
     var activity: SessionActivity
     var preview: String
+    var projectID: String? = nil
+    var projectName: String? = nil
 }
 
 enum TurnAuthor: Equatable, Sendable {

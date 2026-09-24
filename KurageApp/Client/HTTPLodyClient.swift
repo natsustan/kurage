@@ -1,6 +1,6 @@
 import Foundation
 
-/// Device authorization against Lody better-auth. Session documents are not synced yet.
+/// Device authorization and read-only workspace session metadata from Lody.
 @MainActor
 final class HTTPLodyClient: LodyClient {
     private let session: URLSession
@@ -8,6 +8,7 @@ final class HTTPLodyClient: LodyClient {
     private let baseURL: URL
     private(set) var account: Account?
     private var authenticationGeneration = 0
+    private var sessionBridge: SessionSyncBridge?
 
     init(
         session: URLSession = .shared,
@@ -42,6 +43,7 @@ final class HTTPLodyClient: LodyClient {
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
         authenticationGeneration += 1
         var interval = authorization.interval
+        var lastPollFailedToConnect = false
         let deadline = Date().addingTimeInterval(authorization.expiresIn)
         while Date() < deadline {
             let remaining = deadline.timeIntervalSinceNow
@@ -50,16 +52,28 @@ final class HTTPLodyClient: LodyClient {
             try Task.checkCancellation()
             if Date() >= deadline { break }
 
-            let (_, data) = try await perform(
-                path: "api/auth/device/token",
-                method: "POST",
-                json: DeviceTokenRequest(
-                    clientID: LodyEndpoints.deviceClientID,
-                    deviceCode: authorization.deviceCode
-                ),
-                token: nil,
-                acceptAnyStatus: true
-            )
+            let status: Int
+            let data: Data
+            do {
+                (status, data) = try await perform(
+                    path: "api/auth/device/token",
+                    method: "POST",
+                    json: DeviceTokenRequest(
+                        clientID: LodyEndpoints.deviceClientID,
+                        deviceCode: authorization.deviceCode
+                    ),
+                    token: nil,
+                    acceptAnyStatus: true
+                )
+            } catch LodyClientError.unreachable {
+                lastPollFailedToConnect = true
+                continue
+            }
+            if status >= 500 {
+                lastPollFailedToConnect = true
+                continue
+            }
+            lastPollFailedToConnect = false
             let body = try JSONDecoder().decode(DeviceTokenBody.self, from: data)
             if let token = body.accessToken, !token.isEmpty {
                 let loadedAccount = try await loadAccount(token: token)
@@ -82,7 +96,7 @@ final class HTTPLodyClient: LodyClient {
                 throw LodyClientError.signInFailed
             }
         }
-        throw LodyClientError.codeExpired
+        throw lastPollFailedToConnect ? LodyClientError.unreachable : LodyClientError.codeExpired
     }
 
     func restoreSession() async -> Account? {
@@ -122,6 +136,7 @@ final class HTTPLodyClient: LodyClient {
         authenticationGeneration += 1
         tokenStore.delete()
         account = nil
+        sessionBridge = nil
     }
 
     func workspaces() async throws -> [WorkspaceSummary] {
@@ -138,22 +153,71 @@ final class HTTPLodyClient: LodyClient {
         }
     }
 
-    func sessions() async throws -> [SessionSummary] {
+    /// Exchanges the account credential for a short-lived token scoped to one workspace.
+    /// The session transport will consume this token; it is never persisted with the login token.
+    func streamsAccess(workspaceID: WorkspaceSummary.ID) async throws -> StreamsAccess {
+        guard account != nil, let accountToken = tokenStore.read() else {
+            throw LodyClientError.signedOut
+        }
+        let generation = authenticationGeneration
+        let data = try await send(
+            path: "api/loro-streams/token",
+            method: "POST",
+            json: StreamsTokenRequest(workspaceId: workspaceID),
+            token: accountToken
+        )
+        guard generation == authenticationGeneration, tokenStore.read() == accountToken else {
+            throw LodyClientError.signedOut
+        }
+        let response = try JSONDecoder().decode(StreamsTokenResponse.self, from: data)
+        guard !response.token.isEmpty, response.expiresIn > 0 else {
+            throw LodyClientError.notConnected
+        }
+        let gatewayBaseURL: URL?
+        if let rawURL = response.gatewayBaseUrl {
+            guard let url = URL(string: rawURL), url.scheme == "https", url.host != nil else {
+                throw LodyClientError.notConnected
+            }
+            gatewayBaseURL = url
+        } else {
+            gatewayBaseURL = nil
+        }
+        return StreamsAccess(
+            token: response.token,
+            expiresIn: response.expiresIn,
+            gatewayBaseURL: gatewayBaseURL,
+            shardHostSuffix: response.shardHostSuffix
+        )
+    }
+
+    func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        let bridge = sessionBridge ?? SessionSyncBridge()
+        sessionBridge = bridge
+        let sessions = try await bridge.sessions(workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else {
+            throw LodyClientError.signedOut
+        }
+        return sessions
+    }
+
+    func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         throw LodyClientError.notConnected
     }
 
-    func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
-        throw LodyClientError.notConnected
-    }
-
-    func send(_ text: String, sessionID: SessionSummary.ID) async throws {
+    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
         throw LodyClientError.notConnected
     }
 
     func respond(
         _ decision: PermissionDecision,
         requestID: PermissionPrompt.ID,
-        sessionID: SessionSummary.ID
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
     ) async throws {
         throw LodyClientError.notConnected
     }
@@ -180,6 +244,11 @@ final class HTTPLodyClient: LodyClient {
         acceptAnyStatus: Bool
     ) async throws -> (Int, Data) {
         let (status, data) = try await request(path: path, method: method, json: json, token: token)
+        if status >= 500 {
+            #if DEBUG
+            print("Kurage Lody HTTP failure: \(method) /\(path) status=\(status)")
+            #endif
+        }
         if acceptAnyStatus || (200..<300).contains(status) {
             return (status, data)
         }
@@ -229,6 +298,10 @@ final class HTTPLodyClient: LodyClient {
             if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
                 throw CancellationError()
             }
+            #if DEBUG
+            let networkError = error as NSError
+            print("Kurage Lody transport failure: \(method) /\(path) domain=\(networkError.domain) code=\(networkError.code)")
+            #endif
             throw LodyClientError.unreachable
         }
         try Task.checkCancellation()
@@ -341,4 +414,22 @@ private struct OrganizationBody: Decodable {
 private struct OrganizationListBody: Decodable {
     var organizations: [OrganizationBody]?
     var data: [OrganizationBody]?
+}
+
+struct StreamsAccess: Equatable, Sendable {
+    let token: String
+    let expiresIn: TimeInterval
+    let gatewayBaseURL: URL?
+    let shardHostSuffix: String?
+}
+
+private struct StreamsTokenRequest: Encodable {
+    let workspaceId: String
+}
+
+private struct StreamsTokenResponse: Decodable {
+    let token: String
+    let expiresIn: TimeInterval
+    let gatewayBaseUrl: String?
+    let shardHostSuffix: String?
 }

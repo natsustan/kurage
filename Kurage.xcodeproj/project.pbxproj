@@ -9,10 +9,13 @@
 /* Begin PBXBuildFile section */
 		058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153B4F2F19120EAF70238123 /* ConversationView.swift */; };
 		0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */; };
+		256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */; };
 		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
 		4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DECA865E619085D6495AE9 /* SignInView.swift */; };
 		731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */; };
 		7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9509B93A448677F2BA6F70 /* KurageApp.swift */; };
+		7FB5A3A2867FFA5EF3E091CD /* SessionProjectGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */; };
+		835FC85AEDA614A2E7D93F9D /* SessionProjectGroupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */; };
 		91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12912BB0B079CC40470DF3DC /* LodyModels.swift */; };
 		AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C39757158A6D291B6DF642 /* AuthTokenStore.swift */; };
 		B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */; };
@@ -20,8 +23,10 @@
 		C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */; };
 		C35151C7EE8619D3E22458FB /* LodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */; };
 		C614E10AF67B279394205AED /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */; };
+		DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */ = {isa = PBXBuildFile; fileRef = AF6B057A72F618ECD2D1FA99 /* session-bridge.html */; };
 		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
 		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
+		FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 6A79AACE724D367AC3C05B6B /* session-bridge.js */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,14 +56,19 @@
 		49C39757158A6D291B6DF642 /* AuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenStore.swift; sourceTree = "<group>"; };
 		5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClientTests.swift; sourceTree = "<group>"; };
 		627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6A79AACE724D367AC3C05B6B /* session-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-bridge.js"; sourceTree = "<group>"; };
 		72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyClient.swift; sourceTree = "<group>"; };
+		7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSyncBridge.swift; sourceTree = "<group>"; };
 		7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClient.swift; sourceTree = "<group>"; };
 		84497201224F3906A5EACF8A /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyEndpoints.swift; sourceTree = "<group>"; };
 		8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
 		91DECA865E619085D6495AE9 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroupTests.swift; sourceTree = "<group>"; };
+		AF6B057A72F618ECD2D1FA99 /* session-bridge.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "session-bridge.html"; sourceTree = "<group>"; };
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
 		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
 		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -93,6 +103,7 @@
 			isa = PBXGroup;
 			children = (
 				8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */,
+				DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */,
 			);
 			path = Sessions;
 			sourceTree = "<group>";
@@ -112,9 +123,19 @@
 				4066EC103822F26E6ECD3E47 /* App */,
 				A2CC7796F76FBB2AF738BD85 /* Client */,
 				FD3F733F77DE39EA9D21F9F1 /* Features */,
+				614E6E518E014794F9BC96D0 /* Resources */,
 				CF9509B93A448677F2BA6F70 /* KurageApp.swift */,
 			);
 			path = KurageApp;
+			sourceTree = "<group>";
+		};
+		614E6E518E014794F9BC96D0 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				AF6B057A72F618ECD2D1FA99 /* session-bridge.html */,
+				6A79AACE724D367AC3C05B6B /* session-bridge.js */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		76D81568C25B69EFE26D8E9A = {
@@ -136,6 +157,7 @@
 				72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */,
 				8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */,
 				12912BB0B079CC40470DF3DC /* LodyModels.swift */,
+				7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */,
 			);
 			path = Client;
 			sourceTree = "<group>";
@@ -145,6 +167,7 @@
 			children = (
 				2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */,
 				5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */,
+				A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */,
 			);
 			path = KurageTests;
 			sourceTree = "<group>";
@@ -175,6 +198,7 @@
 			buildConfigurationList = 7258D20FF1D2A914AE99E5C4 /* Build configuration list for PBXNativeTarget "Kurage" */;
 			buildPhases = (
 				90346D40B824DFEA12785C56 /* Sources */,
+				856B192AFEAB3C46B2A993E2 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -262,6 +286,18 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		856B192AFEAB3C46B2A993E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */,
+				FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		48772CC97E68FB05331648A0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -286,6 +322,8 @@
 				91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */,
 				E610F04E9116BF949CD86F67 /* RootView.swift in Sources */,
 				C614E10AF67B279394205AED /* SessionListView.swift in Sources */,
+				7FB5A3A2867FFA5EF3E091CD /* SessionProjectGroup.swift in Sources */,
+				256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */,
 				4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -296,6 +334,7 @@
 			files = (
 				B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */,
 				E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */,
+				835FC85AEDA614A2E7D93F9D /* SessionProjectGroupTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
