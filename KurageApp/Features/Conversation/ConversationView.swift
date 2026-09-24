@@ -228,6 +228,7 @@ private struct TurnRow: View, Equatable {
             } else {
                 MarkdownView(text)
                     .tint(.primary)
+                    .tint(Color(uiColor: .secondaryLabel), for: .inlineCodeBlock)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
