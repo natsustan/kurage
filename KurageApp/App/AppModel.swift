@@ -34,6 +34,7 @@ final class AppModel {
     }
 
     var isSignedIn: Bool { account != nil }
+    var supportsConversations: Bool { client.supportsConversations }
 
     var workspaceLabel: String {
         selectedWorkspace?.name ?? account?.email ?? ""

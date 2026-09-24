@@ -5,6 +5,7 @@ import Foundation
 final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
     let requiresExternalAuthorization = false
+    let supportsConversations = true
     private var records: [SessionRecord]
     private var nextTurnNumber = 0
 
