@@ -114,6 +114,29 @@ struct AppModelSessionRefreshTests {
         #expect(!model.isRefreshingSessions)
     }
 
+    @Test func workspaceFailureSurvivesSuccessfulSessionRefresh() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        client.workspaceError = .unreachable
+        var requests = client.started.makeAsyncIterator()
+        let refresh = Task { await model.refreshContent() }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [Self.session("fresh")])
+        await refresh.value
+        #expect(model.sessions.map(\.id) == ["fresh"])
+        #expect(model.statusNote == StatusNote(tone: .failure, text: "Could not load workspaces."))
+
+        client.workspaceError = nil
+        await model.refreshWorkspaces()
+        #expect(model.statusNote == nil)
+
+        client.workspaceError = .unreachable
+        await model.refreshWorkspaces()
+        model.signOut()
+        #expect(model.statusNote == nil)
+    }
+
     private static func session(_ id: String) -> SessionSummary {
         SessionSummary(id: id, title: id, agentName: "codex", activity: .idle, preview: "")
     }
@@ -122,6 +145,7 @@ struct AppModelSessionRefreshTests {
 @MainActor
 private final class DeferredSessionClient: LodyClient {
     private(set) var account: Account? = Account(email: "demo@example.com")
+    var workspaceError: LodyClientError?
     private(set) var requestedWorkspaceIDs: [String] = []
     private var pending: [String: [CheckedContinuation<[SessionSummary], Error>]] = [:]
     let observationsStarted: AsyncStream<String>
@@ -147,7 +171,8 @@ private final class DeferredSessionClient: LodyClient {
     func restoreSession() async -> Account? { account }
     func signOut() { account = nil }
     func workspaces() async throws -> [WorkspaceSummary] {
-        [WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
+        if let workspaceError { throw workspaceError }
+        return [WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
          WorkspaceSummary(id: "ws-b", name: "B", slug: "b")]
     }
 
