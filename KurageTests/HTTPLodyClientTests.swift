@@ -395,6 +395,18 @@ struct HTTPLodyClientTests {
         #expect(request.workspaceId == "org-1")
     }
 
+    @Test func streamsProxyOnlyAllowsGatewayAndShardHosts() throws {
+        let gateway = try #require(URL(string: "https://gateway.lody.ai"))
+        let policy = StreamsHostPolicy(gatewayBaseURL: gateway, shardHostSuffix: "streams.lody.ai")
+
+        #expect(policy.allows(try #require(URL(string: "https://gateway.lody.ai/ds/lody/meta"))))
+        #expect(policy.allows(try #require(URL(string: "https://shard.streams.lody.ai/ds/lody/meta"))))
+        #expect(!policy.allows(try #require(URL(string: "https://evilstreams.lody.ai/ds/lody/meta"))))
+        #expect(!policy.allows(try #require(URL(string: "https://example.com/ds/lody/meta"))))
+        #expect(!policy.allows(try #require(URL(string: "http://gateway.lody.ai/ds/lody/meta"))))
+        #expect(!policy.allows(try #require(URL(string: "https://gateway.lody.ai/other/meta"))))
+    }
+
     @Test func sessionsRequireStreamsGateway() async throws {
         let log = AuthRequestLog()
         log.install { request in

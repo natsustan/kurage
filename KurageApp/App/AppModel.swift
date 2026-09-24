@@ -169,19 +169,22 @@ final class AppModel {
         }
         do {
             let loaded = try await refreshTask.value
-            guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
-                  sessionRefreshGeneration == refreshGeneration else { return }
+            guard isCurrentSessionRefresh(
+                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
+            ) else { return }
             sessions = loaded
             statusNote = nil
         } catch is CancellationError {
             return
         } catch LodyClientError.notConnected {
-            guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
-                  sessionRefreshGeneration == refreshGeneration else { return }
+            guard isCurrentSessionRefresh(
+                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
+            ) else { return }
             statusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
         } catch {
-            guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
-                  sessionRefreshGeneration == refreshGeneration else { return }
+            guard isCurrentSessionRefresh(
+                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
+            ) else { return }
             statusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
         }
     }
@@ -223,6 +226,15 @@ final class AppModel {
 
     private func isCurrentAuthentication(_ generation: Int) -> Bool {
         generation == authenticationGeneration && account != nil
+    }
+
+    private func isCurrentSessionRefresh(
+        _ generation: Int,
+        workspaceID: WorkspaceSummary.ID,
+        refreshGeneration: Int
+    ) -> Bool {
+        isCurrentAuthentication(generation) && selectedWorkspaceID == workspaceID &&
+            sessionRefreshGeneration == refreshGeneration
     }
 
     private static func signInMessage(for error: Error) -> String {

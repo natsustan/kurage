@@ -31,16 +31,33 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         try Task.checkCancellation()
         try await ensureLoaded()
         try Task.checkCancellation()
-        let result = try await webView.callAsyncJavaScript(
-            "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL))",
-            arguments: [
-                "workspaceID": workspaceID,
-                "token": access.token,
-                "baseURL": gatewayBaseURL.absoluteString,
-            ],
-            in: nil,
-            contentWorld: .page
-        )
+        let operationID = UUID().uuidString
+        // WebKit receives a per-refresh capability; the Streams token stays in the native handler.
+        fetchHandler.register(access, for: operationID)
+        defer { fetchHandler.unregister(operationID) }
+        let result = try await withTaskCancellationHandler {
+            try await webView.callAsyncJavaScript(
+                "return await window.kurageBridgeReady.then(() => window.kurageSessions(operationID, workspaceID, baseURL))",
+                arguments: [
+                    "operationID": operationID,
+                    "workspaceID": workspaceID,
+                    "baseURL": gatewayBaseURL.absoluteString,
+                ],
+                in: nil,
+                contentWorld: .page
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.fetchHandler.unregister(operationID)
+                _ = try? await self?.webView.callAsyncJavaScript(
+                    "return await window.kurageBridgeReady.then(() => window.kurageCancel(operationID))",
+                    arguments: ["operationID": operationID],
+                    in: nil,
+                    contentWorld: .page
+                )
+            }
+        }
+        try Task.checkCancellation()
         guard let json = result as? String, let data = json.data(using: .utf8) else {
             throw LodyClientError.notConnected
         }
@@ -140,9 +157,63 @@ private struct SessionSnapshot: Decodable {
     let sessions: [SessionMetadata]
 }
 
+struct StreamsHostPolicy {
+    let gatewayBaseURL: URL
+    let shardHostSuffix: String?
+
+    func allows(_ url: URL) -> Bool {
+        guard url.scheme == "https", url.path.hasPrefix("/ds/lody/"),
+              let host = url.host?.lowercased(), let gatewayHost = gatewayBaseURL.host?.lowercased()
+        else { return false }
+        if host == gatewayHost { return true }
+        guard let suffix = shardHostSuffix?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
+              !suffix.isEmpty else { return false }
+        return host == suffix || host.hasSuffix("." + suffix)
+    }
+}
+
+private final class StreamRedirectValidator: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let policy: StreamsHostPolicy
+    let token: String
+
+    init(policy: StreamsHostPolicy, token: String) {
+        self.policy = policy
+        self.token = token
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard request.url.map(policy.allows) == true else {
+            completionHandler(nil)
+            return
+        }
+        var authorizedRequest = request
+        authorizedRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        completionHandler(authorizedRequest)
+    }
+}
+
 @MainActor
 private final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
-    private let session = URLSession(configuration: .ephemeral)
+    private struct Permit {
+        let access: StreamsAccess
+        let session: URLSession
+    }
+
+    private var permits: [String: Permit] = [:]
+
+    func register(_ access: StreamsAccess, for operationID: String) {
+        permits[operationID] = Permit(access: access, session: URLSession(configuration: .ephemeral))
+    }
+
+    func unregister(_ operationID: String) {
+        permits.removeValue(forKey: operationID)?.session.invalidateAndCancel()
+    }
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -151,12 +222,14 @@ private final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithRepl
         guard let input = message.body as? [String: Any],
               let rawURL = input["url"] as? String,
               let url = URL(string: rawURL),
-              url.scheme == "https",
-              url.path.hasPrefix("/ds/lody/"),
               let method = input["method"] as? String,
               method == "GET" || method == "HEAD",
               let headers = input["headers"] as? [String: String],
-              headers["authorization"]?.hasPrefix("Bearer ") == true
+              let authorization = headers["authorization"],
+              authorization.hasPrefix("Bearer "),
+              let permit = permits[String(authorization.dropFirst("Bearer ".count))],
+              let gatewayBaseURL = permit.access.gatewayBaseURL,
+              StreamsHostPolicy(gatewayBaseURL: gatewayBaseURL, shardHostSuffix: permit.access.shardHostSuffix).allows(url)
         else {
             return (nil, "Invalid Streams request")
         }
@@ -168,7 +241,12 @@ private final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithRepl
             for (name, value) in headers {
                 request.setValue(value, forHTTPHeaderField: name)
             }
-            let (data, response) = try await session.data(for: request)
+            request.setValue("Bearer \(permit.access.token)", forHTTPHeaderField: "Authorization")
+            let policy = StreamsHostPolicy(gatewayBaseURL: gatewayBaseURL, shardHostSuffix: permit.access.shardHostSuffix)
+            let (data, response) = try await permit.session.data(
+                for: request,
+                delegate: StreamRedirectValidator(policy: policy, token: permit.access.token)
+            )
             guard let http = response as? HTTPURLResponse else {
                 return (nil, "Invalid Streams response")
             }

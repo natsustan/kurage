@@ -14,7 +14,7 @@ struct SessionProjectGroup: Identifiable, Equatable {
             let id = session.projectID ?? "unassigned"
             if grouped[id] == nil { orderedIDs.append(id) }
             grouped[id, default: []].append(session)
-            if let name = session.projectName, !name.isEmpty {
+            if names[id] == nil, let name = session.projectName, !name.isEmpty {
                 names[id] = name
             }
         }
