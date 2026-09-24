@@ -41,7 +41,6 @@ struct ConversationView: View {
                 isSessionBusy: !model.supportsTextSendingWhileRunning &&
                     model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
-                connectionStatus: connectionStatus,
                 supportsTextSending: model.supportsTextSending,
                 supportsPermissionResponses: model.supportsPermissionResponses,
                 onSend: sendDraft,
@@ -57,6 +56,9 @@ struct ConversationView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ConversationNavigationTitle(title: title, connectionStatus: connectionStatus)
+            }
             if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProgressView()
@@ -105,7 +107,7 @@ struct ConversationView: View {
             } catch {
                 guard !Task.isCancelled else { return }
                 isLoading = false
-                connectionStatus = "Connection interrupted. Reconnecting…"
+                connectionStatus = "Reconnecting…"
                 do { try await Task.sleep(for: .seconds(retryDelay)) }
                 catch { return }
                 retryDelay = min(retryDelay * 2, 30)
@@ -195,6 +197,26 @@ struct ConversationView: View {
     }
 }
 
+private struct ConversationNavigationTitle: View {
+    let title: String
+    let connectionStatus: String?
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Text(title)
+                .font(.headline)
+                .lineLimit(1)
+            Text(connectionStatus ?? " ")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .opacity(connectionStatus == nil ? 0 : 1)
+                .accessibilityHidden(connectionStatus == nil)
+                .accessibilityIdentifier("conversation-connection-status")
+        }
+    }
+}
+
 struct ConversationEmptyState: View {
     let isLoading: Bool
 
@@ -265,7 +287,6 @@ private struct ConversationFooter: View {
     let isSending: Bool
     let isSessionBusy: Bool
     let banner: String?
-    let connectionStatus: String?
     let supportsTextSending: Bool
     let supportsPermissionResponses: Bool
     let onSend: () -> Void
@@ -275,11 +296,6 @@ private struct ConversationFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let connectionStatus {
-                Text(connectionStatus)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             if isSending {
                 Text("Sending…")
                     .font(.footnote)
