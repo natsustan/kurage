@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Device authorization and read-only workspace session metadata from Lody.
 @MainActor
@@ -6,6 +7,11 @@ final class HTTPLodyClient: LodyClient {
     private let session: URLSession
     private let tokenStore: any AuthTokenStore
     private let baseURL: URL
+    // A shared queue also orders writes from successive client instances.
+    private static let cacheQueue = DispatchQueue(label: "ai.lody.kurage.session-cache", qos: .utility)
+    private var lastScheduledCache: SavedSession?
+    private let cacheURL: URL
+    private(set) var cachedSession: SessionCache?
     private(set) var account: Account?
     private var authenticationGeneration = 0
     private var sessionBridge: SessionSyncBridge?
@@ -13,11 +19,24 @@ final class HTTPLodyClient: LodyClient {
     init(
         session: URLSession = .shared,
         tokenStore: any AuthTokenStore = KeychainAuthTokenStore(),
-        baseURL: URL = LodyEndpoints.authBaseURL
+        baseURL: URL = LodyEndpoints.authBaseURL,
+        cacheURL: URL? = nil
     ) {
         self.session = session
         self.tokenStore = tokenStore
         self.baseURL = baseURL
+        self.cacheURL = cacheURL ?? URL.applicationSupportDirectory
+            .appendingPathComponent("Kurage", isDirectory: true)
+            .appendingPathComponent("session-cache.json")
+        if let token = tokenStore.read(), !token.isEmpty,
+           let data = try? Data(contentsOf: self.cacheURL),
+           let saved = try? JSONDecoder().decode(SavedSession.self, from: data),
+           saved.credentialID == Self.credentialID(token, baseURL: baseURL) {
+            cachedSession = saved.cache
+            account = saved.cache.account
+            lastScheduledCache = saved
+        }
+
     }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization {
@@ -80,6 +99,7 @@ final class HTTPLodyClient: LodyClient {
                 try Task.checkCancellation()
                 guard tokenStore.write(token) else { throw LodyClientError.signInFailed }
                 account = loadedAccount
+                saveSessionCache(SessionCache(account: loadedAccount))
                 return
             }
             switch body.error {
@@ -102,30 +122,30 @@ final class HTTPLodyClient: LodyClient {
     func restoreSession() async -> Account? {
         let generation = authenticationGeneration
         guard let token = tokenStore.read(), !token.isEmpty else {
-            account = nil
+            signOut()
             return nil
         }
         do {
             let data = try await send(path: "api/auth/get-session", method: "GET", json: Optional<String>.none, token: token)
             guard generation == authenticationGeneration, tokenStore.read() == token else { return nil }
             if data == Data("null".utf8) {
-                tokenStore.delete()
-                account = nil
+                signOut()
                 return nil
             }
             let parsed = try JSONDecoder().decode(SessionResponse.self, from: data)
             guard let email = parsed.user?.email, !email.isEmpty else {
-                tokenStore.delete()
-                account = nil
+                signOut()
                 return nil
             }
             let restored = Account(email: email)
             account = restored
+            var cache = cachedSession ?? SessionCache(account: restored)
+            cache.account = restored
+            saveSessionCache(cache)
             return restored
         } catch LodyClientError.signedOut {
             guard generation == authenticationGeneration, tokenStore.read() == token else { return nil }
-            tokenStore.delete()
-            account = nil
+            signOut()
             return nil
         } catch {
             return generation == authenticationGeneration ? account : nil
@@ -137,6 +157,58 @@ final class HTTPLodyClient: LodyClient {
         tokenStore.delete()
         account = nil
         sessionBridge = nil
+        cachedSession = nil
+        lastScheduledCache = nil
+        let cacheURL = cacheURL
+        Self.cacheQueue.async {
+            try? FileManager.default.removeItem(at: cacheURL)
+        }
+    }
+
+    func saveSessionCache(_ cache: SessionCache) {
+        guard cache.account == account, let token = tokenStore.read(), !token.isEmpty else { return }
+        cachedSession = cache
+        let saved = SavedSession(credentialID: Self.credentialID(token, baseURL: baseURL), cache: cache)
+        guard saved != lastScheduledCache else { return }
+        lastScheduledCache = saved
+        let cacheURL = cacheURL
+        Self.cacheQueue.async { [weak self] in
+            do {
+                let data = try JSONEncoder().encode(saved)
+                try FileManager.default.createDirectory(
+                    at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true
+                )
+                try data.write(to: cacheURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                var url = cacheURL
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try url.setResourceValues(values)
+            } catch {
+                // Keep the in-memory session usable and allow this snapshot to be retried.
+                Task { @MainActor [weak self] in
+                    if self?.lastScheduledCache == saved {
+                        self?.lastScheduledCache = nil
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits for already scheduled persistence operations without blocking the main actor.
+    func flushSessionCache() async {
+        await withCheckedContinuation { continuation in
+            Self.cacheQueue.async { continuation.resume() }
+        }
+    }
+
+    private struct SavedSession: Codable, Equatable, Sendable {
+        var credentialID: String
+        var cache: SessionCache
+    }
+
+    private static func credentialID(_ token: String, baseURL: URL) -> String {
+        SHA256.hash(data: Data((baseURL.absoluteString + "\n" + token).utf8))
+            .map { String(format: "%02x", $0) }.joined()
     }
 
     func workspaces() async throws -> [WorkspaceSummary] {

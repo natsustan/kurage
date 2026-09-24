@@ -14,6 +14,8 @@ struct StatusNote: Equatable {
 @Observable
 final class AppModel {
     private let client: any LodyClient
+    private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
+    private var isRestoringAccount = false
 
     private(set) var account: Account?
     private(set) var workspaces: [WorkspaceSummary] = []
@@ -21,7 +23,9 @@ final class AppModel {
     private(set) var sessions: [SessionSummary] = []
     private(set) var isRefreshingSessions = false
     private(set) var isSigningIn = false
-    private(set) var statusNote: StatusNote?
+    private var currentStatusNote: StatusNote?
+    private var workspaceStatusNote: StatusNote?
+    var statusNote: StatusNote? { workspaceStatusNote ?? currentStatusNote }
     private(set) var deviceAuthorization: DeviceAuthorization?
     private var signInTask: Task<Void, Never>?
     private var authenticationGeneration = 0
@@ -31,10 +35,25 @@ final class AppModel {
 
     init(client: any LodyClient) {
         self.client = client
+        account = client.account
+        if let cache = client.cachedSession, cache.account == account {
+            workspaces = cache.workspaces
+            selectedWorkspaceID = cache.selectedWorkspaceID
+            sessionsByWorkspace = cache.sessionsByWorkspace
+            sessions = cache.selectedWorkspaceID.flatMap { cache.sessionsByWorkspace[$0] } ?? []
+        }
     }
 
     var isSignedIn: Bool { account != nil }
     var supportsConversations: Bool { client.supportsConversations }
+    var hasCachedSessions: Bool {
+        selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
+    }
+
+    func refreshContent() async {
+        await refreshWorkspaces()
+        await refreshSessions()
+    }
 
     var workspaceLabel: String {
         selectedWorkspace?.name ?? account?.email ?? ""
@@ -46,12 +65,17 @@ final class AppModel {
 
     /// Picks up a stored Lody session, or an account the fixture already holds.
     func adoptExistingAccount() async {
-        if account == nil && signInTask == nil {
-            let generation = authenticationGeneration
-            let restored = await client.restoreSession()
-            guard generation == authenticationGeneration, signInTask == nil, account == nil else { return }
-            account = restored
+        guard !isRestoringAccount, signInTask == nil else { return }
+        isRestoringAccount = true
+        defer { isRestoringAccount = false }
+        let generation = authenticationGeneration
+        let restored = await client.restoreSession()
+        guard generation == authenticationGeneration, signInTask == nil else { return }
+        if restored == nil {
+            if account != nil { signOut() }
+            return
         }
+        account = restored
         guard account != nil else { return }
         await refreshWorkspaces()
         await refreshSessions()
@@ -66,7 +90,7 @@ final class AppModel {
                 isSigningIn = false
             }
             isSigningIn = true
-            statusNote = nil
+            currentStatusNote = nil
             deviceAuthorization = nil
             do {
                 let authorization = try await client.beginDeviceAuthorization()
@@ -84,7 +108,7 @@ final class AppModel {
             } catch {
                 signOut()
                 deviceAuthorization = nil
-                statusNote = StatusNote(tone: .failure, text: Self.signInMessage(for: error))
+                currentStatusNote = StatusNote(tone: .failure, text: Self.signInMessage(for: error))
             }
         }
     }
@@ -106,9 +130,11 @@ final class AppModel {
         client.signOut()
         account = nil
         workspaces = []
+        workspaceStatusNote = nil
         selectedWorkspaceID = nil
         sessions = []
-        statusNote = nil
+        sessionsByWorkspace = [:]
+        currentStatusNote = nil
     }
 
     func refreshWorkspaces() async {
@@ -118,18 +144,22 @@ final class AppModel {
             let loaded = try await client.workspaces()
             guard isCurrentAuthentication(generation) else { return }
             workspaces = loaded
+            workspaceStatusNote = nil
             if !loaded.contains(where: { $0.id == selectedWorkspaceID }) {
                 cancelSessionRefresh()
                 selectedWorkspaceID = loaded.first?.id
-                sessions = []
+                sessions = selectedWorkspaceID.flatMap { sessionsByWorkspace[$0] } ?? []
             }
+            sessionsByWorkspace = sessionsByWorkspace.filter { entry in loaded.contains { $0.id == entry.key } }
+            persistSession()
+        } catch LodyClientError.signedOut {
+            guard isCurrentAuthentication(generation) else { return }
+            signOut()
+        } catch is CancellationError {
+            return
         } catch {
             guard isCurrentAuthentication(generation) else { return }
-            cancelSessionRefresh()
-            workspaces = []
-            selectedWorkspaceID = nil
-            sessions = []
-            statusNote = StatusNote(tone: .failure, text: "Could not load workspaces.")
+            workspaceStatusNote = StatusNote(tone: .failure, text: "Could not load workspaces.")
         }
     }
 
@@ -138,8 +168,9 @@ final class AppModel {
               selectedWorkspaceID != workspaceID else { return }
         cancelSessionRefresh()
         selectedWorkspaceID = workspaceID
-        sessions = []
-        statusNote = nil
+        sessions = sessionsByWorkspace[workspaceID] ?? []
+        persistSession()
+        currentStatusNote = nil
         await refreshSessions()
     }
 
@@ -174,19 +205,26 @@ final class AppModel {
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
             sessions = loaded
-            statusNote = nil
+            sessionsByWorkspace[workspaceID] = loaded
+            persistSession()
+            currentStatusNote = nil
         } catch is CancellationError {
             return
+        } catch LodyClientError.signedOut {
+            guard isCurrentSessionRefresh(
+                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
+            ) else { return }
+            signOut()
         } catch LodyClientError.notConnected {
             guard isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            statusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
+            currentStatusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
         } catch {
             guard isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            statusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
+            currentStatusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
         }
     }
 
@@ -215,6 +253,16 @@ final class AppModel {
         if isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
             await refreshSessions(restart: true)
         }
+    }
+
+    private func persistSession() {
+        guard let account else { return }
+        client.saveSessionCache(SessionCache(
+            account: account,
+            workspaces: workspaces,
+            selectedWorkspaceID: selectedWorkspaceID,
+            sessionsByWorkspace: sessionsByWorkspace
+        ))
     }
 
     private func cancelSessionRefresh() {

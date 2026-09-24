@@ -1,15 +1,15 @@
 import Foundation
 
-struct Account: Equatable, Sendable {
+struct Account: Codable, Equatable, Sendable {
     var email: String
 }
 
-enum SessionActivity: Equatable, Sendable {
+enum SessionActivity: String, Codable, Equatable, Sendable {
     case running
     case idle
 }
 
-struct SessionSummary: Identifiable, Equatable, Sendable {
+struct SessionSummary: Codable, Identifiable, Equatable, Sendable {
     let id: String
     var title: String
     var agentName: String
@@ -47,7 +47,7 @@ enum PermissionDecision: Equatable, Sendable {
     case deny
 }
 
-struct WorkspaceSummary: Identifiable, Equatable, Sendable {
+struct WorkspaceSummary: Codable, Identifiable, Equatable, Sendable {
     let id: String
     var name: String
     var slug: String
@@ -71,4 +71,12 @@ enum LodyClientError: Error, Equatable {
     case signInFailed
     case accessDenied
     case codeExpired
+}
+
+/// Display data only; credentials remain in Keychain.
+struct SessionCache: Codable, Equatable, Sendable {
+    var account: Account
+    var workspaces: [WorkspaceSummary] = []
+    var selectedWorkspaceID: String?
+    var sessionsByWorkspace: [String: [SessionSummary]] = [:]
 }

@@ -7,6 +7,8 @@ import Foundation
 @MainActor
 protocol LodyClient: AnyObject {
     var account: Account? { get }
+    var cachedSession: SessionCache? { get }
+    func saveSessionCache(_ cache: SessionCache)
     var requiresExternalAuthorization: Bool { get }
     var supportsConversations: Bool { get }
 
@@ -27,6 +29,8 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    var cachedSession: SessionCache? { nil }
+    func saveSessionCache(_ cache: SessionCache) {}
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
 }
