@@ -6,6 +6,8 @@ final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
     let requiresExternalAuthorization = false
     let supportsConversations = true
+    let supportsConversationActions = true
+
     private var records: [SessionRecord]
     private var nextTurnNumber = 0
 
@@ -155,6 +157,28 @@ extension SessionRecord {
                 title: "Allow npm test?",
                 detail: "codex wants to run npm test on this machine"
             )
+        ),
+        SessionRecord(
+            summary: SessionSummary(
+                id: "session-long",
+                title: "long conversation",
+                agentName: "codex",
+                activity: .idle,
+                preview: "Latest reply in long conversation",
+                projectID: "local:machine-1:kurage",
+                projectName: "kurage"
+            ),
+            turns: (1...20).flatMap { number in
+                [
+                    ConversationTurn(id: "long-user-\(number)", author: .user, text: "Question \(number)"),
+                    ConversationTurn(
+                        id: "long-agent-\(number)",
+                        author: .agent,
+                        text: number == 20 ? "Latest reply in long conversation" : "Answer \(number): More details about this question."
+                    ),
+                ]
+            },
+            permission: nil
         ),
         SessionRecord(
             summary: SessionSummary(

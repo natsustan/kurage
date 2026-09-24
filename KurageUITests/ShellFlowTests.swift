@@ -52,12 +52,15 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "sessions")
         tap(session)
 
-        let allow = app.buttons["permission-allow"]
-        XCTAssertTrue(allow.waitForExistence(timeout: 5))
+        let review = app.buttons["permission-review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Allow npm test?"].exists)
         attachScreen(app, name: "conversation")
+        tap(review)
+        let allow = app.buttons["permission-allow"].firstMatch
+        XCTAssertTrue(allow.waitForExistence(timeout: 5))
         tap(allow)
-        XCTAssertFalse(allow.waitForExistence(timeout: 2))
+        XCTAssertFalse(review.waitForExistence(timeout: 2))
 
         let field = app.descendants(matching: .any)["follow-up-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
@@ -66,7 +69,24 @@ final class ShellFlowTests: XCTestCase {
 
         tap(app.buttons["send-follow-up"])
         XCTAssertTrue(app.staticTexts["look again"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Run the tests again"].isHittable)
         attachScreen(app, name: "sent")
+    }
+
+    @MainActor
+    func testLongConversationOpensAtLatestMessage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+
+        let latest = app.staticTexts["Latest reply in long conversation"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        XCTAssertTrue(latest.isHittable)
     }
 
     @MainActor

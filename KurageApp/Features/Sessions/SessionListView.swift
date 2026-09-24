@@ -64,7 +64,6 @@ struct SessionListView: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 }
 
@@ -128,7 +127,7 @@ private struct SessionList: View {
             .padding(.top, 20)
             .padding(.bottom, 32)
         }
-        .background(Color.white)
+        .background(Color(.systemBackground))
     }
 
     private func projectGroup(_ group: SessionProjectGroup) -> some View {

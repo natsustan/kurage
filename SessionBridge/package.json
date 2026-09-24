@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test bridge.test.mjs"
+    "test": "node --test *.test.mjs"
   },
   "dependencies": {
     "@loro-dev/flock-wasm": "0.4.3",

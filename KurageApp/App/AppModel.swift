@@ -32,6 +32,7 @@ final class AppModel {
     private var sessionRefreshGeneration = 0
     private var sessionRefreshTask: Task<[SessionSummary], Error>?
     private var sessionRefreshWorkspaceID: WorkspaceSummary.ID?
+    private var conversationCache: [WorkspaceSummary.ID: [SessionSummary.ID: Conversation]] = [:]
 
     init(client: any LodyClient) {
         self.client = client
@@ -46,6 +47,7 @@ final class AppModel {
 
     var isSignedIn: Bool { account != nil }
     var supportsConversations: Bool { client.supportsConversations }
+    var supportsConversationActions: Bool { client.supportsConversationActions }
     var hasCachedSessions: Bool {
         selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
     }
@@ -133,6 +135,7 @@ final class AppModel {
         workspaceStatusNote = nil
         selectedWorkspaceID = nil
         sessions = []
+        conversationCache = [:]
         sessionsByWorkspace = [:]
         currentStatusNote = nil
     }
@@ -230,7 +233,38 @@ final class AppModel {
 
     func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
-        return try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
+        let generation = authenticationGeneration
+        let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
+        conversationCache[workspaceID, default: [:]][sessionID] = loaded
+        return loaded
+    }
+
+    func observeConversation(
+        sessionID: String,
+        onUpdate: @MainActor (ConversationUpdate) -> Void
+    ) async throws {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let updates = try await client.observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        for try await update in updates {
+            try Task.checkCancellation()
+            guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+                throw CancellationError()
+            }
+            guard update.conversation.sessionID == sessionID else { throw LodyClientError.notConnected }
+            conversationCache[workspaceID, default: [:]][sessionID] = update.conversation
+            if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
+               sessions[index].activity != activity {
+                sessions[index].activity = activity
+            }
+            onUpdate(update)
+        }
+    }
+
+    func cachedConversation(sessionID: SessionSummary.ID) -> Conversation? {
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return conversationCache[workspaceID]?[sessionID]
     }
 
     func send(_ text: String, sessionID: SessionSummary.ID) async throws {

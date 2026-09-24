@@ -12,6 +12,7 @@
 		256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */; };
 		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
 		4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DECA865E619085D6495AE9 /* SignInView.swift */; };
+		67CAF1EE62C5732FD3B6C298 /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = E19E548C83F201B3073B5E62 /* MarkdownView */; };
 		731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */; };
 		7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9509B93A448677F2BA6F70 /* KurageApp.swift */; };
 		7FB5A3A2867FFA5EF3E091CD /* SessionProjectGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */; };
@@ -71,6 +72,17 @@
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
 		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		1096DEE528A2B2EA2E6576B6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				67CAF1EE62C5732FD3B6C298 /* MarkdownView in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		17C2C17D269499AF4A93B2C3 /* Conversation */ = {
@@ -199,6 +211,7 @@
 			buildPhases = (
 				90346D40B824DFEA12785C56 /* Sources */,
 				856B192AFEAB3C46B2A993E2 /* Resources */,
+				1096DEE528A2B2EA2E6576B6 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -206,6 +219,7 @@
 			);
 			name = Kurage;
 			packageProductDependencies = (
+				E19E548C83F201B3073B5E62 /* MarkdownView */,
 			);
 			productName = Kurage;
 			productReference = D8AB4457E0D00261BF02F78D /* Kurage.app */;
@@ -274,6 +288,9 @@
 			);
 			mainGroup = 76D81568C25B69EFE26D8E9A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1950DEAE703DD1786CADF75B /* Products */;
 			projectDirPath = "";
@@ -642,6 +659,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/LiYanan2004/MarkdownView.git";
+			requirement = {
+				kind = exactVersion;
+				version = 3.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E19E548C83F201B3073B5E62 /* MarkdownView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */;
+			productName = MarkdownView;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = DCA9EB984FDABC20A6A90413 /* Project object */;
 }

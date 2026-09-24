@@ -10,7 +10,10 @@ protocol LodyClient: AnyObject {
     var cachedSession: SessionCache? { get }
     func saveSessionCache(_ cache: SessionCache)
     var requiresExternalAuthorization: Bool { get }
+    /// Whether conversation history and updates can be read.
     var supportsConversations: Bool { get }
+    /// Whether messages can be sent and permission prompts answered.
+    var supportsConversationActions: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
@@ -19,6 +22,7 @@ protocol LodyClient: AnyObject {
     func workspaces() async throws -> [WorkspaceSummary]
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
     func respond(
         _ decision: PermissionDecision,
@@ -29,8 +33,17 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        return AsyncThrowingStream { continuation in
+            continuation.yield(ConversationUpdate(conversation: snapshot, activity: nil, syncState: .live))
+            continuation.finish()
+        }
+    }
+
     var cachedSession: SessionCache? { nil }
     func saveSessionCache(_ cache: SessionCache) {}
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
+    var supportsConversationActions: Bool { false }
 }
