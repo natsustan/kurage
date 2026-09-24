@@ -5,6 +5,92 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
+    private static var isolatedCacheURL: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    }
+
+    @Test func cachedSessionSurvivesRelaunchAndOfflineRefresh() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = MemoryAuthTokenStore()
+        _ = store.write("persistent-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        let account = try #require(await client.restoreSession())
+        let row = SessionSummary(id: "chat", title: "Saved chat", agentName: "Agent", activity: .idle, preview: "Hello")
+        let cache = SessionCache(account: account,
+                                 workspaces: [WorkspaceSummary(id: "work", name: "Work", slug: "work")],
+                                 selectedWorkspaceID: "work", sessionsByWorkspace: ["work": [row]])
+        client.saveSessionCache(cache)
+        await client.flushSessionCache()
+
+        let relaunched = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        let model = AppModel(client: relaunched)
+        #expect(model.isSignedIn)
+        #expect(model.selectedWorkspaceID == "work")
+        #expect(model.sessions == [row])
+        log.install { _ in (503, Data()) }
+        await model.adoptExistingAccount()
+        #expect(model.isSignedIn)
+        #expect(model.sessions == [row])
+        #expect(model.workspaces == cache.workspaces)
+
+        log.install { _ in (401, Data()) }
+        await model.adoptExistingAccount()
+        #expect(!model.isSignedIn)
+        #expect(model.sessions.isEmpty)
+        #expect(store.read() == nil)
+        await client.flushSessionCache()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func cacheCannotRestoreWithDifferentCredential() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = MemoryAuthTokenStore()
+        _ = store.write("first-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        _ = await client.restoreSession()
+        #expect(client.cachedSession != nil)
+        await client.flushSessionCache()
+        _ = store.write("different-token")
+        let other = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        #expect(other.account == nil)
+        #expect(other.cachedSession == nil)
+        client.signOut()
+        await client.flushSessionCache()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func queuedWritesCannotRecreateCacheAfterSignOut() async throws {
+        let url = Self.isolatedCacheURL
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = MemoryAuthTokenStore()
+        _ = store.write("old-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        let account = try #require(await client.restoreSession())
+        for index in 0..<20 {
+            client.saveSessionCache(SessionCache(account: account, selectedWorkspaceID: "work-\(index)"))
+        }
+        client.signOut()
+        await client.flushSessionCache()
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(client.cachedSession == nil)
+
+        _ = store.write("new-token")
+        _ = await client.restoreSession()
+        let latest = SessionCache(account: account, selectedWorkspaceID: "new-work")
+        client.saveSessionCache(latest)
+        await client.flushSessionCache()
+        let relaunched = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
+        #expect(relaunched.cachedSession == latest)
+    }
+
     @Test func deviceFlowStoresTokenAndRewritesHost() async throws {
         let store = MemoryAuthTokenStore()
         let log = AuthRequestLog()
@@ -25,7 +111,7 @@ struct HTTPLodyClientTests {
                 return (404, Data())
             }
         }
-        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL)
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
 
         let authorization = try await client.beginDeviceAuthorization()
         #expect(authorization.userCode == "ABCD-EFGH")
@@ -52,7 +138,7 @@ struct HTTPLodyClientTests {
                 return (404, Data())
             }
         }
-        let client = HTTPLodyClient(session: log.session, tokenStore: MemoryAuthTokenStore(), baseURL: log.baseURL)
+        let client = HTTPLodyClient(session: log.session, tokenStore: MemoryAuthTokenStore(), baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
         let authorization = try await client.beginDeviceAuthorization()
         await #expect(throws: LodyClientError.accessDenied) {
             try await client.finishDeviceAuthorization(authorization)
@@ -79,7 +165,7 @@ struct HTTPLodyClientTests {
         }
         defer { DeferredAuthURLProtocol.onStart = nil }
 
-        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
         try await client.finishDeviceAuthorization(testAuthorization)
 
         #expect(polls.value == 2)
@@ -97,7 +183,8 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(
             session: URLSession(configuration: configuration),
             tokenStore: MemoryAuthTokenStore(),
-            baseURL: URL(string: "https://backend.lody.ai")!
+            baseURL: URL(string: "https://backend.lody.ai")!,
+            cacheURL: Self.isolatedCacheURL
         )
 
         let authorization = DeviceAuthorization(
@@ -132,7 +219,7 @@ struct HTTPLodyClientTests {
         }
         defer { DeferredAuthURLProtocol.onStart = nil }
 
-        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
         let task = Task { try await client.finishDeviceAuthorization(testAuthorization) }
         var iterator = started.makeAsyncIterator()
         _ = await iterator.next()
@@ -172,7 +259,7 @@ struct HTTPLodyClientTests {
         }
         defer { DeferredAuthURLProtocol.onStart = nil }
 
-        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
         let model = AppModel(client: client)
         let restoration = Task { await model.adoptExistingAccount() }
         var iterator = started.makeAsyncIterator()
@@ -226,7 +313,7 @@ struct HTTPLodyClientTests {
         }
         defer { DeferredAuthURLProtocol.onStart = nil }
 
-        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store)
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
         let model = AppModel(client: client)
         let restoration = Task { await model.adoptExistingAccount() }
         var iterator = started.makeAsyncIterator()
@@ -280,7 +367,7 @@ struct HTTPLodyClientTests {
         }
         defer { DeferredAuthURLProtocol.onStart = nil }
 
-        let model = AppModel(client: HTTPLodyClient(session: deferredSession(), tokenStore: store))
+        let model = AppModel(client: HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL))
         model.connect(open: { _ in })
         var iterator = started.makeAsyncIterator()
         _ = await iterator.next()
@@ -315,7 +402,7 @@ struct HTTPLodyClientTests {
             }
             return (401, Data(#"{"code":"UNAUTHORIZED"}"#.utf8))
         }
-        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL)
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
 
         let account = await client.restoreSession()
         #expect(account == Account(email: "ada@lody.ai"))
@@ -326,7 +413,7 @@ struct HTTPLodyClientTests {
         #expect(store.write("stale"))
         let log = AuthRequestLog()
         log.install { _ in (200, Data("null".utf8)) }
-        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL)
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
 
         let account = await client.restoreSession()
         #expect(account == nil)
@@ -350,7 +437,7 @@ struct HTTPLodyClientTests {
                 return (404, Data())
             }
         }
-        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL)
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
         let authorization = try await client.beginDeviceAuthorization()
         try await client.finishDeviceAuthorization(authorization)
 
@@ -380,7 +467,8 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(
             session: log.session,
             tokenStore: MemoryAuthTokenStore(),
-            baseURL: log.baseURL
+            baseURL: log.baseURL,
+            cacheURL: Self.isolatedCacheURL
         )
         let authorization = try await client.beginDeviceAuthorization()
         try await client.finishDeviceAuthorization(authorization)
@@ -426,7 +514,8 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(
             session: log.session,
             tokenStore: MemoryAuthTokenStore(),
-            baseURL: log.baseURL
+            baseURL: log.baseURL,
+            cacheURL: Self.isolatedCacheURL
         )
         let authorization = try await client.beginDeviceAuthorization()
         try await client.finishDeviceAuthorization(authorization)

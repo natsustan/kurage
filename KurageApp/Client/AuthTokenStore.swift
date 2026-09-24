@@ -28,7 +28,16 @@ final class KeychainAuthTokenStore: AuthTokenStore {
     }
 
     func write(_ token: String) -> Bool {
-        delete()
+        let identity: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let update = SecItemUpdate(identity as CFDictionary, [
+            kSecValueData as String: Data(token.utf8),
+        ] as CFDictionary)
+        if update == errSecSuccess { return true }
+        guard update == errSecItemNotFound else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

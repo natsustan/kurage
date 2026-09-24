@@ -2,7 +2,7 @@ import SwiftUI
 
 struct SessionListView: View {
     let model: AppModel
-    @State private var listMode: SessionListMode = .byProject
+    @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
 
     var body: some View {
         NavigationStack {
@@ -10,12 +10,12 @@ struct SessionListView: View {
                 sessions: model.sessions,
                 mode: listMode,
                 supportsConversations: model.supportsConversations,
-                isRefreshing: model.isRefreshingSessions,
+                isRefreshing: model.isRefreshingSessions && !model.hasCachedSessions,
                 statusNote: model.statusNote
             )
             .navigationTitle("Kurage")
             .navigationSubtitle(model.workspaceLabel)
-            .refreshable { await model.refreshSessions() }
+            .refreshable { await model.refreshContent() }
             .navigationDestination(for: SessionSummary.ID.self) { sessionID in
                 ConversationView(
                     sessionID: sessionID,
@@ -68,7 +68,7 @@ struct SessionListView: View {
     }
 }
 
-private enum SessionListMode: Hashable {
+private enum SessionListMode: String, Hashable {
     case byProject
     case byTime
 }
