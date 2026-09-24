@@ -1,10 +1,22 @@
 import Foundation
 import CryptoKit
 
-/// Device authorization and read-only workspace session metadata from Lody.
+/// Device authorization and workspace sessions from Lody.
 @MainActor
 final class HTTPLodyClient: LodyClient {
     let supportsConversations = true
+    var supportsTextSending: Bool { account?.id?.isEmpty == false }
+
+    private struct SendKey: Hashable {
+        let userID: String
+        let workspaceID: String
+        let sessionID: String
+    }
+
+    private struct PendingSend {
+        let text: String
+        let turnID: String
+    }
 
     private let session: URLSession
     private let tokenStore: any AuthTokenStore
@@ -18,6 +30,7 @@ final class HTTPLodyClient: LodyClient {
     private var authenticationGeneration = 0
     private var sessionBridge: SessionSyncBridge?
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
+    private var pendingSends: [SendKey: PendingSend] = [:]
 
     init(
         session: URLSession = .shared,
@@ -140,7 +153,7 @@ final class HTTPLodyClient: LodyClient {
                 signOut()
                 return nil
             }
-            let restored = Account(email: email)
+            let restored = Account(email: email, id: parsed.user?.id)
             account = restored
             var cache = cachedSession ?? SessionCache(account: restored)
             cache.account = restored
@@ -162,6 +175,7 @@ final class HTTPLodyClient: LodyClient {
         sessionBridge?.close()
         sessionBridge = nil
         streamsAccessCache = [:]
+        pendingSends = [:]
         cachedSession = nil
         lastScheduledCache = nil
         let cacheURL = cacheURL
@@ -332,7 +346,35 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
-        throw LodyClientError.notConnected
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
+        if let pending = pendingSends[key], pending.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.text)
+        }
+        let turnID = pendingSends[key]?.turnID ?? UUID().uuidString.lowercased()
+        pendingSends[key] = PendingSend(text: trimmed, turnID: turnID)
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.sendText(trimmed, turnID: turnID, userID: userID,
+                                               sessionID: sessionID, workspaceID: workspaceID, access: access)
+        guard generation == authenticationGeneration, account != nil else {
+            throw LodyClientError.signedOut
+        }
+        if result == "busy" {
+            if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+            throw LodyClientError.sessionBusy
+        }
+        if result == "superseded" {
+            if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+            throw LodyClientError.sendSuperseded
+        }
+        guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
+        if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
     }
 
     func respond(
@@ -355,7 +397,7 @@ final class HTTPLodyClient: LodyClient {
         if data == Data("null".utf8) { throw LodyClientError.signedOut }
         let session = try JSONDecoder().decode(SessionResponse.self, from: data)
         guard let email = session.user?.email, !email.isEmpty else { throw LodyClientError.signInFailed }
-        return Account(email: email)
+        return Account(email: email, id: session.user?.id)
     }
 
     private func perform(
@@ -524,6 +566,7 @@ private struct SessionResponse: Decodable {
 }
 
 private struct AuthUserBody: Decodable {
+    var id: String?
     var email: String?
 }
 

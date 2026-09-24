@@ -1,8 +1,8 @@
 import Foundation
 import WebKit
 
-/// Runs Lody's Flock/Streams reader in an isolated bundled WebKit page.
-/// Native URLSession owns network access; the page only projects session metadata.
+/// Runs Lody's Flock/Streams client in an isolated bundled WebKit page.
+/// Native URLSession owns network access.
 @MainActor
 final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     private let fetchHandler: StreamFetchHandler
@@ -38,7 +38,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
                 "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, baseURL, operationID))",
                 workspaceID: workspaceID,
                 access: access,
-                operationID: operationID
+                arguments: ["operationID": operationID]
             )
         } onCancel: {
             Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
@@ -67,10 +67,21 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL))",
             workspaceID: workspaceID,
             access: access,
-            sessionID: sessionID
+            arguments: ["sessionID": sessionID]
         )
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         return try JSONDecoder().decode(Conversation.self, from: data)
+    }
+
+    func sendText(_ text: String, turnID: String, userID: String, sessionID: String,
+                  workspaceID: String, access: StreamsAccess) async throws -> String {
+        try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
+                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date())]
+        )
     }
 
     func observeConversation(sessionID: String, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -83,7 +94,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             do {
                 _ = try await callBridge(
                     "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, baseURL, observationID))",
-                    workspaceID: workspaceID, access: access, sessionID: sessionID, observationID: id
+                    workspaceID: workspaceID, access: access,
+                    arguments: ["sessionID": sessionID, "observationID": id]
                 )
             } catch {
                 observers[id]?.finish(throwing: error)
@@ -137,21 +149,17 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         _ script: String,
         workspaceID: String,
         access: StreamsAccess,
-        sessionID: String? = nil,
-        observationID: String? = nil,
-        operationID: String? = nil
+        arguments additionalArguments: [String: Any] = [:]
     ) async throws -> String {
         guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
         try Task.checkCancellation()
         try await ensureLoaded()
         try Task.checkCancellation()
-        var arguments = [
+        var arguments: [String: Any] = [
             "workspaceID": workspaceID,
             "baseURL": gatewayBaseURL.absoluteString,
         ]
-        if let sessionID { arguments["sessionID"] = sessionID }
-        if let observationID { arguments["observationID"] = observationID }
-        if let operationID { arguments["operationID"] = operationID }
+        arguments.merge(additionalArguments) { _, value in value }
         let result = try await webView.callAsyncJavaScript(
             script,
             arguments: arguments,
@@ -338,7 +346,8 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         }
         guard command == "start", requests[id] == nil,
               let rawURL = input["url"] as? String, let url = URL(string: rawURL),
-              let method = input["method"] as? String, method == "GET" || method == "HEAD",
+              let method = input["method"] as? String,
+              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method),
               let headers = input["headers"] as? [String: String] else {
             return (nil, "Invalid Streams request")
         }
@@ -353,6 +362,12 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         else { return (nil, "Invalid Streams request") }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let encodedBody = input["body"] as? String {
+            guard method != "GET", method != "HEAD", let body = Data(base64Encoded: encodedBody) else {
+                return (nil, "Invalid Streams request body")
+            }
+            request.httpBody = body
+        }
         // The Streams library owns inactivity deadlines through AbortSignal.
         request.timeoutInterval = 300
         for (name, value) in headers where name.lowercased() != "authorization" {

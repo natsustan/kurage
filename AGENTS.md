@@ -24,7 +24,7 @@
 - Access data through `AppModel` and `LodyClient` from the UI, keeping the live client and fixtures clearly separated.
 - Session operations must explicitly carry a workspace ID to prevent caches or updates from crossing workspace boundaries.
 - Preserve cancellation, subscription cleanup when entering the background, account switching, and isolation from stale updates.
-- The live client currently supports read-only conversations and live updates. Sending messages and responding to permission prompts are available only in fixtures. Do not treat fixture capabilities as implemented live-service capabilities.
+- The live client supports conversation reading, live updates, and plain-text sending to idle sessions when the signed-in account has a user ID. Sending while a session runs and responding to permission prompts remain fixture-only capabilities. Do not treat fixture capabilities as implemented live-service capabilities.
 - Continue using the existing secure storage for authentication credentials. Do not persist short-lived Streams tokens in Keychain or write tokens to logs or documentation.
 - Bridge dependencies use pinned versions. Check protocol compatibility and WASM bundling behavior when upgrading.
 
@@ -51,9 +51,9 @@
 
 ## Protocols and Feature Extensions
 
-- Device sign-in, account restoration, sign-out, workspace switching, session lists, project grouping, and live read-only conversation updates are currently integrated.
+- Device sign-in, account restoration, sign-out, workspace switching, session lists, project grouping, live conversation updates, and idle-session plain-text sending are currently integrated.
 - Conversation content currently projects only plain text from users and agents. Structured events such as tool records are not fully displayed. Model new content types explicitly instead of converting arbitrary events directly into prose.
-- Before implementing live message sending or permission actions, verify request IDs, retries, deduplication, and permission semantics. Then update the protocol, live implementation, fixtures, and capability flags together; do not merely enable UI buttons.
+- Before extending live sending to running sessions or implementing permission actions, verify request IDs, retries, deduplication, and permission semantics. Then update the protocol, live implementation, fixtures, and capability flags together; do not merely enable UI buttons. The current text-send retry ID is held only in process memory.
 - Prefer verified implementations or documentation as protocol references; see `PLAN.md` for reference locations. Do not guess APIs or assume paths from another repository exist in this one.
 - Preserve Streams proxy host and redirect validation, backpressure, chunked UTF-8 handling, cancellation, and token refresh mechanisms.
 - Maintain `SessionBridge/pnpm-lock.yaml` or SwiftPM's `Package.resolved` when changing dependencies. Do not bypass the source build by editing minified JavaScript.

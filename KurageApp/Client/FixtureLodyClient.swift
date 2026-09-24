@@ -6,7 +6,9 @@ final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
     let requiresExternalAuthorization = false
     let supportsConversations = true
-    let supportsConversationActions = true
+    let supportsTextSending = true
+    let supportsTextSendingWhileRunning = true
+    let supportsPermissionResponses = true
 
     private var records: [SessionRecord]
     private var nextTurnNumber = 0
@@ -74,6 +76,9 @@ final class FixtureLodyClient: LodyClient {
             let turn = ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)
             record.turns.append(turn)
             record.summary.preview = trimmed
+        }
+        if let index = records.firstIndex(where: { $0.summary.id == sessionID }) {
+            records.insert(records.remove(at: index), at: 0)
         }
     }
 

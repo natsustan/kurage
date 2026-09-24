@@ -13,9 +13,12 @@ struct ConversationView: View {
     @State private var conversation: Conversation?
     @State private var draft = ""
     @State private var isSending = false
+    @State private var scrollRequestID = 0
     @State private var isLoading = true
     @State private var banner: String?
     @State private var connectionStatus: String?
+    @State private var previousPendingText: String?
+    @State private var previousPendingWorkspaceID: String?
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -25,36 +28,53 @@ struct ConversationView: View {
     }
 
     var body: some View {
-        ConversationTranscript(turns: displayedConversation?.turns ?? [], isLoading: isLoading)
-            .refreshable { refreshID += 1 }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                ConversationFooter(
-                    permission: displayedConversation?.permission,
-                    draft: $draft,
-                    isSending: isSending,
-                    banner: banner,
-                    connectionStatus: connectionStatus,
-                    supportsActions: model.supportsConversationActions,
-                    onSend: sendDraft,
-                    onDecision: respond
-                )
-            }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel("Agent running")
-                    }
+        ConversationLayout(
+            turns: displayedConversation?.turns ?? [],
+            isLoading: isLoading,
+            scrollRequestID: scrollRequestID,
+            onRefresh: { refreshID += 1 }
+        ) {
+            ConversationFooter(
+                permission: displayedConversation?.permission,
+                draft: $draft,
+                isSending: isSending,
+                isSessionBusy: !model.supportsTextSendingWhileRunning &&
+                    model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
+                banner: banner,
+                connectionStatus: connectionStatus,
+                supportsTextSending: model.supportsTextSending,
+                supportsPermissionResponses: model.supportsPermissionResponses,
+                onSend: sendDraft,
+                canRetryPrevious: previousPendingText != nil &&
+                    previousPendingWorkspaceID == model.selectedWorkspaceID,
+                onRetryPrevious: retryPreviousSend,
+                onDecision: respond
+            )
+        }
+        .id(ConversationIdentity(workspaceID: model.selectedWorkspaceID, sessionID: sessionID))
+        .ignoresSafeArea(.keyboard)
+        .ignoresSafeArea(.container, edges: .bottom)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Agent running")
                 }
             }
-            .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
-                                     active: scenePhase == .active, refreshID: refreshID)) {
-                guard scenePhase == .active else { return }
-                await observe()
-            }
+        }
+        .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
+                                 active: scenePhase == .active, refreshID: refreshID)) {
+            guard scenePhase == .active else { return }
+            await observe()
+        }
+    }
+
+    private struct ConversationIdentity: Hashable {
+        let workspaceID: String?
+        let sessionID: String
     }
 
     private struct ObservationKey: Equatable {
@@ -94,19 +114,70 @@ struct ConversationView: View {
     }
 
     private func sendDraft() {
+        guard !isSending else { return }
         let text = draft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        draft = ""
+        scrollRequestID += 1
+        banner = nil
+        isSending = true
         Task {
-            isSending = true
             defer { isSending = false }
             do {
                 try await model.send(text, sessionID: sessionID)
-                draft = ""
-                conversation = try await model.conversation(sessionID: sessionID)
-                banner = nil
-            } catch LodyClientError.emptyMessage {
-                banner = nil
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                if let latest = try? await model.conversation(sessionID: sessionID) {
+                    conversation = latest
+                }
+            } catch LodyClientError.deliveryUnconfirmed {
+                draft = text
+                banner = "Send could not be confirmed. Retry to resume the same message."
+            } catch LodyClientError.previousSendPending(let previousText) {
+                draft = text
+                previousPendingText = previousText
+                previousPendingWorkspaceID = model.selectedWorkspaceID
+                banner = "An earlier send is unconfirmed. Retry it before sending different text."
+            } catch LodyClientError.sendSuperseded {
+                draft = text
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                banner = "A newer message took precedence. Send again to create a new message."
+            } catch LodyClientError.sessionBusy {
+                draft = text
+                banner = "Wait for the current reply before sending."
+            } catch is CancellationError {
+                return
             } catch {
-                banner = "Could not send."
+                draft = text
+                banner = "Could not confirm send. Retry to resume the same message."
+            }
+        }
+    }
+
+    private func retryPreviousSend() {
+        guard !isSending, let text = previousPendingText,
+              previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
+        isSending = true
+        banner = nil
+        Task {
+            defer { isSending = false }
+            do {
+                try await model.send(text, sessionID: sessionID)
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                banner = "Earlier message confirmed. Review your draft before sending."
+                if let latest = try? await model.conversation(sessionID: sessionID) {
+                    conversation = latest
+                }
+            } catch LodyClientError.sendSuperseded {
+                previousPendingText = nil
+                previousPendingWorkspaceID = nil
+                banner = "Earlier message was replaced. You can send your draft as a new message."
+            } catch is CancellationError {
+                return
+            } catch {
+                banner = "Earlier send is still unconfirmed. Retry it before sending different text."
             }
         }
     }
@@ -124,68 +195,19 @@ struct ConversationView: View {
     }
 }
 
-private struct ConversationTranscript: View {
-    let turns: [ConversationTurn]
+struct ConversationEmptyState: View {
     let isLoading: Bool
-    @State private var followsOutput = true
-    @State private var isUserScrolling = false
-    @State private var isNearBottom = true
-
-    private enum Anchor: Hashable { case bottom }
 
     var body: some View {
-        Group {
-            if turns.isEmpty {
-                if isLoading {
-                    ConversationLoadingPlaceholder()
-                } else {
-                    ContentUnavailableView(
-                        "No messages yet",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text("Pull down to refresh this conversation.")
-                    )
-                }
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 28) {
-                            ForEach(turns) { turn in
-                                TurnRow(author: turn.author, text: turn.text)
-                                    .equatable()
-                                    .id(turn.id)
-                            }
-                            Color.clear.frame(height: 1).id(Anchor.bottom)
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 20)
-                    }
-                    .defaultScrollAnchor(.bottom, for: .initialOffset)
-                    .scrollDismissesKeyboard(.interactively)
-                    .task {
-                        guard let latestID = turns.last?.id else { return }
-                        await Task.yield()
-                        proxy.scrollTo(latestID, anchor: .bottom)
-                    }
-                    .onScrollPhaseChange { _, phase in
-                        let wasUserScrolling = isUserScrolling
-                        isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
-                        if wasUserScrolling || isUserScrolling { followsOutput = isNearBottom }
-                    }
-                    .onScrollGeometryChange(for: Bool.self) { geometry in
-                        geometry.contentOffset.y + geometry.containerSize.height >=
-                            geometry.contentSize.height + geometry.contentInsets.bottom - 60
-                    } action: { _, nearBottom in
-                        isNearBottom = nearBottom
-                        if isUserScrolling { followsOutput = nearBottom }
-                    }
-                    .onChange(of: turns.last) { _, _ in
-                        guard followsOutput, !isUserScrolling else { return }
-                        proxy.scrollTo(Anchor.bottom, anchor: .bottom)
-                    }
-                }
-            }
+        if isLoading {
+            ConversationLoadingPlaceholder()
+        } else {
+            ContentUnavailableView(
+                "No messages yet",
+                systemImage: "bubble.left.and.bubble.right",
+                description: Text("Pull down to refresh this conversation.")
+            )
         }
-        .background(Color(.systemBackground))
     }
 }
 
@@ -211,7 +233,7 @@ private struct ConversationLoadingPlaceholder: View {
     }
 }
 
-private struct TurnRow: View, Equatable {
+struct TurnRow: View, Equatable {
     let author: TurnAuthor
     let text: String
 
@@ -241,16 +263,25 @@ private struct ConversationFooter: View {
     let permission: PermissionPrompt?
     @Binding var draft: String
     let isSending: Bool
+    let isSessionBusy: Bool
     let banner: String?
     let connectionStatus: String?
-    let supportsActions: Bool
+    let supportsTextSending: Bool
+    let supportsPermissionResponses: Bool
     let onSend: () -> Void
+    let canRetryPrevious: Bool
+    let onRetryPrevious: () -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if let connectionStatus {
                 Text(connectionStatus)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if isSending {
+                Text("Sending…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -259,11 +290,17 @@ private struct ConversationFooter: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
-            if let permission, supportsActions {
+            if canRetryPrevious {
+                Button("Retry earlier message", action: onRetryPrevious)
+                    .font(.footnote)
+                    .disabled(isSending)
+            }
+            if let permission, supportsPermissionResponses {
                 PermissionCard(permission: permission, onDecision: onDecision)
             }
-            if supportsActions {
-                FollowUpComposer(draft: $draft, isSending: isSending, onSend: onSend)
+            if supportsTextSending {
+                FollowUpComposer(draft: $draft, isSending: isSending,
+                                 isSessionBusy: isSessionBusy, onSend: onSend)
             } else {
                 Label("Read-only conversation", systemImage: "lock")
                     .font(.footnote)
@@ -271,10 +308,9 @@ private struct ConversationFooter: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
         .padding(.bottom, 8)
-        .background(.bar)
     }
 }
 
@@ -313,33 +349,53 @@ private struct PermissionCard: View {
 private struct FollowUpComposer: View {
     @Binding var draft: String
     let isSending: Bool
+    let isSessionBusy: Bool
     let onSend: () -> Void
     @FocusState private var isFocused: Bool
 
+    private var editableDraft: Binding<String> {
+        Binding(
+            get: { draft },
+            set: { if !isSending { draft = $0 } }
+        )
+    }
+
     private var canSend: Bool {
-        !isSending && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isSending && !isSessionBusy && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Send a follow-up", text: $draft, axis: .vertical)
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Send a follow-up", text: editableDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
+                .fixedSize(horizontal: false, vertical: true)
                 .submitLabel(.send)
                 .focused($isFocused)
+                .padding(.vertical, 9)
                 .accessibilityIdentifier("follow-up-field")
             Button {
-                isFocused = false
                 onSend()
             } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(canSend ? Color.white : Color.secondary)
+                    .frame(width: 36, height: 36)
+                    .background(canSend ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+                    .frame(width: 44, height: 44)
             }
             .disabled(!canSend)
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.plain)
             .accessibilityLabel("Send")
             .accessibilityIdentifier("send-follow-up")
         }
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .frame(minHeight: 60)
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 30))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("follow-up-composer")
     }
 }
 

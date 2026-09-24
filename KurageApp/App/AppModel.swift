@@ -47,7 +47,9 @@ final class AppModel {
 
     var isSignedIn: Bool { account != nil }
     var supportsConversations: Bool { client.supportsConversations }
-    var supportsConversationActions: Bool { client.supportsConversationActions }
+    var supportsTextSending: Bool { client.supportsTextSending }
+    var supportsTextSendingWhileRunning: Bool { client.supportsTextSendingWhileRunning }
+    var supportsPermissionResponses: Bool { client.supportsPermissionResponses }
     var hasCachedSessions: Bool {
         selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
     }
@@ -271,9 +273,17 @@ final class AppModel {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         try await client.send(text, sessionID: sessionID, workspaceID: workspaceID)
-        if isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID {
-            await refreshSessions(restart: true)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
         }
+        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            var session = sessions.remove(at: index)
+            session.preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            sessions.insert(session, at: 0)
+            sessionsByWorkspace[workspaceID] = sessions
+            persistSession()
+        }
+        await refreshSessions(restart: true)
     }
 
     func respond(

@@ -2,6 +2,7 @@ import Foundation
 
 struct Account: Codable, Equatable, Sendable {
     var email: String
+    var id: String? = nil
 }
 
 enum SessionActivity: String, Codable, Equatable, Sendable {
@@ -66,6 +67,10 @@ enum LodyClientError: Error, Equatable {
     case sessionMissing
     case permissionMissing
     case emptyMessage
+    case deliveryUnconfirmed
+    case previousSendPending(String)
+    case sendSuperseded
+    case sessionBusy
     case notConnected
     case unreachable
     case signInFailed

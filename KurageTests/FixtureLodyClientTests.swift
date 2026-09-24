@@ -7,7 +7,8 @@ struct FixtureLodyClientTests {
         let model = AppModel(client: FixtureLodyClient())
 
         #expect(model.supportsConversations)
-        #expect(model.supportsConversationActions)
+        #expect(model.supportsTextSending)
+        #expect(model.supportsPermissionResponses)
     }
 
     @Test func sessionsRequireSignIn() async {
@@ -42,7 +43,19 @@ struct FixtureLodyClientTests {
         #expect(conversation.turns.last?.text == "look again")
 
         let sessions = try await client.sessions(workspaceID: "ws-demo")
+        #expect(sessions.first?.id == "session-pr")
         #expect(sessions.first { $0.id == "session-pr" }?.preview == "look again")
+    }
+
+    @Test func sendingMovesSessionAndProjectToRecentPosition() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+
+        try await model.send("  look again  ", sessionID: "session-pr")
+
+        #expect(model.sessions.first?.id == "session-pr")
+        #expect(model.sessions.first?.preview == "look again")
+        #expect(SessionProjectGroup.make(from: model.sessions).first?.id == "local:machine-1:prism")
     }
 
     @Test func emptySendIsRejected() async {

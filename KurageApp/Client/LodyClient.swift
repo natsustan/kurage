@@ -3,7 +3,7 @@ import Foundation
 /// App-facing seam for one Lody account.
 ///
 /// The fixture implements this in memory. The HTTP client uses Lody's device
-/// authorization and reads workspace session metadata through Streams.
+/// authorization and synchronizes workspace sessions through Streams.
 @MainActor
 protocol LodyClient: AnyObject {
     var account: Account? { get }
@@ -12,8 +12,9 @@ protocol LodyClient: AnyObject {
     var requiresExternalAuthorization: Bool { get }
     /// Whether conversation history and updates can be read.
     var supportsConversations: Bool { get }
-    /// Whether messages can be sent and permission prompts answered.
-    var supportsConversationActions: Bool { get }
+    var supportsTextSending: Bool { get }
+    var supportsTextSendingWhileRunning: Bool { get }
+    var supportsPermissionResponses: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
@@ -45,5 +46,7 @@ extension LodyClient {
     func saveSessionCache(_ cache: SessionCache) {}
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
-    var supportsConversationActions: Bool { false }
+    var supportsTextSending: Bool { false }
+    var supportsTextSendingWhileRunning: Bool { false }
+    var supportsPermissionResponses: Bool { false }
 }

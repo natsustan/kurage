@@ -6,6 +6,7 @@ import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation } from './conversation-observer.mjs';
+import { sendText } from './conversation-send.mjs';
 
 const nativeFetch = createNativeFetch(
   message => window.webkit.messageHandlers.streamFetch.postMessage(message),
@@ -26,6 +27,34 @@ let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
 
+async function createWorkspaceRepo(workspaceID, gatewayBaseURL) {
+  const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
+  try {
+    const transport = new StreamsTransportAdapter({
+      bucketId: 'lody',
+      metaStreamId: `${workspaceID}:meta`,
+      docStreamId: (docID) => docID.startsWith('session-')
+        ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
+      flockDocStreamId: (flockDocID) => flockDocID,
+      auth: async context => {
+        const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, refresh: context?.reason === 'unauthorized',
+        });
+        return access.token;
+      },
+      baseUrl: gatewayBaseURL,
+      createStreamIfMissing: false,
+      persistence: { mode: 'ephemeral' },
+      snapshotCodec,
+    });
+    await repo.addTransport('cloud', transport);
+    return repo;
+  } catch (error) {
+    await repo.destroy();
+    throw error;
+  }
+}
+
 window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
@@ -43,32 +72,9 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
     }
     signal?.throwIfAborted();
     if (!state) {
-      const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
+      const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
       state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
-      try {
-        const transport = new StreamsTransportAdapter({
-          bucketId: 'lody',
-          metaStreamId: `${workspaceID}:meta`,
-          docStreamId: (docID) => docID.startsWith('session-')
-            ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
-          flockDocStreamId: (flockDocID) => flockDocID,
-          auth: async context => {
-            const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-              command: 'auth', workspaceID: state.workspaceID, refresh: context?.reason === 'unauthorized',
-            });
-            return access.token;
-          },
-          baseUrl: gatewayBaseURL,
-          createStreamIfMissing: false,
-          persistence: { mode: 'ephemeral' },
-          snapshotCodec,
-        });
-        await repo.addTransport('cloud', transport);
-        cachedWorkspace = state;
-      } catch (error) {
-        await repo.destroy();
-        throw error;
-      }
+      cachedWorkspace = state;
     }
     if (refreshMeta || !state.metaReady) {
       const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
@@ -156,6 +162,19 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
     return JSON.stringify({ sessions: projected });
   }, true, controller.signal); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }
+};
+
+// Use a short-lived replica for writes so reader subscriptions and workspace
+// switching cannot change the document being authored mid-send.
+window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp) => {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+  try {
+    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
+    return await sendText(repo, sessionID, turnID, userID, text, timestamp);
+  } finally {
+    await repo.destroy();
+  }
 };
 
 window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL) =>
