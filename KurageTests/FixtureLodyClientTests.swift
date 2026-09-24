@@ -17,7 +17,7 @@ struct FixtureLodyClientTests {
         try await client.finishDeviceAuthorization(authorization)
 
         let sessions = try await client.sessions(workspaceID: "ws-demo")
-        #expect(sessions.map(\.id) == ["session-tests", "session-pr"])
+        #expect(sessions.map(\.id) == ["session-tests", "session-long", "session-pr"])
         #expect(sessions[0].activity == .running)
         #expect(sessions[1].activity == .idle)
 
@@ -117,11 +117,22 @@ private final class DeferredSessionClient: LodyClient {
     private(set) var account: Account? = Account(email: "demo@example.com")
     private(set) var requestedWorkspaceIDs: [String] = []
     private var pending: [String: [CheckedContinuation<[SessionSummary], Error>]] = [:]
+    let observationsStarted: AsyncStream<String>
+    private let observationSignal: AsyncStream<String>.Continuation
+    var observation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation?
+
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let (stream, continuation) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream()
+        observation = continuation
+        observationSignal.yield(workspaceID)
+        return stream
+    }
     let started: AsyncStream<String>
     private let startedSignal: AsyncStream<String>.Continuation
 
     init() {
         (started, startedSignal) = AsyncStream.makeStream()
+        (observationsStarted, observationSignal) = AsyncStream.makeStream()
     }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization { throw LodyClientError.notConnected }
@@ -162,5 +173,70 @@ private final class DeferredSessionClient: LodyClient {
         workspaceID: WorkspaceSummary.ID
     ) async throws {
         throw LodyClientError.notConnected
+    }
+}
+
+@MainActor
+struct ConversationStreamingTests {
+    @Test func patchesReplaceGrowingTurnsAndRemoveDeletedTurns() throws {
+        let previous = Conversation(sessionID: "s", turns: [
+            ConversationTurn(id: "a", author: .agent, text: "Hello"),
+            ConversationTurn(id: "b", author: .user, text: "Remove me"),
+        ], permission: nil)
+        let patch = ConversationPatch(sessionID: "s", order: ["a"], changed: [
+            ConversationTurn(id: "a", author: .agent, text: "Hello world"),
+        ], permission: nil, activity: "idle", syncState: .live)
+        let update = try patch.applying(to: previous)
+        #expect(update.conversation.turns.map(\.id) == ["a"])
+        #expect(update.conversation.turns[0].text == "Hello world")
+        #expect(update.activity == .idle)
+        let statusOnly = ConversationPatch(sessionID: "s", order: ["a"], changed: [],
+                                           permission: nil, activity: "running", syncState: .connecting)
+        #expect(try statusOnly.applying(to: update.conversation).conversation == update.conversation)
+    }
+
+    @Test func rejectsIncompleteOrWrongSessionPatches() {
+        let previous = Conversation(sessionID: "s", turns: [], permission: nil)
+        for patch in [
+            ConversationPatch(sessionID: "other", order: [], changed: [], permission: nil, activity: "idle", syncState: .live),
+            ConversationPatch(sessionID: "s", order: ["missing"], changed: [], permission: nil, activity: "idle", syncState: .live),
+        ] {
+            #expect(throws: LodyClientError.notConnected) { try patch.applying(to: previous) }
+        }
+    }
+
+    @Test func switchingWorkspaceRejectsLateUpdatesAndPreservesScopedCache() async throws {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        var requests = client.started.makeAsyncIterator()
+        let adopting = Task { await model.adoptExistingAccount() }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [])
+        await adopting.value
+
+        let (received, signal) = AsyncStream<ConversationUpdate>.makeStream()
+        var changes = received.makeAsyncIterator()
+        var subscriptions = client.observationsStarted.makeAsyncIterator()
+        let observing = Task { try await model.observeConversation(sessionID: "s") { signal.yield($0) } }
+        #expect(await subscriptions.next() == "ws-a")
+        let first = ConversationUpdate(conversation: Conversation(sessionID: "s", turns: [
+            ConversationTurn(id: "a", author: .agent, text: "Partial"),
+        ], permission: nil), activity: .running, syncState: .live)
+        client.observation?.yield(first)
+        #expect(await changes.next() == first)
+        #expect(model.cachedConversation(sessionID: "s") == first.conversation)
+
+        let switching = Task { await model.selectWorkspace("ws-b") }
+        #expect(await requests.next() == "ws-b")
+        client.finish("ws-b", with: [])
+        await switching.value
+        client.observation?.yield(first)
+        switch await observing.result {
+        case .success: Issue.record("A stale subscription must terminate")
+        case .failure(let error): #expect(error is CancellationError)
+        }
+        #expect(model.cachedConversation(sessionID: "s") == nil)
+        signal.finish()
+        #expect(await changes.next() == nil)
     }
 }

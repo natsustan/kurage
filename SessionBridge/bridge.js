@@ -3,42 +3,15 @@ import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
 import { projectConversation } from './conversation-projection.mjs';
 
-const originalFetch = globalThis.fetch.bind(globalThis);
+import { createNativeFetch } from './native-fetch.mjs';
+import { observeConversation } from './conversation-observer.mjs';
 
-function toBase64(bytes) {
-  let value = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    value += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(value);
-}
-
-function fromBase64(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
-  return bytes;
-}
-
-globalThis.fetch = async (input, init) => {
-  const request = new Request(input, init);
-  if (!request.url.startsWith('https://')) return originalFetch(input, init);
-
-  const body = request.method === 'GET' || request.method === 'HEAD'
-    ? null : toBase64(new Uint8Array(await request.arrayBuffer()));
-  const result = await window.webkit.messageHandlers.streamFetch.postMessage({
-    url: request.url,
-    method: request.method,
-    headers: Object.fromEntries(request.headers.entries()),
-    body,
-  });
-  if (result.error) throw new Error(result.error);
-  const response = new Response([204, 205, 304].includes(result.status) ? null : fromBase64(result.body), {
-    status: result.status,
-    headers: result.headers,
-  });
-  return response;
-};
+const nativeFetch = createNativeFetch(
+  message => window.webkit.messageHandlers.streamFetch.postMessage(message),
+  globalThis.fetch.bind(globalThis),
+);
+globalThis.fetch = nativeFetch.fetch;
+window.kurageFetchEvent = nativeFetch.receive;
 
 const snapshotCodec = {
   compress: async (bytes) => bytes,
@@ -71,7 +44,12 @@ function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refre
           docStreamId: (docID) => docID.startsWith('session-')
             ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
           flockDocStreamId: (flockDocID) => flockDocID,
-          auth: async () => state.accessToken,
+          auth: async context => {
+            const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+              command: 'auth', workspaceID: state.workspaceID, refresh: context?.reason === 'unauthorized',
+            });
+            return access.token;
+          },
           baseUrl: gatewayBaseURL,
           createStreamIfMissing: false,
           persistence: { mode: 'ephemeral' },
@@ -174,3 +152,28 @@ window.kurageConversation = async (workspaceID, sessionID, accessToken, gatewayB
     if (!report.ok) throw new Error('Session history sync failed');
     return JSON.stringify(projectConversation(sessionID, handle.doc.getList('history').toJSON()));
   }, false);
+
+const observations = new Map();
+window.kurageStopConversation = (id) => {
+  const observation = observations.get(id);
+  observations.delete(id);
+  observation?.abort();
+};
+window.kurageObserveConversation = async (workspaceID, sessionID, accessToken, gatewayBaseURL, id) => {
+  const controller = new AbortController();
+  observations.set(id, controller);
+  try {
+    await withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async repo => {
+      if (controller.signal.aborted) return;
+      await observeConversation({ repo, sessionID, signal: controller.signal,
+        emit: update => window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'conversation', id, update,
+        }),
+      });
+    }, false);
+    return 'ok';
+  } catch (error) {
+    window.kurageStopConversation(id);
+    throw error;
+  }
+};

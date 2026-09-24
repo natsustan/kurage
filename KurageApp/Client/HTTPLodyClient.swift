@@ -137,6 +137,7 @@ final class HTTPLodyClient: LodyClient {
         authenticationGeneration += 1
         tokenStore.delete()
         account = nil
+        sessionBridge?.close()
         sessionBridge = nil
         streamsAccessCache = [:]
     }
@@ -209,7 +210,7 @@ final class HTTPLodyClient: LodyClient {
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
-        let bridge = sessionBridge ?? SessionSyncBridge()
+        let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
         let sessions = try await bridge.sessions(workspaceID: workspaceID, access: access)
         try Task.checkCancellation()
@@ -224,7 +225,7 @@ final class HTTPLodyClient: LodyClient {
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
-        let bridge = sessionBridge ?? SessionSyncBridge()
+        let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
         let conversation = try await bridge.conversation(
             sessionID: sessionID,
@@ -236,6 +237,24 @@ final class HTTPLodyClient: LodyClient {
             throw LodyClientError.signedOut
         }
         return conversation
+    }
+
+    private func makeSessionBridge() -> SessionSyncBridge {
+        SessionSyncBridge { [weak self] workspaceID, refresh in
+            guard let self else { throw LodyClientError.signedOut }
+            if refresh { streamsAccessCache.removeValue(forKey: workspaceID) }
+            return try await streamsAccess(workspaceID: workspaceID)
+        }
+    }
+
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        return bridge.observeConversation(sessionID: sessionID, workspaceID: workspaceID, access: access)
     }
 
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

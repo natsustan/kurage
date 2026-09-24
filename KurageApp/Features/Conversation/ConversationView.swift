@@ -6,21 +6,34 @@ struct ConversationView: View {
     let title: String
     let model: AppModel
 
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var observedWorkspaceID: String?
+    @State private var observedSessionID: String?
+    @State private var refreshID = 0
     @State private var conversation: Conversation?
     @State private var draft = ""
     @State private var isSending = false
     @State private var isLoading = true
     @State private var banner: String?
+    @State private var connectionStatus: String?
+
+    private var displayedConversation: Conversation? {
+        if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
+            return conversation ?? model.cachedConversation(sessionID: sessionID)
+        }
+        return model.cachedConversation(sessionID: sessionID)
+    }
 
     var body: some View {
-        ConversationTranscript(turns: conversation?.turns ?? model.cachedConversation(sessionID: sessionID)?.turns ?? [], isLoading: isLoading)
-            .refreshable { await load() }
+        ConversationTranscript(turns: displayedConversation?.turns ?? [], isLoading: isLoading)
+            .refreshable { refreshID += 1 }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ConversationFooter(
-                    permission: conversation?.permission,
+                    permission: displayedConversation?.permission,
                     draft: $draft,
                     isSending: isSending,
                     banner: banner,
+                    connectionStatus: connectionStatus,
                     supportsActions: model.supportsConversationActions,
                     onSend: sendDraft,
                     onDecision: respond
@@ -37,21 +50,46 @@ struct ConversationView: View {
                     }
                 }
             }
-            .task(id: sessionID) {
-                await load()
+            .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
+                                     active: scenePhase == .active, refreshID: refreshID)) {
+                guard scenePhase == .active else { return }
+                await observe()
             }
     }
 
-    private func load() async {
-        isLoading = conversation == nil && model.cachedConversation(sessionID: sessionID) == nil
-        defer { isLoading = false }
-        do {
-            conversation = try await model.conversation(sessionID: sessionID)
-            banner = nil
-        } catch is CancellationError {
-            return
-        } catch {
-            banner = conversation == nil ? "Could not open this conversation." : "Could not refresh this conversation."
+    private struct ObservationKey: Equatable {
+        let workspaceID: String?
+        let sessionID: String
+        let active: Bool
+        let refreshID: Int
+    }
+
+    private func observe() async {
+        observedWorkspaceID = model.selectedWorkspaceID
+        observedSessionID = sessionID
+        conversation = model.cachedConversation(sessionID: sessionID)
+        isLoading = conversation == nil
+        connectionStatus = "Connecting…"
+        var retryDelay = 1
+        while !Task.isCancelled {
+            do {
+                try await model.observeConversation(sessionID: sessionID) { update in
+                    conversation = update.conversation
+                    isLoading = false
+                    connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
+                    if update.syncState == .live { retryDelay = 1 }
+                }
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                isLoading = false
+                connectionStatus = "Connection interrupted. Reconnecting…"
+                do { try await Task.sleep(for: .seconds(retryDelay)) }
+                catch { return }
+                retryDelay = min(retryDelay * 2, 30)
+            }
         }
     }
 
@@ -89,6 +127,11 @@ struct ConversationView: View {
 private struct ConversationTranscript: View {
     let turns: [ConversationTurn]
     let isLoading: Bool
+    @State private var followsOutput = true
+    @State private var isUserScrolling = false
+    @State private var isNearBottom = true
+
+    private enum Anchor: Hashable { case bottom }
 
     var body: some View {
         Group {
@@ -108,8 +151,10 @@ private struct ConversationTranscript: View {
                         LazyVStack(alignment: .leading, spacing: 28) {
                             ForEach(turns) { turn in
                                 TurnRow(author: turn.author, text: turn.text)
+                                    .equatable()
                                     .id(turn.id)
                             }
+                            Color.clear.frame(height: 1).id(Anchor.bottom)
                         }
                         .padding(.horizontal, 20)
                         .padding(.vertical, 20)
@@ -121,9 +166,21 @@ private struct ConversationTranscript: View {
                         await Task.yield()
                         proxy.scrollTo(latestID, anchor: .bottom)
                     }
-                    .onChange(of: turns.last?.id) { oldID, newID in
-                        guard oldID != nil, let newID else { return }
-                        proxy.scrollTo(newID, anchor: .bottom)
+                    .onScrollPhaseChange { _, phase in
+                        let wasUserScrolling = isUserScrolling
+                        isUserScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                        if wasUserScrolling || isUserScrolling { followsOutput = isNearBottom }
+                    }
+                    .onScrollGeometryChange(for: Bool.self) { geometry in
+                        geometry.contentOffset.y + geometry.containerSize.height >=
+                            geometry.contentSize.height + geometry.contentInsets.bottom - 60
+                    } action: { _, nearBottom in
+                        isNearBottom = nearBottom
+                        if isUserScrolling { followsOutput = nearBottom }
+                    }
+                    .onChange(of: turns.last) { _, _ in
+                        guard followsOutput, !isUserScrolling else { return }
+                        proxy.scrollTo(Anchor.bottom, anchor: .bottom)
                     }
                 }
             }
@@ -154,7 +211,7 @@ private struct ConversationLoadingPlaceholder: View {
     }
 }
 
-private struct TurnRow: View {
+private struct TurnRow: View, Equatable {
     let author: TurnAuthor
     let text: String
 
@@ -184,12 +241,18 @@ private struct ConversationFooter: View {
     @Binding var draft: String
     let isSending: Bool
     let banner: String?
+    let connectionStatus: String?
     let supportsActions: Bool
     let onSend: () -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let connectionStatus {
+                Text(connectionStatus)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
             if let banner {
                 Text(banner)
                     .font(.footnote)

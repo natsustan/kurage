@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import WebKit
 @testable import Kurage
 
 @MainActor
@@ -618,4 +619,103 @@ private final class PendingAuthRequest: @unchecked Sendable {
         lock.unlock()
         request?.respond(status: status, data: data)
     }
+}
+
+@MainActor
+@Suite(.serialized)
+struct StreamFetchHandlerTests {
+    @Test(.timeLimit(.minutes(1))) func forwardsSSEBeforeEOFAndCancelsNativeRequest() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let pendingRequest = StreamingRequestBox()
+        let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
+        StreamingTestURLProtocol.onStart = { pendingRequest.capture($0); startedSignal.yield(()) }
+        StreamingTestURLProtocol.onStop = { stoppedSignal.yield(()) }
+        defer {
+            StreamingTestURLProtocol.onStart = nil
+            StreamingTestURLProtocol.onStop = nil
+        }
+        var requests = started.makeAsyncIterator()
+        var cancellations = stopped.makeAsyncIterator()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let handler = StreamFetchHandler(session: session) { _, _ in throw LodyClientError.signedOut }
+        let sink = StreamEventSink()
+        var events = sink.events.makeAsyncIterator()
+        let webConfiguration = WKWebViewConfiguration()
+        webConfiguration.websiteDataStore = .nonPersistent()
+        webConfiguration.userContentController.addScriptMessageHandler(handler, contentWorld: .page, name: "streamFetch")
+        webConfiguration.userContentController.addScriptMessageHandler(sink, contentWorld: .page, name: "testEvents")
+        let webView = WKWebView(frame: .zero, configuration: webConfiguration)
+        handler.webView = webView
+        defer { handler.cancelAll(); webView.stopLoading() }
+        webView.loadHTMLString("""
+            <script>
+            window.kurageFetchEvent = event => window.webkit.messageHandlers.testEvents.postMessage(event);
+            window.webkit.messageHandlers.testEvents.postMessage({type: 'ready'});
+            </script>
+            """, baseURL: nil)
+        #expect(await events.next() == "ready")
+        _ = try await webView.callAsyncJavaScript("""
+            return await window.webkit.messageHandlers.streamFetch.postMessage({
+              command: 'start', id: 'test', url: 'https://example.test/ds/lody/s', method: 'GET',
+              headers: {authorization: 'Bearer synthetic-test-token'}
+            });
+            """, arguments: [:], in: nil, contentWorld: .page)
+        _ = await requests.next()
+        pendingRequest.sendHeaders()
+        #expect(await events.next() == "headers")
+        // Deliberately keep the response open: a buffered data(for:) bridge hangs here.
+        pendingRequest.sendChunk(Data("data: 你好\n".utf8))
+        #expect(await events.next() == "data: 你好\n")
+        _ = try await webView.callAsyncJavaScript("""
+            return await window.webkit.messageHandlers.streamFetch.postMessage({command: 'cancel', id: 'test'});
+            """, arguments: [:], in: nil, contentWorld: .page)
+        _ = await cancellations.next()
+    }
+}
+
+@MainActor
+private final class StreamEventSink: NSObject, WKScriptMessageHandlerWithReply {
+    let events: AsyncStream<String>
+    private let continuation: AsyncStream<String>.Continuation
+    override init() {
+        (events, continuation) = AsyncStream.makeStream()
+        super.init()
+    }
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) async -> (Any?, String?) {
+        if let event = message.body as? [String: Any], let type = event["type"] as? String {
+            if type == "chunk", let body = event["body"] as? String, let data = Data(base64Encoded: body) {
+                continuation.yield(String(decoding: data, as: UTF8.self))
+            } else { continuation.yield(type) }
+        }
+        return (true, nil)
+    }
+}
+
+private final class StreamingTestURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var onStart: (@Sendable (StreamingTestURLProtocol) -> Void)?
+    nonisolated(unsafe) static var onStop: (@Sendable () -> Void)?
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.onStart?(self) }
+    override func stopLoading() { Self.onStop?() }
+    func sendHeaders() {
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: ["Content-Type": "text/event-stream"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    }
+    func sendChunk(_ data: Data) { client?.urlProtocol(self, didLoad: data) }
+}
+
+private final class StreamingRequestBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: StreamingTestURLProtocol?
+    func capture(_ request: StreamingTestURLProtocol) {
+        lock.withLock { self.request = request }
+    }
+    func sendHeaders() { lock.withLock { request?.sendHeaders() } }
+    func sendChunk(_ data: Data) { lock.withLock { request?.sendChunk(data) } }
 }

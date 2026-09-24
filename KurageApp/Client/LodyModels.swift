@@ -72,3 +72,39 @@ enum LodyClientError: Error, Equatable {
     case accessDenied
     case codeExpired
 }
+
+struct ConversationUpdate: Equatable, Sendable {
+    var conversation: Conversation
+    var activity: SessionActivity?
+    var syncState: ConversationSyncState
+}
+
+enum ConversationSyncState: String, Decodable, Sendable {
+    case connecting
+    case live
+}
+
+struct ConversationPatch: Decodable {
+    let sessionID: String
+    let order: [String]
+    let changed: [ConversationTurn]
+    let permission: PermissionPrompt?
+    let activity: String
+    let syncState: ConversationSyncState
+
+    func applying(to previous: Conversation) throws -> ConversationUpdate {
+        guard previous.sessionID == sessionID, Set(order).count == order.count else {
+            throw LodyClientError.notConnected
+        }
+        var turns = Dictionary(uniqueKeysWithValues: previous.turns.map { ($0.id, $0) })
+        for turn in changed { turns[turn.id] = turn }
+        let ordered = try order.map { id in
+            guard let turn = turns[id] else { throw LodyClientError.notConnected }
+            return turn
+        }
+        return ConversationUpdate(
+            conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission),
+            activity: activity == "running" ? .running : .idle, syncState: syncState
+        )
+    }
+}

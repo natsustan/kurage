@@ -5,7 +5,9 @@ import WebKit
 /// Native URLSession owns network access; the page only projects session metadata.
 @MainActor
 final class SessionSyncBridge: NSObject, WKNavigationDelegate {
-    private let fetchHandler = StreamFetchHandler()
+    private let fetchHandler: StreamFetchHandler
+    private var observers: [String: AsyncThrowingStream<ConversationUpdate, Error>.Continuation] = [:]
+    private var snapshots: [String: Conversation] = [:]
     private let webView: WKWebView
     private var loadTask: Task<Void, Error>?
     private var pageNavigation: WKNavigation?
@@ -13,7 +15,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     private var isLoaded = false
     private var loadGeneration = 0
 
-    override init() {
+    init(accessProvider: @escaping @MainActor (String, Bool) async throws -> StreamsAccess) {
+        fetchHandler = StreamFetchHandler(accessProvider: accessProvider)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.addScriptMessageHandler(
@@ -24,6 +27,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
         webView.navigationDelegate = self
+        fetchHandler.webView = webView
+        fetchHandler.onUpdate = { [weak self] id, value in self?.receive(id: id, value: value) }
     }
 
     func sessions(workspaceID: String, access: StreamsAccess) async throws -> [SessionSummary] {
@@ -62,11 +67,64 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         return try JSONDecoder().decode(Conversation.self, from: data)
     }
 
+    func observeConversation(sessionID: String, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let id = UUID().uuidString
+        let (stream, continuation) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        observers[id] = continuation
+        snapshots[id] = Conversation(sessionID: sessionID, turns: [], permission: nil)
+        let setup = Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await callBridge(
+                    "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, token, baseURL, observationID))",
+                    workspaceID: workspaceID, access: access, sessionID: sessionID, observationID: id
+                )
+            } catch {
+                observers[id]?.finish(throwing: error)
+                // Cancellation may have raced the page's asynchronous module setup.
+                await stopObservation(id)
+            }
+        }
+        continuation.onTermination = { [weak self] _ in
+            setup.cancel()
+            Task { @MainActor in await self?.stopObservation(id) }
+        }
+        return stream
+    }
+
+    private func receive(id: String, value: [String: Any]) {
+        guard let continuation = observers[id], let previous = snapshots[id] else { return }
+        do {
+            if value["error"] != nil { throw LodyClientError.notConnected }
+            let data = try JSONSerialization.data(withJSONObject: value)
+            let patch = try JSONDecoder().decode(ConversationPatch.self, from: data)
+            let update = try patch.applying(to: previous)
+            snapshots[id] = update.conversation
+            continuation.yield(update)
+        } catch { continuation.finish(throwing: error) }
+    }
+
+    private func stopObservation(_ id: String) async {
+        observers.removeValue(forKey: id)
+        snapshots.removeValue(forKey: id)
+        guard isLoaded else { return }
+        _ = try? await webView.callAsyncJavaScript(
+            "window.kurageStopConversation(id)", arguments: ["id": id], in: nil, contentWorld: .page
+        )
+    }
+
+    func close() {
+        invalidatePage(with: CancellationError())
+        webView.stopLoading()
+        webView.loadHTMLString("", baseURL: nil)
+    }
+
     private func callBridge(
         _ script: String,
         workspaceID: String,
         access: StreamsAccess,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        observationID: String? = nil
     ) async throws -> String {
         guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
         try Task.checkCancellation()
@@ -78,6 +136,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             "baseURL": gatewayBaseURL.absoluteString,
         ]
         if let sessionID { arguments["sessionID"] = sessionID }
+        if let observationID { arguments["observationID"] = observationID }
         let result = try await webView.callAsyncJavaScript(
             script,
             arguments: arguments,
@@ -148,6 +207,11 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     }
 
     private func invalidatePage(with error: Error) {
+        fetchHandler.cancelAll()
+        let pending = observers.values
+        observers = [:]
+        snapshots = [:]
+        for continuation in pending { continuation.finish(throwing: error) }
         loadGeneration += 1
         isLoaded = false
         loadTask = nil
@@ -172,50 +236,93 @@ private struct SessionSnapshot: Decodable {
 }
 
 @MainActor
-private final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
-    private let session = URLSession(configuration: .ephemeral)
+final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
+    private let session: URLSession
+    private let accessProvider: @MainActor (String, Bool) async throws -> StreamsAccess
+    private var requests: [String: Task<Void, Never>] = [:]
+    weak var webView: WKWebView?
+    var onUpdate: ((String, [String: Any]) -> Void)?
+
+    init(session: URLSession = URLSession(configuration: .ephemeral),
+         accessProvider: @escaping @MainActor (String, Bool) async throws -> StreamsAccess) {
+        self.session = session
+        self.accessProvider = accessProvider
+    }
+
+    func cancelAll() {
+        for task in requests.values { task.cancel() }
+        requests = [:]
+    }
 
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) async -> (Any?, String?) {
-        guard let input = message.body as? [String: Any],
-              let rawURL = input["url"] as? String,
-              let url = URL(string: rawURL),
-              url.scheme == "https",
-              url.path.hasPrefix("/ds/lody/"),
-              let method = input["method"] as? String,
-              method == "GET" || method == "HEAD",
+        guard let input = message.body as? [String: Any], let command = input["command"] as? String else {
+            return (nil, "Invalid Streams command")
+        }
+        if command == "auth", let workspaceID = input["workspaceID"] as? String {
+            do { return (["token": try await accessProvider(workspaceID, input["refresh"] as? Bool ?? false).token], nil) }
+            catch { return (nil, "Streams authorization failed") }
+        }
+        guard let id = input["id"] as? String else { return (nil, "Missing request ID") }
+        if command == "conversation", let update = input["update"] as? [String: Any] {
+            onUpdate?(id, update)
+            return (true, nil)
+        }
+        if command == "cancel" {
+            requests.removeValue(forKey: id)?.cancel()
+            return (true, nil)
+        }
+        guard command == "start", requests[id] == nil,
+              let rawURL = input["url"] as? String, let url = URL(string: rawURL),
+              url.scheme == "https", url.path.hasPrefix("/ds/lody/"),
+              let method = input["method"] as? String, method == "GET" || method == "HEAD",
               let headers = input["headers"] as? [String: String],
-              headers["authorization"]?.hasPrefix("Bearer ") == true
-        else {
+              headers["authorization"]?.hasPrefix("Bearer ") == true else {
             return (nil, "Invalid Streams request")
         }
-
-        do {
-            var request = URLRequest(url: url)
-            request.httpMethod = method
-            request.timeoutInterval = 45
-            for (name, value) in headers {
-                request.setValue(value, forHTTPHeaderField: name)
-            }
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return (nil, "Invalid Streams response")
-            }
-            let responseHeaders: [String: String] = Dictionary(
-                uniqueKeysWithValues: http.allHeaderFields.compactMap { key, value in
-                    guard let name = key as? String, let text = value as? String else { return nil }
-                    return (name, text)
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        // The Streams library owns inactivity deadlines through AbortSignal.
+        request.timeoutInterval = 300
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        requests[id] = Task { [weak self] in
+            guard let self else { return }
+            defer { requests.removeValue(forKey: id) }
+            do {
+                let (bytes, response) = try await session.bytes(for: request)
+                guard let http = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
+                let responseHeaders = http.allHeaderFields.reduce(into: [String: String]()) { result, field in
+                    if let name = field.key as? String, let value = field.value as? String { result[name] = value }
                 }
-            )
-            return ([
-                "status": http.statusCode,
-                "headers": responseHeaders,
-                "body": data.base64EncodedString(),
-            ], nil)
-        } catch {
-            return (nil, "Streams request failed")
+                try await emit(["id": id, "type": "headers", "status": http.statusCode, "headers": responseHeaders])
+                let isSSE = http.mimeType == "text/event-stream"
+                var chunk = Data()
+                for try await byte in bytes {
+                    try Task.checkCancellation()
+                    chunk.append(byte)
+                    if chunk.count >= 16_384 || (isSSE && byte == 10) {
+                        try await emit(["id": id, "type": "chunk", "body": chunk.base64EncodedString()])
+                        chunk.removeAll(keepingCapacity: true)
+                    }
+                }
+                if !chunk.isEmpty {
+                    try await emit(["id": id, "type": "chunk", "body": chunk.base64EncodedString()])
+                }
+                try await emit(["id": id, "type": "end"])
+            } catch {
+                if !Task.isCancelled { try? await emit(["id": id, "type": "error"]) }
+            }
         }
+        return (true, nil)
+    }
+
+    private func emit(_ event: [String: Any]) async throws {
+        try Task.checkCancellation()
+        guard let webView else { throw CancellationError() }
+        _ = try await webView.callAsyncJavaScript(
+            "await window.kurageFetchEvent(event)", arguments: ["event": event], in: nil, contentWorld: .page
+        )
     }
 }

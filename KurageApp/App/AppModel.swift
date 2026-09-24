@@ -191,10 +191,33 @@ final class AppModel {
 
     func conversation(sessionID: SessionSummary.ID) async throws -> Conversation {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
         let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
-        guard account != nil, selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
         conversationCache[workspaceID, default: [:]][sessionID] = loaded
         return loaded
+    }
+
+    func observeConversation(
+        sessionID: String,
+        onUpdate: @MainActor (ConversationUpdate) -> Void
+    ) async throws {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let updates = try await client.observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        for try await update in updates {
+            try Task.checkCancellation()
+            guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+                throw CancellationError()
+            }
+            guard update.conversation.sessionID == sessionID else { throw LodyClientError.notConnected }
+            conversationCache[workspaceID, default: [:]][sessionID] = update.conversation
+            if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
+               sessions[index].activity != activity {
+                sessions[index].activity = activity
+            }
+            onUpdate(update)
+        }
     }
 
     func cachedConversation(sessionID: SessionSummary.ID) -> Conversation? {

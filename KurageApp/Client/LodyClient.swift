@@ -17,6 +17,7 @@ protocol LodyClient: AnyObject {
     func workspaces() async throws -> [WorkspaceSummary]
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
     func respond(
         _ decision: PermissionDecision,
@@ -27,6 +28,14 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        return AsyncThrowingStream { continuation in
+            continuation.yield(ConversationUpdate(conversation: snapshot, activity: nil, syncState: .live))
+            continuation.finish()
+        }
+    }
+
     var requiresExternalAuthorization: Bool { true }
     var supportsConversationActions: Bool { false }
 }
