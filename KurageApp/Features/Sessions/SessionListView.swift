@@ -9,6 +9,7 @@ struct SessionListView: View {
             SessionList(
                 sessions: model.sessions,
                 mode: listMode,
+                supportsConversations: model.supportsConversations,
                 isRefreshing: model.isRefreshingSessions,
                 statusNote: model.statusNote
             )
@@ -74,6 +75,7 @@ private enum SessionListMode: Hashable {
 private struct SessionList: View {
     let sessions: [SessionSummary]
     let mode: SessionListMode
+    let supportsConversations: Bool
     let isRefreshing: Bool
     let statusNote: StatusNote?
 
@@ -83,6 +85,13 @@ private struct SessionList: View {
                 if let statusNote {
                     Label(statusNote.text, systemImage: statusNote.tone == .failure ? "exclamationmark.circle" : "info.circle")
                         .foregroundStyle(statusNote.tone == .failure ? Color.red : Color.secondary)
+                        .padding(.bottom, 16)
+                }
+
+                if !supportsConversations {
+                    Text("Only the session list is available. Conversations are not supported yet.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                         .padding(.bottom, 16)
                 }
 
@@ -110,7 +119,7 @@ private struct SessionList: View {
                         .font(.title3.weight(.semibold))
                         .padding(.bottom, 18)
                     ForEach(sessions) { session in
-                        sessionLink(session)
+                        sessionRow(session)
                     }
                 }
             }
@@ -133,36 +142,47 @@ private struct SessionList: View {
             .padding(.bottom, 8)
 
             ForEach(group.sessions) { session in
-                sessionLink(session)
+                sessionRow(session)
             }
         }
     }
 
-    private func sessionLink(_ session: SessionSummary) -> some View {
-        NavigationLink(value: session.id) {
-            HStack(spacing: 8) {
-                if session.activity == .running {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 20, height: 20)
-                        .accessibilityHidden(true)
-                } else {
-                    Color.clear.frame(width: 20, height: 20)
-                }
-                Text(session.title)
-                    .font(.body)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+    @ViewBuilder
+    private func sessionRow(_ session: SessionSummary) -> some View {
+        if supportsConversations {
+            NavigationLink(value: session.id) {
+                sessionLabel(session)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 16)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+        } else {
+            sessionLabel(session)
         }
-        .buttonStyle(.plain)
+    }
+
+    private func sessionLabel(_ session: SessionSummary) -> some View {
+        HStack(spacing: 8) {
+            if session.activity == .running {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 20, height: 20)
+                    .accessibilityHidden(true)
+            } else {
+                Color.clear.frame(width: 20, height: 20)
+            }
+            Text(session.title)
+                .font(.body)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 16)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(session.title)
         .accessibilityValue(session.activity == .running ? Text("Running") : Text("Idle"))
         .accessibilityIdentifier("session-\(session.id)")
     }
+
 }
 
 #Preview("Sessions") {

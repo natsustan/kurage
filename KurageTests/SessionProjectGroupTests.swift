@@ -23,4 +23,15 @@ struct SessionProjectGroupTests {
         #expect(groups[0].id != groups[2].id)
         #expect(groups[3].sessions.map(\.id) == ["chat"])
     }
+
+    @Test func keepsNewestNonemptyProjectName() {
+        let sessions = [
+            SessionSummary(id: "recent", title: "Recent", agentName: "codex", activity: .idle,
+                           preview: "", projectID: "local:machine:project", projectName: "New name"),
+            SessionSummary(id: "older", title: "Older", agentName: "codex", activity: .idle,
+                           preview: "", projectID: "local:machine:project", projectName: "Old name"),
+        ]
+
+        #expect(SessionProjectGroup.make(from: sessions).first?.name == "New name")
+    }
 }

@@ -32,11 +32,17 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     }
 
     func sessions(workspaceID: String, access: StreamsAccess) async throws -> [SessionSummary] {
-        let json = try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL))",
-            workspaceID: workspaceID,
-            access: access
-        )
+        let operationID = UUID().uuidString
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, token, baseURL, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                operationID: operationID
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: data)
         return snapshot.sessions.map { metadata in
@@ -113,6 +119,14 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         )
     }
 
+    private func cancelSessionRefresh(_ operationID: String) async {
+        guard isLoaded else { return }
+        _ = try? await webView.callAsyncJavaScript(
+            "window.kurageCancel(operationID)", arguments: ["operationID": operationID],
+            in: nil, contentWorld: .page
+        )
+    }
+
     func close() {
         invalidatePage(with: CancellationError())
         webView.stopLoading()
@@ -124,7 +138,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         workspaceID: String,
         access: StreamsAccess,
         sessionID: String? = nil,
-        observationID: String? = nil
+        observationID: String? = nil,
+        operationID: String? = nil
     ) async throws -> String {
         guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
         try Task.checkCancellation()
@@ -137,6 +152,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         ]
         if let sessionID { arguments["sessionID"] = sessionID }
         if let observationID { arguments["observationID"] = observationID }
+        if let operationID { arguments["operationID"] = operationID }
         let result = try await webView.callAsyncJavaScript(
             script,
             arguments: arguments,
@@ -235,10 +251,52 @@ private struct SessionSnapshot: Decodable {
     let sessions: [SessionMetadata]
 }
 
+struct StreamsHostPolicy {
+    let gatewayBaseURL: URL
+    let shardHostSuffix: String?
+
+    func allows(_ url: URL) -> Bool {
+        guard url.scheme == "https", url.path.hasPrefix("/ds/lody/"),
+              let host = url.host?.lowercased(), let gatewayHost = gatewayBaseURL.host?.lowercased()
+        else { return false }
+        if host == gatewayHost { return true }
+        guard let suffix = shardHostSuffix?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")),
+              !suffix.isEmpty else { return false }
+        return host == suffix || host.hasSuffix("." + suffix)
+    }
+}
+
+private final class StreamRedirectValidator: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let policy: StreamsHostPolicy
+    let token: String
+
+    init(policy: StreamsHostPolicy, token: String) {
+        self.policy = policy
+        self.token = token
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard request.url.map(policy.allows) == true else {
+            completionHandler(nil)
+            return
+        }
+        var authorizedRequest = request
+        authorizedRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        completionHandler(authorizedRequest)
+    }
+}
+
 @MainActor
 final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
     private let session: URLSession
     private let accessProvider: @MainActor (String, Bool) async throws -> StreamsAccess
+    private var accessByToken: [String: StreamsAccess] = [:]
     private var requests: [String: Task<Void, Never>] = [:]
     weak var webView: WKWebView?
     var onUpdate: ((String, [String: Any]) -> Void)?
@@ -252,6 +310,7 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
     func cancelAll() {
         for task in requests.values { task.cancel() }
         requests = [:]
+        accessByToken = [:]
     }
 
     func userContentController(
@@ -262,7 +321,11 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
             return (nil, "Invalid Streams command")
         }
         if command == "auth", let workspaceID = input["workspaceID"] as? String {
-            do { return (["token": try await accessProvider(workspaceID, input["refresh"] as? Bool ?? false).token], nil) }
+            do {
+                let access = try await accessProvider(workspaceID, input["refresh"] as? Bool ?? false)
+                accessByToken[access.token] = access
+                return (["token": access.token], nil)
+            }
             catch { return (nil, "Streams authorization failed") }
         }
         guard let id = input["id"] as? String else { return (nil, "Missing request ID") }
@@ -276,22 +339,36 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         }
         guard command == "start", requests[id] == nil,
               let rawURL = input["url"] as? String, let url = URL(string: rawURL),
-              url.scheme == "https", url.path.hasPrefix("/ds/lody/"),
               let method = input["method"] as? String, method == "GET" || method == "HEAD",
-              let headers = input["headers"] as? [String: String],
-              headers["authorization"]?.hasPrefix("Bearer ") == true else {
+              let headers = input["headers"] as? [String: String] else {
             return (nil, "Invalid Streams request")
         }
+        guard let authorization = headers.first(where: { $0.key.lowercased() == "authorization" })?.value,
+              authorization.hasPrefix("Bearer ") else { return (nil, "Invalid Streams request") }
+        // Streams may redirect to a shard host. Restrict requests and redirects to
+        // the configured gateway and its advertised shard suffix.
+        let token = String(authorization.dropFirst("Bearer ".count))
+        guard let access = accessByToken[token],
+              let gatewayBaseURL = access.gatewayBaseURL,
+              StreamsHostPolicy(gatewayBaseURL: gatewayBaseURL, shardHostSuffix: access.shardHostSuffix).allows(url)
+        else { return (nil, "Invalid Streams request") }
         var request = URLRequest(url: url)
         request.httpMethod = method
         // The Streams library owns inactivity deadlines through AbortSignal.
         request.timeoutInterval = 300
-        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        for (name, value) in headers where name.lowercased() != "authorization" {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        request.setValue("Bearer \(access.token)", forHTTPHeaderField: "Authorization")
+        let policy = StreamsHostPolicy(gatewayBaseURL: gatewayBaseURL, shardHostSuffix: access.shardHostSuffix)
         requests[id] = Task { [weak self] in
             guard let self else { return }
             defer { requests.removeValue(forKey: id) }
             do {
-                let (bytes, response) = try await session.bytes(for: request)
+                let (bytes, response) = try await session.bytes(
+                    for: request,
+                    delegate: StreamRedirectValidator(policy: policy, token: access.token)
+                )
                 guard let http = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
                 let responseHeaders = http.allHeaderFields.reduce(into: [String: String]()) { result, field in
                     if let name = field.key as? String, let value = field.value as? String { result[name] = value }

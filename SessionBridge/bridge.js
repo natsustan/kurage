@@ -23,17 +23,24 @@ const snapshotCodec = {
 
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
+const sessionRefreshes = new Map();
 
-function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refreshMeta = true) {
+window.kurageCancel = (operationID) => {
+  sessionRefreshes.get(operationID)?.abort();
+};
+
+function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refreshMeta = true, signal) {
   // The session list has already synced metadata. Keep its in-memory repo so
   // opening a conversation needs only the session document sync.
   const operation = workspaceOperation.then(async () => {
+    signal?.throwIfAborted();
     let state = cachedWorkspace;
     if (state && (state.workspaceID !== workspaceID || state.gatewayBaseURL !== gatewayBaseURL)) {
       cachedWorkspace = undefined;
       await state.repo.destroy();
       state = undefined;
     }
+    signal?.throwIfAborted();
     if (!state) {
       const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
       state = { repo, workspaceID, gatewayBaseURL, accessToken, metaReady: false };
@@ -64,18 +71,21 @@ function withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, work, refre
     }
     state.accessToken = accessToken;
     if (refreshMeta || !state.metaReady) {
-      const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+      const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
       if (!report.ok) throw new Error('Workspace metadata sync failed');
       state.metaReady = true;
     }
+    signal?.throwIfAborted();
     return work(state.repo);
   });
   workspaceOperation = operation.catch(() => {});
   return operation;
 }
 
-window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL) =>
-  withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async (repo) => {
+window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try { return await withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async (repo) => {
     const rows = await repo.listDoc();
     const visibleSessions = rows.filter((row) => row.docId.startsWith('session-') &&
       !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta.isArchived &&
@@ -138,7 +148,9 @@ window.kurageSessions = async (workspaceID, accessToken, gatewayBaseURL) =>
     })
       .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
     return JSON.stringify({ sessions: projected });
-  });
+  }, true, controller.signal); }
+  finally { if (operationID) sessionRefreshes.delete(operationID); }
+};
 
 window.kurageConversation = async (workspaceID, sessionID, accessToken, gatewayBaseURL) =>
   withWorkspaceRepo(workspaceID, accessToken, gatewayBaseURL, async (repo) => {
