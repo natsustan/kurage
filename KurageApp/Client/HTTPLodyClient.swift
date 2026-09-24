@@ -5,13 +5,17 @@ import CryptoKit
 @MainActor
 final class HTTPLodyClient: LodyClient {
     let supportsConversations = true
-    let supportsTextSending = true
+    var supportsTextSending: Bool { account?.id?.isEmpty == false }
 
     private struct SendKey: Hashable {
         let userID: String
         let workspaceID: String
         let sessionID: String
+    }
+
+    private struct PendingSend {
         let text: String
+        let turnID: String
     }
 
     private let session: URLSession
@@ -26,7 +30,7 @@ final class HTTPLodyClient: LodyClient {
     private var authenticationGeneration = 0
     private var sessionBridge: SessionSyncBridge?
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
-    private var pendingSendIDs: [SendKey: String] = [:]
+    private var pendingSends: [SendKey: PendingSend] = [:]
 
     init(
         session: URLSession = .shared,
@@ -171,7 +175,7 @@ final class HTTPLodyClient: LodyClient {
         sessionBridge?.close()
         sessionBridge = nil
         streamsAccessCache = [:]
-        pendingSendIDs = [:]
+        pendingSends = [:]
         cachedSession = nil
         lastScheduledCache = nil
         let cacheURL = cacheURL
@@ -346,9 +350,10 @@ final class HTTPLodyClient: LodyClient {
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
-        let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID, text: trimmed)
-        let turnID = pendingSendIDs[key] ?? UUID().uuidString.lowercased()
-        pendingSendIDs[key] = turnID
+        let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
+        let turnID = pendingSends[key].flatMap { $0.text == trimmed ? $0.turnID : nil }
+            ?? UUID().uuidString.lowercased()
+        pendingSends[key] = PendingSend(text: trimmed, turnID: turnID)
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         let bridge = sessionBridge ?? makeSessionBridge()
@@ -358,9 +363,12 @@ final class HTTPLodyClient: LodyClient {
         guard generation == authenticationGeneration, account != nil else {
             throw LodyClientError.signedOut
         }
-        if result == "busy" { throw LodyClientError.sessionBusy }
+        if result == "busy" {
+            if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+            throw LodyClientError.sessionBusy
+        }
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
-        pendingSendIDs.removeValue(forKey: key)
+        if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
     }
 
     func respond(

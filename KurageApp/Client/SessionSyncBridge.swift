@@ -38,7 +38,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
                 "return await window.kurageBridgeReady.then(() => window.kurageSessions(workspaceID, baseURL, operationID))",
                 workspaceID: workspaceID,
                 access: access,
-                operationID: operationID
+                arguments: ["operationID": operationID]
             )
         } onCancel: {
             Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
@@ -67,7 +67,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL))",
             workspaceID: workspaceID,
             access: access,
-            sessionID: sessionID
+            arguments: ["sessionID": sessionID]
         )
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         return try JSONDecoder().decode(Conversation.self, from: data)
@@ -75,19 +75,13 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
 
     func sendText(_ text: String, turnID: String, userID: String, sessionID: String,
                   workspaceID: String, access: StreamsAccess) async throws -> String {
-        guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
-        try Task.checkCancellation()
-        try await ensureLoaded()
-        let result = try await webView.callAsyncJavaScript(
+        try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp))",
-            arguments: ["workspaceID": workspaceID, "sessionID": sessionID,
-                        "baseURL": gatewayBaseURL.absoluteString, "turnID": turnID, "userID": userID,
-                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date())],
-            in: nil, contentWorld: .page
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
+                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date())]
         )
-        try Task.checkCancellation()
-        guard let status = result as? String else { throw LodyClientError.notConnected }
-        return status
     }
 
     func observeConversation(sessionID: String, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -100,7 +94,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
             do {
                 _ = try await callBridge(
                     "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, baseURL, observationID))",
-                    workspaceID: workspaceID, access: access, sessionID: sessionID, observationID: id
+                    workspaceID: workspaceID, access: access,
+                    arguments: ["sessionID": sessionID, "observationID": id]
                 )
             } catch {
                 observers[id]?.finish(throwing: error)
@@ -154,21 +149,17 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         _ script: String,
         workspaceID: String,
         access: StreamsAccess,
-        sessionID: String? = nil,
-        observationID: String? = nil,
-        operationID: String? = nil
+        arguments additionalArguments: [String: Any] = [:]
     ) async throws -> String {
         guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
         try Task.checkCancellation()
         try await ensureLoaded()
         try Task.checkCancellation()
-        var arguments = [
+        var arguments: [String: Any] = [
             "workspaceID": workspaceID,
             "baseURL": gatewayBaseURL.absoluteString,
         ]
-        if let sessionID { arguments["sessionID"] = sessionID }
-        if let observationID { arguments["observationID"] = observationID }
-        if let operationID { arguments["operationID"] = operationID }
+        arguments.merge(additionalArguments) { _, value in value }
         let result = try await webView.callAsyncJavaScript(
             script,
             arguments: arguments,

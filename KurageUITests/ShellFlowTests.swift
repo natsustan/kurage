@@ -101,10 +101,16 @@ final class ShellFlowTests: XCTestCase {
 
         let latest = app.staticTexts["Latest reply in long conversation"]
         XCTAssertTrue(latest.waitForExistence(timeout: 5))
-        XCTAssertTrue(latest.isHittable)
+        XCTAssertTrue(latest.wait(for: \.frame.isEmpty, toEqual: false, timeout: 5))
+        let transcript = app.tables["conversation-transcript"]
+        let composer = app.otherElements["follow-up-composer"]
+        let visibleTranscript = CGRect(x: transcript.frame.minX, y: transcript.frame.minY,
+                                       width: transcript.frame.width,
+                                       height: composer.frame.minY - transcript.frame.minY)
+        XCTAssertTrue(visibleTranscript.contains(latest.frame))
 
-        app.tables["conversation-transcript"].swipeDown()
-        XCTAssertFalse(latest.isHittable)
+        transcript.swipeDown()
+        XCTAssertFalse(latest.exists && visibleTranscript.intersects(latest.frame))
         tap(app.descendants(matching: .any)["follow-up-field"])
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(latest.isHittable)

@@ -27,7 +27,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private let emptyHost = UIHostingController(rootView: ConversationEmptyState(isLoading: true))
     private var dataSource: UITableViewDiffableDataSource<Int, ConversationTurn.ID>!
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
-    private var turns: [ConversationTurn] = []
+    private var turnIDs: [ConversationTurn.ID] = []
     private var scrollRequestID = 0
     private struct ReadingAnchor {
         let id: ConversationTurn.ID
@@ -145,17 +145,23 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             followsOutput = true
             readingAnchor = nil
         }
-        if self.turns != turns {
-            let oldTurns = turnsByID
-            self.turns = turns
+        let updatedIDs = turns.map(\.id)
+        let changedIDs: [ConversationTurn.ID] = turns.compactMap { turn in
+            guard let previous = turnsByID[turn.id], previous != turn else { return nil }
+            return turn.id
+        }
+        if turnIDs != updatedIDs || !changedIDs.isEmpty {
             turnsByID = Dictionary(uniqueKeysWithValues: turns.map { ($0.id, $0) })
-            var snapshot = NSDiffableDataSourceSnapshot<Int, ConversationTurn.ID>()
-            snapshot.appendSections([0])
-            snapshot.appendItems(turns.map(\.id))
-            snapshot.reconfigureItems(turns.compactMap { turn in
-                guard let old = oldTurns[turn.id], old != turn else { return nil }
-                return turn.id
-            })
+            var snapshot: NSDiffableDataSourceSnapshot<Int, ConversationTurn.ID>
+            if turnIDs == updatedIDs {
+                snapshot = dataSource.snapshot()
+            } else {
+                turnIDs = updatedIDs
+                snapshot = NSDiffableDataSourceSnapshot()
+                snapshot.appendSections([0])
+                snapshot.appendItems(updatedIDs)
+            }
+            snapshot.reconfigureItems(changedIDs)
             dataSource.apply(snapshot, animatingDifferences: false)
         }
         view.setNeedsLayout()

@@ -6,11 +6,11 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
-    @Test func realConversationsCanSendTextButCannotAnswerPermissions() {
+    @Test func realConversationsNeedAnAccountIDToSendText() {
         let model = AppModel(client: HTTPLodyClient(tokenStore: MemoryAuthTokenStore()))
 
         #expect(model.supportsConversations)
-        #expect(model.supportsTextSending)
+        #expect(!model.supportsTextSending)
         #expect(!model.supportsPermissionResponses)
     }
 
@@ -22,6 +22,7 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(session: log.session, tokenStore: store,
                                     baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
         #expect(await client.restoreSession()?.id == "current-user")
+        #expect(client.supportsTextSending)
     }
 
     private static var isolatedCacheURL: URL {
