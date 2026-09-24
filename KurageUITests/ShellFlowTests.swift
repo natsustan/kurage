@@ -55,6 +55,12 @@ final class ShellFlowTests: XCTestCase {
         let review = app.buttons["permission-review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Allow npm test?"].exists)
+        let firstMessage = app.staticTexts["Run the tests again"]
+        XCTAssertTrue(firstMessage.waitForExistence(timeout: 5))
+        let firstMessageVisible = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: firstMessage
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [firstMessageVisible], timeout: 5), .completed)
         attachScreen(app, name: "conversation")
         tap(review)
         let allow = app.buttons["permission-allow"].firstMatch
@@ -68,9 +74,18 @@ final class ShellFlowTests: XCTestCase {
         field.typeText("look again")
 
         tap(app.buttons["send-follow-up"])
-        XCTAssertTrue(app.staticTexts["look again"].waitForExistence(timeout: 5))
+        let sentMessage = app.staticTexts["look again"]
+        XCTAssertTrue(sentMessage.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run the tests again"].isHittable)
+        XCTAssertLessThan(field.frame.minY - sentMessage.frame.maxY, 160)
         attachScreen(app, name: "sent")
+
+        app.tables["conversation-transcript"].swipeDown()
+        XCTAssertFalse(app.keyboards.firstMatch.isHittable)
+        tap(field)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertLessThan(field.frame.minY - sentMessage.frame.maxY, 160)
+        attachScreen(app, name: "keyboard-reopened")
     }
 
     @MainActor
@@ -87,6 +102,65 @@ final class ShellFlowTests: XCTestCase {
         let latest = app.staticTexts["Latest reply in long conversation"]
         XCTAssertTrue(latest.waitForExistence(timeout: 5))
         XCTAssertTrue(latest.isHittable)
+
+        app.tables["conversation-transcript"].swipeDown()
+        XCTAssertFalse(latest.isHittable)
+        tap(app.descendants(matching: .any)["follow-up-field"])
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(latest.isHittable)
+    }
+
+    @MainActor
+    func testKeyboardAndMultilineComposerKeepLatestMessageVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+
+        let latest = app.staticTexts["Latest reply in long conversation"]
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        for _ in 0..<2 {
+            tap(field)
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            assertMessageAboveComposer(latest, field: field)
+            app.tables["conversation-transcript"].swipeDown()
+            XCTAssertFalse(app.keyboards.firstMatch.isHittable)
+            // Dismissing the keyboard also scrolls into history. Reach the actual bottom
+            // (not just a visible last row) before testing automatic following again.
+            app.tables["conversation-transcript"].swipeUp()
+            app.tables["conversation-transcript"].swipeUp()
+        }
+        tap(field)
+        let composer = app.otherElements["follow-up-composer"]
+        let singleLineHeight = composer.frame.height
+        field.typeText("First line\nSecond line\nThird line\nFourth line\nFifth line")
+        XCTAssertGreaterThan(composer.frame.height, singleLineHeight + 50)
+        XCTAssertTrue(composer.frame.contains(field.frame))
+        XCTAssertLessThanOrEqual(composer.frame.maxY, app.keyboards.firstMatch.frame.minY)
+        XCTAssertTrue(composer.frame.contains(app.buttons["send-follow-up"].frame))
+        assertMessageAboveComposer(latest, field: field)
+        attachScreen(app, name: "multiline-keyboard")
+        tap(app.buttons["send-follow-up"])
+        let sent = app.staticTexts["First line\nSecond line\nThird line\nFourth line\nFifth line"]
+        XCTAssertTrue(sent.waitForExistence(timeout: 5))
+        XCTAssertTrue(sent.wait(for: \.frame.isEmpty, toEqual: false, timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.isHittable)
+        XCTAssertGreaterThan(sent.frame.height, 70)
+        XCTAssertGreaterThan(sent.frame.minY, app.navigationBars.firstMatch.frame.maxY)
+        XCTAssertLessThanOrEqual(sent.frame.maxY, field.frame.minY)
+        attachScreen(app, name: "multiline-sent")
+    }
+
+    @MainActor
+    private func assertMessageAboveComposer(_ message: XCUIElement, field: XCUIElement,
+                                           file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(message.isHittable, file: file, line: line)
+        XCTAssertLessThanOrEqual(message.frame.maxY, field.frame.minY, file: file, line: line)
+        XCTAssertLessThan(field.frame.minY - message.frame.maxY, 100, file: file, line: line)
     }
 
     @MainActor

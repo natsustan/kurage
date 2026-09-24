@@ -7,7 +7,8 @@ struct FixtureLodyClientTests {
         let model = AppModel(client: FixtureLodyClient())
 
         #expect(model.supportsConversations)
-        #expect(model.supportsConversationActions)
+        #expect(model.supportsTextSending)
+        #expect(model.supportsPermissionResponses)
     }
 
     @Test func sessionsRequireSignIn() async {

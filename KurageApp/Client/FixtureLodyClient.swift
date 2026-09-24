@@ -6,7 +6,9 @@ final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
     let requiresExternalAuthorization = false
     let supportsConversations = true
-    let supportsConversationActions = true
+    let supportsTextSending = true
+    let supportsTextSendingWhileRunning = true
+    let supportsPermissionResponses = true
 
     private var records: [SessionRecord]
     private var nextTurnNumber = 0

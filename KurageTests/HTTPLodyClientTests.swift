@@ -6,11 +6,22 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
-    @Test func realConversationsAreReadableButActionsAreUnavailable() {
+    @Test func realConversationsCanSendTextButCannotAnswerPermissions() {
         let model = AppModel(client: HTTPLodyClient(tokenStore: MemoryAuthTokenStore()))
 
         #expect(model.supportsConversations)
-        #expect(!model.supportsConversationActions)
+        #expect(model.supportsTextSending)
+        #expect(!model.supportsPermissionResponses)
+    }
+
+    @Test func restoredAccountKeepsUserIDForAuthoredTurns() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store,
+                                    baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
+        #expect(await client.restoreSession()?.id == "current-user")
     }
 
     private static var isolatedCacheURL: URL {
@@ -732,6 +743,42 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
+    @Test(.timeLimit(.minutes(1))) func forwardsPOSTBodyThroughNativeProxy() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let requestBox = StreamingRequestBox()
+        StreamingTestURLProtocol.onStart = { requestBox.capture($0); startedSignal.yield(()) }
+        defer { StreamingTestURLProtocol.onStart = nil }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let handler = StreamFetchHandler(session: session) { _, _ in
+            StreamsAccess(token: "test-token", expiresIn: 300,
+                          gatewayBaseURL: URL(string: "https://example.test"), shardHostSuffix: nil)
+        }
+        let webConfiguration = WKWebViewConfiguration()
+        webConfiguration.websiteDataStore = .nonPersistent()
+        webConfiguration.userContentController.addScriptMessageHandler(handler, contentWorld: .page, name: "streamFetch")
+        let webView = WKWebView(frame: .zero, configuration: webConfiguration)
+        handler.webView = webView
+        defer { handler.cancelAll(); webView.stopLoading() }
+        webView.loadHTMLString("", baseURL: nil)
+        let ready = try await webView.callAsyncJavaScript("""
+            const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+              command: 'auth', workspaceID: 'test-workspace'
+            });
+            return await window.webkit.messageHandlers.streamFetch.postMessage({
+              command: 'start', id: 'post', url: 'https://example.test/ds/lody/s', method: 'POST',
+              headers: {authorization: 'Bearer ' + access.token, 'content-type': 'text/plain'},
+              body: btoa(String.fromCharCode(...new TextEncoder().encode('你好')))
+            });
+            """, arguments: [:], in: nil, contentWorld: .page)
+        #expect(ready as? Bool == true)
+        var requests = started.makeAsyncIterator()
+        _ = await requests.next()
+        #expect(requestBox.methodAndBody() == ("POST", Data("你好".utf8)))
+    }
+
     @Test(.timeLimit(.minutes(1))) func forwardsSSEBeforeEOFAndCancelsNativeRequest() async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let pendingRequest = StreamingRequestBox()
@@ -840,4 +887,22 @@ private final class StreamingRequestBox: @unchecked Sendable {
     }
     func sendHeaders() { lock.withLock { request?.sendHeaders() } }
     func sendChunk(_ data: Data) { lock.withLock { request?.sendChunk(data) } }
+    func methodAndBody() -> (String?, Data?) {
+        lock.withLock {
+            guard let request = request?.request else { return (nil, nil) }
+            if let body = request.httpBody { return (request.httpMethod, body) }
+            guard let stream = request.httpBodyStream else { return (request.httpMethod, nil) }
+            stream.open()
+            defer { stream.close() }
+            var body = Data()
+            let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 1024)
+            defer { buffer.deallocate() }
+            while stream.hasBytesAvailable {
+                let count = stream.read(buffer, maxLength: 1024)
+                if count <= 0 { break }
+                body.append(buffer, count: count)
+            }
+            return (request.httpMethod, body)
+        }
+    }
 }

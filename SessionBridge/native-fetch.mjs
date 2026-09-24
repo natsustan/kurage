@@ -52,8 +52,20 @@ export function createNativeFetch(send, fallback) {
       }, { highWaterMark: 64 * 1024, size: chunk => chunk.byteLength });
       requests.set(id, entry);
       request.signal.addEventListener('abort', onAbort, { once: true });
-      void send({ command: 'start', id, url: request.url, method: request.method,
-        headers: Object.fromEntries(request.headers.entries()) }).catch(abort);
+      void (async () => {
+        const bytes = request.body ? new Uint8Array(await request.arrayBuffer()) : null;
+        if (!requests.has(id)) return;
+        let body;
+        if (bytes) {
+          let binary = '';
+          for (let index = 0; index < bytes.length; index += 32_768) {
+            binary += String.fromCharCode(...bytes.subarray(index, index + 32_768));
+          }
+          body = btoa(binary);
+        }
+        await send({ command: 'start', id, url: request.url, method: request.method,
+          headers: Object.fromEntries(request.headers.entries()), body });
+      })().catch(abort);
     });
   }
   return { fetch, receive };

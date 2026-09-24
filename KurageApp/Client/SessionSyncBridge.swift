@@ -1,8 +1,8 @@
 import Foundation
 import WebKit
 
-/// Runs Lody's Flock/Streams reader in an isolated bundled WebKit page.
-/// Native URLSession owns network access; the page only projects session metadata.
+/// Runs Lody's Flock/Streams client in an isolated bundled WebKit page.
+/// Native URLSession owns network access.
 @MainActor
 final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     private let fetchHandler: StreamFetchHandler
@@ -71,6 +71,23 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         )
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         return try JSONDecoder().decode(Conversation.self, from: data)
+    }
+
+    func sendText(_ text: String, turnID: String, userID: String, sessionID: String,
+                  workspaceID: String, access: StreamsAccess) async throws -> String {
+        guard let gatewayBaseURL = access.gatewayBaseURL else { throw LodyClientError.notConnected }
+        try Task.checkCancellation()
+        try await ensureLoaded()
+        let result = try await webView.callAsyncJavaScript(
+            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp))",
+            arguments: ["workspaceID": workspaceID, "sessionID": sessionID,
+                        "baseURL": gatewayBaseURL.absoluteString, "turnID": turnID, "userID": userID,
+                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date())],
+            in: nil, contentWorld: .page
+        )
+        try Task.checkCancellation()
+        guard let status = result as? String else { throw LodyClientError.notConnected }
+        return status
     }
 
     func observeConversation(sessionID: String, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -338,7 +355,8 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         }
         guard command == "start", requests[id] == nil,
               let rawURL = input["url"] as? String, let url = URL(string: rawURL),
-              let method = input["method"] as? String, method == "GET" || method == "HEAD",
+              let method = input["method"] as? String,
+              ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method),
               let headers = input["headers"] as? [String: String] else {
             return (nil, "Invalid Streams request")
         }
@@ -353,6 +371,12 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         else { return (nil, "Invalid Streams request") }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        if let encodedBody = input["body"] as? String {
+            guard method != "GET", method != "HEAD", let body = Data(base64Encoded: encodedBody) else {
+                return (nil, "Invalid Streams request body")
+            }
+            request.httpBody = body
+        }
         // The Streams library owns inactivity deadlines through AbortSignal.
         request.timeoutInterval = 300
         for (name, value) in headers where name.lowercased() != "authorization" {
