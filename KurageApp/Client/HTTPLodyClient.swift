@@ -464,12 +464,13 @@ final class HTTPLodyClient: LodyClient {
         return bridge.observeConversation(sessionID: sessionID, workspaceID: workspaceID, access: access)
     }
 
+    @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
-    ) async throws {
+    ) async throws -> RunConfigChoice? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
@@ -504,6 +505,7 @@ final class HTTPLodyClient: LodyClient {
         }
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
         if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+        return pending.runConfig
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

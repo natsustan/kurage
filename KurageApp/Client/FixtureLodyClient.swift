@@ -95,12 +95,13 @@ final class FixtureLodyClient: LodyClient {
         }
     }
 
+    @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
-    ) async throws {
+    ) async throws -> RunConfigChoice? {
         try requireAccount()
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -119,6 +120,7 @@ final class FixtureLodyClient: LodyClient {
         if let index = records.firstIndex(where: { $0.summary.id == sessionID }) {
             records.insert(records.remove(at: index), at: 0)
         }
+        return runConfig
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

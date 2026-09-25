@@ -368,10 +368,11 @@ final class AppModel {
         return conversationCache[workspaceID]?[sessionID]
     }
 
-    func send(_ text: String, runConfig: RunConfigChoice? = nil, sessionID: SessionSummary.ID) async throws {
+    @discardableResult
+    func send(_ text: String, runConfig: RunConfigChoice? = nil, sessionID: SessionSummary.ID) async throws -> RunConfigChoice? {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
-        try await client.send(text, runConfig: runConfig, sessionID: sessionID, workspaceID: workspaceID)
+        let sentChoice = try await client.send(text, runConfig: runConfig, sessionID: sessionID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
             throw CancellationError()
         }
@@ -383,6 +384,7 @@ final class AppModel {
             persistSession()
         }
         await refreshSessions(restart: true)
+        return sentChoice
     }
 
     func cancelSession(sessionID: SessionSummary.ID) async throws {

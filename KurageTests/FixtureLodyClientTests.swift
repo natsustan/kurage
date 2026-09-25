@@ -89,7 +89,8 @@ struct FixtureLodyClientTests {
         #expect(initial.applying(choice).reasoning?.label == "Low")
         #expect(initial.applying(choice).model == initial.model)
 
-        try await model.send("faster please", runConfig: choice, sessionID: "session-long")
+        let sentChoice = try await model.send("faster please", runConfig: choice, sessionID: "session-long")
+        #expect(sentChoice == choice)
         #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value == "low")
     }
 
@@ -333,12 +334,13 @@ private final class DeferredSessionClient: LodyClient {
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         throw LodyClientError.notConnected
     }
+    @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
-    ) async throws {
+    ) async throws -> RunConfigChoice? {
         throw LodyClientError.notConnected
     }
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
@@ -419,5 +421,61 @@ struct ConversationStreamingTests {
         #expect(model.sessionSearchBody(sessionID: "s").isEmpty)
         signal.finish()
         #expect(await changes.next() == nil)
+    }
+}
+
+@MainActor
+struct ConversationRunConfigStateTests {
+    private let low = RunConfigChoice(configOptionID: "reasoning_effort", value: "low")
+    private let high = RunConfigChoice(configOptionID: "reasoning_effort", value: "high")
+
+    private var initial: SessionRunConfig {
+        SessionRunConfig(
+            model: .init(value: "model", label: "Model"),
+            reasoning: .init(value: "medium", label: "Medium"),
+            editable: .init(kind: .reasoning, configOptionID: "reasoning_effort", options: [
+                .init(value: "low", label: "Low"),
+                .init(value: "medium", label: "Medium"),
+                .init(value: "high", label: "High"),
+            ])
+        )
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func retryKeepsUnusedChoice(observationBeforeCompletion: Bool, originalHasChoice: Bool) {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        if originalHasChoice { state.choose(low.value) }
+        let originalChoice = state.choice
+        // The first attempt is unconfirmed. A different choice is made before retrying.
+        state.choose(high.value)
+        let confirmed = initial.applying(originalChoice)
+        if observationBeforeCompletion { state.receive(confirmed) }
+        state.didSend(originalChoice)
+        if !observationBeforeCompletion { state.receive(confirmed) }
+
+        #expect(state.config == confirmed)
+        #expect(state.choice == high)
+        #expect(state.displayed?.reasoning?.value == "high")
+        // Sending the next new turn consumes the preserved choice.
+        state.didSend(state.choice)
+        #expect(state.config?.reasoning?.value == "high")
+        #expect(state.choice == nil)
+    }
+
+    @Test func successfulSendClearsOnlyTheAppliedChoice() {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        state.choose(low.value)
+        state.didSend(low)
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.choice == nil)
+
+        state.choose(high.value)
+        state.receive(initial.applying(high))
+        state.choose("medium") // A new selection made while the send is completing.
+        state.didSend(high)
+        #expect(state.config?.reasoning?.value == "high")
+        #expect(state.choice?.value == "medium")
     }
 }

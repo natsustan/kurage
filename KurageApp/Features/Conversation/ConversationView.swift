@@ -20,8 +20,7 @@ struct ConversationView: View {
     @State private var connectionStatus: String?
     @State private var previousPendingText: String?
     @State private var previousPendingWorkspaceID: String?
-    @State private var runConfig: SessionRunConfig?
-    @State private var runConfigChoice: RunConfigChoice?
+    @State private var runConfigState = ConversationRunConfigState()
     @State private var previewImage: ConversationImage?
 
     private var displayedConversation: Conversation? {
@@ -52,7 +51,7 @@ struct ConversationView: View {
                 supportsTextSending: model.supportsTextSending,
                 supportsSessionCancellation: model.supportsSessionCancellation,
                 supportsPermissionResponses: model.supportsPermissionResponses,
-                runConfig: runConfig?.applying(runConfigChoice),
+                runConfig: runConfigState.displayed,
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
@@ -114,11 +113,7 @@ struct ConversationView: View {
             do {
                 try await model.observeConversation(sessionID: sessionID) { update in
                     conversation = update.conversation
-                    runConfig = update.runConfig
-                    // Drop a choice the agent no longer offers in the same place.
-                    if let choice = runConfigChoice, update.runConfig?.choosing(choice.value) != choice {
-                        runConfigChoice = nil
-                    }
+                    runConfigState.receive(update.runConfig)
                     isLoading = false
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
                     if update.syncState == .live { retryDelay = 1 }
@@ -142,7 +137,7 @@ struct ConversationView: View {
               model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let choice = runConfigChoice
+        let choice = runConfigState.choice
         draft = ""
         scrollRequestID += 1
         banner = nil
@@ -150,14 +145,10 @@ struct ConversationView: View {
         Task {
             defer { isSending = false }
             do {
-                try await model.send(text, runConfig: choice, sessionID: sessionID)
+                let sentChoice = try await model.send(text, runConfig: choice, sessionID: sessionID)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
-                // The new turn now carries the choice; later updates confirm it.
-                if runConfigChoice == choice {
-                    runConfig = runConfig?.applying(choice)
-                    runConfigChoice = nil
-                }
+                runConfigState.didSend(sentChoice)
                 if let latest = try? await model.conversation(sessionID: sessionID) {
                     conversation = latest
                 }
@@ -187,9 +178,7 @@ struct ConversationView: View {
     }
 
     private func chooseRunConfig(_ value: String) {
-        guard let choice = runConfig?.choosing(value) else { return }
-        let current = runConfig?.editable?.kind == .reasoning ? runConfig?.reasoning : runConfig?.model
-        runConfigChoice = current?.value == value ? nil : choice
+        runConfigState.choose(value)
     }
 
     private func cancelSession() {
@@ -605,5 +594,33 @@ private struct ConversationPreview: View {
             ConversationView(sessionID: sessionID, title: title, model: model)
         }
         .task { await model.adoptExistingAccount() }
+    }
+}
+
+/// Separates the synchronized configuration from a choice for the next new turn.
+struct ConversationRunConfigState {
+    private(set) var config: SessionRunConfig?
+    private(set) var choice: RunConfigChoice?
+
+    var displayed: SessionRunConfig? { config?.applying(choice) }
+
+    mutating func receive(_ config: SessionRunConfig?) {
+        self.config = config
+        // Drop a choice the agent no longer offers in the same place.
+        if let choice, config?.choosing(choice.value) != choice {
+            self.choice = nil
+        }
+    }
+
+    mutating func choose(_ value: String) {
+        guard let selected = config?.choosing(value) else { return }
+        let current = config?.editable?.kind == .reasoning ? config?.reasoning : config?.model
+        choice = current?.value == value ? nil : selected
+    }
+
+    mutating func didSend(_ sentChoice: RunConfigChoice?) {
+        config = config?.applying(sentChoice)
+        // A retry can send an older choice. Keep any unused selection for the next turn.
+        if choice == sentChoice { choice = nil }
     }
 }

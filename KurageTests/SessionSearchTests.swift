@@ -216,7 +216,7 @@ private final class SearchLifecycleClient: LodyClient {
         signal.yield("observe")
         return stream
     }
-    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: String, workspaceID: String) async throws {}
+    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { runConfig }
     func cancelSession(sessionID: String, workspaceID: String) async throws {}
     func archivedSessions(workspaceID: String) async throws -> [ArchivedSessionSummary] {
         if failArchiveLoad { throw LodyClientError.unreachable }

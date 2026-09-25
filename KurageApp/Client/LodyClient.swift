@@ -26,13 +26,16 @@ protocol LodyClient: AnyObject {
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
+    /// Returns the choice used to author the turn, including on retries.
+    /// `nil` means the turn inherited its configuration without an explicit choice.
     /// `runConfig` applies only when this call creates the turn.
+    @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
-    ) async throws
+    ) async throws -> RunConfigChoice?
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
     func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
     func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary]
@@ -62,7 +65,8 @@ extension LodyClient {
         }
     }
 
-    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+    @discardableResult
+    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
         try await send(text, runConfig: nil, sessionID: sessionID, workspaceID: workspaceID)
     }
 
