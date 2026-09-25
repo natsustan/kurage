@@ -31,6 +31,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
         flock: { scan: () => [] },
       };
     }
+    async openPersistedDoc() { return { doc: { getList: () => ({ toJSON: () => [] }) } }; }
     async getDocMeta() { return undefined; }
     async destroy() { this.destroyed = true; }
   }
@@ -76,18 +77,15 @@ test('session cancellation uses the requested workspace and releases its writer'
 test('archiving uses a short-lived writer for the requested session', async () => {
   let request;
   const { window, repos } = makeBridge(async () => ({ outcome: 'synced', ok: true }), [], async () => 'requested',
-    async (repo, workspaceID, sessionID, userID, requestedAt) => {
-      request = { repo, workspaceID, sessionID, userID, requestedAt };
+    async (repo, sessionID) => {
+      request = { repo, sessionID };
       return 'archived';
     });
   assert.equal(
-    await window.kurageArchiveSession('workspace', 'chat', 'https://gateway.lody.ai', 'user-1', 20),
+    await window.kurageArchiveSession('workspace', 'chat', 'https://gateway.lody.ai'),
     'archived',
   );
-  assert.deepEqual(
-    { workspaceID: request.workspaceID, sessionID: request.sessionID, userID: request.userID, requestedAt: request.requestedAt },
-    { workspaceID: 'workspace', sessionID: 'chat', userID: 'user-1', requestedAt: 20 },
-  );
+  assert.equal(request.sessionID, 'chat');
   assert.equal(request.repo, repos[0]);
   assert.equal(repos[0].destroyed, true);
 });
@@ -273,4 +271,48 @@ test('optional machine sync failure still returns sessions with a fallback proje
 
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].projectName, 'Local Project');
+});
+
+test('cancelling a transcript read releases the queued conversation observation', async () => {
+  const started = Promise.withResolvers();
+  let aborted = false;
+  const { window } = makeBridge(options => {
+    if (options.scope !== 'doc') return { ok: true };
+    assert.deepEqual(Array.from(options.docIds), ['session-chat']);
+    started.resolve();
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        aborted = true;
+        reject(options.signal.reason);
+      }, { once: true });
+    });
+  }, [{ docId: 'session-chat', meta: {} }]);
+  const read = window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'search');
+  const outcome = assert.rejects(read, { name: 'AbortError' });
+  await started.promise;
+  const observation = window.kurageObserveConversation('workspace', 'chat', 'https://gateway.lody.ai', 'observe');
+  window.kurageCancel('search');
+  await outcome;
+  await observation;
+  assert.equal(aborted, true);
+});
+
+test('cancelling a queued transcript read skips document sync', async () => {
+  const started = Promise.withResolvers();
+  const finish = Promise.withResolvers();
+  let syncs = 0;
+  const { window } = makeBridge(() => {
+    syncs += 1;
+    started.resolve();
+    return finish.promise;
+  }, [{ docId: 'session-chat', meta: {} }]);
+  const refresh = window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh');
+  await started.promise;
+  const read = window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'search');
+  const outcome = assert.rejects(read, { name: 'AbortError' });
+  window.kurageCancel('search');
+  finish.resolve({ ok: true });
+  await refresh;
+  await outcome;
+  assert.equal(syncs, 1);
 });

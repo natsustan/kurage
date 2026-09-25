@@ -63,12 +63,18 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         workspaceID: WorkspaceSummary.ID,
         access: StreamsAccess
     ) async throws -> Conversation {
-        let json = try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL))",
-            workspaceID: workspaceID,
-            access: access,
-            arguments: ["sessionID": sessionID]
-        )
+        let operationID = UUID().uuidString
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                arguments: ["sessionID": sessionID, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         return try JSONDecoder().decode(Conversation.self, from: data)
     }
@@ -100,15 +106,13 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     func archiveSession(
         sessionID: String,
         workspaceID: String,
-        userID: String?,
-        requestedAt: Int,
         access: StreamsAccess
     ) async throws -> String {
         try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageArchiveSession(workspaceID, sessionID, baseURL, userID, requestedAt))",
+            "return await window.kurageBridgeReady.then(() => window.kurageArchiveSession(workspaceID, sessionID, baseURL))",
             workspaceID: workspaceID,
             access: access,
-            arguments: ["sessionID": sessionID, "userID": userID ?? NSNull(), "requestedAt": requestedAt]
+            arguments: ["sessionID": sessionID]
         )
     }
 

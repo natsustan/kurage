@@ -251,7 +251,7 @@ private struct SessionList: View {
         description: String,
         loadingTitle: String = "Loading sessions…"
     ) -> some View {
-        Group {
+        ScrollView {
             if loading {
                 ProgressView(loadingTitle)
                     .frame(maxWidth: .infinity, minHeight: 160)
@@ -300,7 +300,12 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.onToggleProject = onToggleProject
         controller.onArchive = onArchive
         controller.bottomContentInset = bottomContentInset
+        controller.refreshAction = context.environment.refresh
         controller.render(rows: rows, canArchive: canArchive, opensSessions: opensSessions)
+    }
+
+    static func dismantleUIViewController(_ controller: SessionBrowserController, coordinator: ()) {
+        controller.cancelRefresh()
     }
 }
 
@@ -308,6 +313,8 @@ private struct SessionBrowser: UIViewControllerRepresentable {
 /// `completion(false)` closes the swipe and leaves the row's height alone.
 /// The confirmation is presented by this controller, not by rebuilding the list.
 private final class SessionBrowserController: UIViewController, UITableViewDelegate {
+    var refreshAction: RefreshAction?
+    private var refreshTask: Task<Void, Never>?
     var onOpen: ((SessionSummary.ID) -> Void)?
     var onToggleProject: ((String) -> Void)?
     var onArchive: ((SessionSummary) -> Void)?
@@ -331,6 +338,10 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         // system background over the rows scrolling through it.
         tableView.bottomEdgeEffect.isHidden = true
         tableView.delegate = self
+        let refreshControl = UIRefreshControl()
+        refreshControl.addTarget(self, action: #selector(refresh), for: .valueChanged)
+        tableView.refreshControl = refreshControl
+        tableView.alwaysBounceVertical = true
         tableView.register(SessionBrowserCell.self, forCellReuseIdentifier: "row")
         dataSource = UITableViewDiffableDataSource(tableView: tableView) { [weak self] tableView, indexPath, itemID in
             let cell = tableView.dequeueReusableCell(withIdentifier: "row", for: indexPath) as! SessionBrowserCell
@@ -340,6 +351,24 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         dataSource.defaultRowAnimation = .fade
         view = tableView
         applyBottomContentInset()
+    }
+
+    @objc private func refresh() {
+        guard refreshTask == nil, let refreshAction else {
+            if refreshTask == nil { tableView.refreshControl?.endRefreshing() }
+            return
+        }
+        refreshTask = Task { [weak self] in
+            await refreshAction()
+            self?.tableView.refreshControl?.endRefreshing()
+            self?.refreshTask = nil
+        }
+    }
+
+    func cancelRefresh() {
+        refreshTask?.cancel()
+        refreshTask = nil
+        tableView.refreshControl?.endRefreshing()
     }
 
     private func applyBottomContentInset() {

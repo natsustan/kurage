@@ -3,6 +3,7 @@ import Testing
 @testable import Kurage
 
 @MainActor
+@Suite(.serialized)
 struct ConversationImageTests {
     @Test func textOnlyTurnsRemainReadableWithoutImageParts() throws {
         let turn = ConversationTurn(id: "a", author: .agent, text: "Hello")
@@ -133,6 +134,84 @@ struct ConversationImageTests {
         }
     }
 
+    @Test(.timeLimit(.minutes(1))) func cancellingOneWaiterKeepsTheSharedDownload() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let pending = DeferredImageRequestBox()
+        DeferredImageURLProtocol.onStart = { pending.capture($0); startedSignal.yield(()) }
+        defer { DeferredImageURLProtocol.onStart = nil }
+        let client = try await deferredImageClient()
+        var requests = started.makeAsyncIterator()
+        let first = Task { try await self.loadImage(client) }
+        _ = await requests.next()
+        let request = try #require(pending.current())
+        let (joined, joinedSignal) = AsyncStream<Void>.makeStream()
+        let second = Task {
+            joinedSignal.yield(())
+            return try await self.loadImage(client)
+        }
+        var joins = joined.makeAsyncIterator()
+        _ = await joins.next()
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        request.succeed()
+        #expect(try await second.value == FixtureImage.png)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancellingLastWaiterStopsDownloadAndAllowsANewRequest() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let pending = DeferredImageRequestBox()
+        let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
+        DeferredImageURLProtocol.onStart = { pending.capture($0); startedSignal.yield(()) }
+        DeferredImageURLProtocol.onStop = { stoppedSignal.yield(()) }
+        defer {
+            DeferredImageURLProtocol.onStart = nil
+            DeferredImageURLProtocol.onStop = nil
+        }
+        let client = try await deferredImageClient()
+        var requests = started.makeAsyncIterator()
+        var cancellations = stopped.makeAsyncIterator()
+        let first = Task { try await self.loadImage(client) }
+        _ = await requests.next()
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        _ = await cancellations.next()
+
+        let replacement = Task { try await self.loadImage(client) }
+        _ = await requests.next()
+        let request = try #require(pending.current())
+        #expect(request.request.url?.path.hasSuffix("/thumbnail") == true)
+        request.succeed()
+        #expect(try await replacement.value == FixtureImage.png)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func signOutReleasesImageWaiters() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let pending = DeferredImageRequestBox()
+        DeferredImageURLProtocol.onStart = { pending.capture($0); startedSignal.yield(()) }
+        defer { DeferredImageURLProtocol.onStart = nil }
+        let client = try await deferredImageClient()
+        var requests = started.makeAsyncIterator()
+        let load = Task { try await self.loadImage(client) }
+        _ = await requests.next()
+        client.signOut()
+        await #expect(throws: LodyClientError.signedOut) { try await load.value }
+    }
+
+    private func loadImage(_ client: HTTPLodyClient) async throws -> Data {
+        try await client.loadSessionImage(workspaceID: "workspace", sessionID: "chat", imageID: "shot", variant: .inline)
+    }
+
+    private func deferredImageClient() async throws -> HTTPLodyClient {
+        let store = ImageTokenStore()
+        _ = store.write("account-token")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DeferredImageURLProtocol.self]
+        let client = HTTPLodyClient(session: URLSession(configuration: configuration), tokenStore: store,
+                                    cacheURL: isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        return client
+    }
+
     private var isolatedCacheURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
@@ -230,4 +309,44 @@ private final class ImageURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {}
+}
+
+private final class DeferredImageURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var onStart: (@Sendable (DeferredImageURLProtocol) -> Void)?
+    nonisolated(unsafe) static var onStop: (@Sendable () -> Void)?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        if request.url?.path.contains("get-session") == true {
+            respond(Data(#"{"user":{"id":"user","email":"ada@lody.ai"}}"#.utf8), type: "application/json")
+        } else {
+            Self.onStart?(self)
+        }
+    }
+    override func stopLoading() { Self.onStop?() }
+    func succeed() { respond(FixtureImage.png, type: "image/png") }
+    private func respond(_ data: Data, type: String) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: ["Content-Type": type])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+}
+
+// URLProtocol invokes callbacks off the main actor; protect its test handle.
+private final class DeferredImageRequestBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: DeferredImageURLProtocol?
+    func capture(_ request: DeferredImageURLProtocol) {
+        lock.lock()
+        defer { lock.unlock() }
+        self.request = request
+    }
+    func current() -> DeferredImageURLProtocol? {
+        lock.lock()
+        defer { lock.unlock() }
+        return request
+    }
 }

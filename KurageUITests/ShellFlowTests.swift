@@ -282,6 +282,23 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["session-session-tests"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["session-session-pr"].exists)
         attachScreen(app, name: "search-body")
+
+        tap(app.buttons["session-search-clear"])
+        tap(search)
+        search.typeText("no-matching-conversation-123\n")
+        XCTAssertTrue(app.staticTexts["No matching sessions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(search.isHittable)
+        let emptyList = app.scrollViews.firstMatch
+        XCTAssertTrue(emptyList.waitForExistence(timeout: 2))
+        emptyList.swipeDown()
+        XCTAssertTrue(app.staticTexts["No matching sessions"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "search-empty")
+
+        tap(app.buttons["session-search-clear"])
+        XCTAssertTrue(long.waitForExistence(timeout: 5))
+        app.tables.firstMatch.swipeDown()
+        XCTAssertTrue(tests.waitForExistence(timeout: 5))
+        attachScreen(app, name: "list-refreshed")
     }
 
     @MainActor

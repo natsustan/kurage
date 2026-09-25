@@ -29,6 +29,12 @@ final class HTTPLodyClient: LodyClient {
         let runConfig: RunConfigChoice?
     }
 
+    private struct SessionImageLoad {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<Data, Error>]
+    }
+
     private let session: URLSession
     private let tokenStore: any AuthTokenStore
     private let baseURL: URL
@@ -45,7 +51,7 @@ final class HTTPLodyClient: LodyClient {
     private var pendingSends: [SendKey: PendingSend] = [:]
     private var sessionImageCache: [SessionImageCacheKey: Data] = [:]
     private var sessionImageOrder: [SessionImageCacheKey] = []
-    private var sessionImageLoads: [SessionImageCacheKey: Task<Data, Error>] = [:]
+    private var sessionImageLoads: [SessionImageCacheKey: SessionImageLoad] = [:]
 
     init(
         session: URLSession = .shared,
@@ -193,7 +199,10 @@ final class HTTPLodyClient: LodyClient {
         sessionBridge = nil
         streamsAccessCache = [:]
         pendingSends = [:]
-        for load in sessionImageLoads.values { load.cancel() }
+        for load in sessionImageLoads.values {
+            load.task.cancel()
+            for waiter in load.waiters.values { waiter.resume(throwing: LodyClientError.signedOut) }
+        }
         sessionImageLoads = [:]
         sessionImageCache = [:]
         sessionImageOrder = []
@@ -354,6 +363,7 @@ final class HTTPLodyClient: LodyClient {
         imageID: String,
         variant: SessionImageVariant
     ) async throws -> Data {
+        try Task.checkCancellation()
         guard account != nil, let token = tokenStore.read(), !token.isEmpty else {
             throw LodyClientError.signedOut
         }
@@ -366,32 +376,65 @@ final class HTTPLodyClient: LodyClient {
             variant: variant
         )
         if let cached = sessionImageCache[key] { return cached }
-        if let existing = sessionImageLoads[key] {
-            let data = try await existing.value
-            guard generation == authenticationGeneration, tokenStore.read() == token else {
-                throw LodyClientError.signedOut
+        let waiterID = UUID()
+        let data = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if sessionImageLoads[key] != nil {
+                    sessionImageLoads[key]?.waiters[waiterID] = continuation
+                    return
+                }
+                let loadID = UUID()
+                let task = Task { [session, imageBaseURL, weak self] in
+                    let result: Result<Data, Error>
+                    do {
+                        let data = try await SessionImageTransport.load(
+                            session: session, baseURL: imageBaseURL, workspaceID: workspaceID, sessionID: sessionID,
+                            imageID: imageID, variant: variant, token: token
+                        )
+                        result = .success(data)
+                    } catch {
+                        result = .failure(error)
+                    }
+                    self?.finishSessionImageLoad(result, key: key, loadID: loadID, generation: generation, token: token)
+                }
+                sessionImageLoads[key] = SessionImageLoad(id: loadID, task: task, waiters: [waiterID: continuation])
             }
-            return data
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelSessionImageWaiter(waiterID, key: key) }
         }
-        let task = Task {
-            try await SessionImageTransport.load(
-                session: session, baseURL: imageBaseURL, workspaceID: workspaceID, sessionID: sessionID,
-                imageID: imageID, variant: variant, token: token
-            )
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil, tokenStore.read() == token else {
+            throw LodyClientError.signedOut
         }
-        sessionImageLoads[key] = task
-        do {
-            let data = try await task.value
-            sessionImageLoads[key] = nil
-            guard generation == authenticationGeneration, account != nil, tokenStore.read() == token else {
-                throw LodyClientError.signedOut
-            }
-            storeSessionImage(data, for: key)
-            return data
-        } catch {
-            sessionImageLoads[key] = nil
-            throw error
+        return data
+    }
+
+    private func cancelSessionImageWaiter(_ waiterID: UUID, key: SessionImageCacheKey) {
+        guard let waiter = sessionImageLoads[key]?.waiters.removeValue(forKey: waiterID) else { return }
+        waiter.resume(throwing: CancellationError())
+        if sessionImageLoads[key]?.waiters.isEmpty == true {
+            sessionImageLoads.removeValue(forKey: key)?.task.cancel()
         }
+    }
+
+    private func finishSessionImageLoad(
+        _ result: Result<Data, Error>, key: SessionImageCacheKey, loadID: UUID, generation: Int, token: String
+    ) {
+        // A cancelled load may finish after a new request for the same image starts.
+        guard sessionImageLoads[key]?.id == loadID,
+              let load = sessionImageLoads.removeValue(forKey: key) else { return }
+        let validated: Result<Data, Error>
+        if generation == authenticationGeneration, account != nil, tokenStore.read() == token {
+            validated = result
+            if case .success(let data) = result { storeSessionImage(data, for: key) }
+        } else {
+            validated = .failure(LodyClientError.signedOut)
+        }
+        for waiter in load.waiters.values { waiter.resume(with: validated) }
     }
 
     private func storeSessionImage(_ data: Data, for key: SessionImageCacheKey) {
@@ -488,11 +531,8 @@ final class HTTPLodyClient: LodyClient {
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        let userID = account?.id.flatMap { $0.isEmpty ? nil : $0 }
-        let requestedAt = Int(Date().timeIntervalSince1970 * 1000)
         let result = try await bridge.archiveSession(
-            sessionID: sessionID, workspaceID: workspaceID, userID: userID,
-            requestedAt: requestedAt, access: access
+            sessionID: sessionID, workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         switch result {

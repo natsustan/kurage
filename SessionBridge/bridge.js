@@ -214,12 +214,12 @@ window.kurageCancelSession = async (workspaceID, sessionID, gatewayBaseURL) => {
   }
 };
 
-window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL, userID, requestedAt) => {
+window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
   try {
     const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
     if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await archiveSession(repo, workspaceID, sessionID, userID, requestedAt);
+    return await archiveSession(repo, sessionID);
   } finally {
     await repo.destroy();
   }
@@ -243,18 +243,25 @@ window.kurageDeleteArchivedSession = async (workspaceID, sessionID, gatewayBaseU
   }
 };
 
-window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL) =>
-  withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
+window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
     const docID = `session-${sessionID}`;
     const rows = await repo.listDoc();
     if (!rows.some((row) => row.docId === docID && !row.deleted)) {
       throw new Error('Session is missing from this workspace');
     }
     const handle = await repo.openPersistedDoc(docID);
-    const report = await handle.syncOnce();
+    const report = await repo.sync({
+      scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal: controller.signal,
+    });
+    controller.signal.throwIfAborted();
     if (!report.ok) throw new Error('Session history sync failed');
     return JSON.stringify(projectConversation(sessionID, handle.doc.getList('history').toJSON()));
-  }, false);
+  }, false, controller.signal); }
+  finally { if (operationID) sessionRefreshes.delete(operationID); }
+};
 
 const observations = new Map();
 window.kurageStopConversation = (id) => {

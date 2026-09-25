@@ -95,7 +95,7 @@ struct ArchivedSessionsView: View {
                 Task { await model.restoreArchivedSession(session.id) }
             } label: {
                 Image(systemName: "arrow.uturn.backward")
-                    .font(.system(size: 24, weight: .medium))
+                    .font(.system(size: 20, weight: .regular))
                     .foregroundStyle(.primary)
                     .frame(width: 48, height: 48)
                     .contentShape(Rectangle())

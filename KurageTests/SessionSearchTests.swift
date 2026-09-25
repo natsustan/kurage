@@ -1,8 +1,20 @@
 import Foundation
 import Testing
+import SwiftUI
+import UIKit
 @testable import Kurage
 
 struct SessionSearchTests {
+    @Test func indexesEachTextPartOnceAndKeepsLegacyText() {
+        let turns = [
+            ConversationTurn(id: "legacy", author: .user, text: "Legacy"),
+            ConversationTurn(id: "parts", author: .agent, text: "A\n\nB", parts: [
+                .text("A"), .image(ConversationImage(imageID: "shot", mimeType: "image/png")), .text("B"),
+            ]),
+        ]
+        #expect(SessionSearch.bodyText(turns) == "Legacy\nA\nB")
+    }
+
     @Test func matchesTitleWithoutASnippet() {
         let result = SessionSearch.result(title: "Fix flaky tests", body: "Running npm test", query: "  FLAKY ")
         #expect(result == SessionSearch.Result(snippet: nil))
@@ -64,5 +76,131 @@ struct SessionSearchIndexTests {
         model.signOut()
         #expect(model.sessionSearchBody(sessionID: "session-long").isEmpty)
         #expect(!model.isIndexingSessionSearch)
+    }
+}
+
+@MainActor
+struct SessionSearchLifecycleTests {
+    @Test(.timeLimit(.minutes(1))) func backgroundCancelsReadsAndForegroundResumes() async {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let indexing = Task { await model.indexSessionsForSearch() }
+        #expect(await events.next() == "read")
+        model.setApplicationActive(false)
+        #expect(await events.next() == "cancelled")
+        await indexing.value
+        await model.indexSessionsForSearch()
+        #expect(client.readCount == 1)
+        #expect(!model.isIndexingSessionSearch)
+        model.setApplicationActive(true)
+        #expect(await events.next() == "read")
+        model.stopSessionSearch()
+        #expect(await events.next() == "cancelled")
+        #expect(client.readCount == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func endingObservationInBackgroundDoesNotRestartSearch() async throws {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let observation = Task { try await model.observeConversation(sessionID: "session-pr") { _ in } }
+        #expect(await events.next() == "observe")
+        await model.indexSessionsForSearch()
+        model.setApplicationActive(false)
+        observation.cancel()
+        _ = await observation.result
+        await model.indexSessionsForSearch()
+        #expect(client.readCount == 0)
+        #expect(!model.isIndexingSessionSearch)
+        model.setApplicationActive(true)
+        #expect(await events.next() == "read")
+        model.stopSessionSearch()
+        #expect(await events.next() == "cancelled")
+    }
+}
+
+@MainActor
+private final class SearchLifecycleClient: LodyClient {
+    private let fixture = FixtureLodyClient(startsSignedIn: true)
+    var account: Account? { fixture.account }
+    let supportsConversations = true
+    private(set) var readCount = 0
+    private(set) var sessionReadCount = 0
+    var emptySessions = false
+    let events: AsyncStream<String>
+    private let signal: AsyncStream<String>.Continuation
+
+    init() { (events, signal) = AsyncStream.makeStream() }
+    func beginDeviceAuthorization() async throws -> DeviceAuthorization { try await fixture.beginDeviceAuthorization() }
+    func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
+        try await fixture.finishDeviceAuthorization(authorization)
+    }
+    func restoreSession() async -> Account? { account }
+    func signOut() { fixture.signOut() }
+    func workspaces() async throws -> [WorkspaceSummary] { try await fixture.workspaces() }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] {
+        sessionReadCount += 1
+        return emptySessions ? [] : try await fixture.sessions(workspaceID: workspaceID)
+    }
+    func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
+        readCount += 1
+        signal.yield("read")
+        do {
+            try await Task.sleep(for: .seconds(60))
+        } catch {
+            signal.yield("cancelled")
+            throw error
+        }
+        return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID)
+    }
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let (stream, _) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream()
+        signal.yield("observe")
+        return stream
+    }
+    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: String, workspaceID: String) async throws {}
+    func cancelSession(sessionID: String, workspaceID: String) async throws {}
+    func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws {}
+}
+
+@MainActor
+struct SessionListRefreshTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func pullingToRefreshReloadsSessions(empty: Bool) async throws {
+        let client = SearchLifecycleClient()
+        client.emptySessions = empty
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let initialReads = client.sessionReadCount
+        let host = UIHostingController(rootView: SessionListView(model: model))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        for _ in 0..<50 {
+            window.layoutIfNeeded()
+            if refreshControl(in: host.view) != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let control = try #require(refreshControl(in: host.view))
+        control.beginRefreshing()
+        control.sendActions(for: .valueChanged)
+        for _ in 0..<50 {
+            if client.sessionReadCount > initialReads && !control.isRefreshing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(client.sessionReadCount == initialReads + 1)
+        #expect(!control.isRefreshing)
+    }
+
+    private func refreshControl(in view: UIView) -> UIRefreshControl? {
+        if let control = view as? UIRefreshControl { return control }
+        if let control = (view as? UIScrollView)?.refreshControl { return control }
+        return view.subviews.lazy.compactMap { refreshControl(in: $0) }.first
     }
 }

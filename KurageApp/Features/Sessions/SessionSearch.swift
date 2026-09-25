@@ -8,14 +8,9 @@ enum SessionSearch {
 
     static func bodyText(_ turns: [ConversationTurn]) -> String {
         turns.compactMap { turn in
-            var lines: [String] = []
-            let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { lines.append(turn.text) }
-            for part in turn.parts {
-                guard case .text(let partText) = part else { continue }
-                let trimmed = partText.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty, trimmed != text else { continue }
-                lines.append(partText)
+            let lines = turn.content.compactMap { part -> String? in
+                guard case .text(let text) = part else { return nil }
+                return text
             }
             return lines.isEmpty ? nil : lines.joined(separator: "\n")
         }.joined(separator: "\n")

@@ -19,15 +19,13 @@ function describe(row) {
     id: text(row.meta?.id) || docSessionID,
     docSessionID,
     docId: row.docId,
-    machineId: text(row.meta?.machineId),
     parentSessionId: text(row.meta?.parentSessionId),
     openedBySessionId: text(row.meta?.openedBySessionId),
     openedByRootSessionId: text(row.meta?.openedByRootSessionId),
   };
 }
 
-// Child tabs share the owner's machine command. Sessions opened by an agent
-// keep their own machine, but archiving the opener still archives them.
+// Archiving includes child tabs and sessions opened by their owner or root.
 export function collectLifecycle(sessionID, rows) {
   const sessions = rows.filter(isSessionRow).map(describe);
   const root = sessions.find(session => session.docSessionID === sessionID || session.id === sessionID);
@@ -56,67 +54,19 @@ export function collectLifecycle(sessionID, rows) {
   return result;
 }
 
-function archiveCommand(requestedAt, userID) {
-  const command = { v: 1, requestedAt };
-  if (typeof userID === 'string' && userID) command.requestedBy = userID;
-  return command;
-}
-
-async function writeArchiveCommand(repo, workspaceID, session, userID, requestedAt) {
-  const flockDocID = `${workspaceID}:mf:${session.machineId}`;
-  let handle;
-  try {
-    handle = await repo.openFlockDoc(flockDocID);
-  } catch {
-    return false;
-  }
-  const syncDoc = {
-    scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'],
-  };
-  if (!synced(await repo.sync(syncDoc))) return false;
-  handle.flock.set(['cmd', 'archiveSession', session.id], archiveCommand(requestedAt, userID));
-  handle.flock.commit();
-  if (!synced(await repo.sync(syncDoc))) return false;
-  const stored = handle.flock.get(['cmd', 'archiveSession', session.id]);
-  return !!stored && stored.v === 1 && typeof stored.requestedAt === 'number';
-}
-
-async function writeArchiveQueue(repo, session) {
-  if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'] }))) return false;
-  const machineDocID = `machine-${session.machineId}`;
-  const current = await repo.getDocMeta(machineDocID);
-  const existing = current?.meta?.needToArchiveSessions;
-  const queue = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
-  queue[session.id] = true;
-  await repo.upsertDocMeta(machineDocID, { needToArchiveSessions: queue });
-  return true;
-}
-
-// Marks the session and its lifecycle children archived, then asks each owning
-// machine to clean up. A retry writes the same flags again.
-export async function archiveSession(repo, workspaceID, sessionID, userID, requestedAt) {
-  const when = Number.isFinite(requestedAt) ? requestedAt : Date.now();
+// The owning machine observes isArchived and releases the session runtime.
+// No machine command or legacy queue is needed to accept the archive request.
+export async function archiveSession(repo, sessionID) {
   const lifecycle = collectLifecycle(sessionID, await repo.listDoc());
   if (lifecycle.length === 0) return 'missing';
 
   for (const session of lifecycle) {
     await repo.upsertDocMeta(session.docId, { isArchived: true, status: { type: 'idle' } });
   }
-
-  const roots = lifecycle.filter(session => !session.parentSessionId && session.machineId);
-  for (const session of roots) {
-    if (!await writeArchiveCommand(repo, workspaceID, session, userID, when)) return 'unconfirmed';
-    if (!await writeArchiveQueue(repo, session)) return 'unconfirmed';
-  }
-
   if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'] }))) return 'unconfirmed';
   for (const session of lifecycle) {
     const confirmed = await repo.getDocMeta(session.docId);
     if (!confirmed || confirmed.deleted || confirmed.meta?.isArchived !== true) return 'unconfirmed';
-  }
-  for (const session of roots) {
-    const machine = await repo.getDocMeta(`machine-${session.machineId}`);
-    if (machine?.meta?.needToArchiveSessions?.[session.id] !== true) return 'unconfirmed';
   }
   return 'archived';
 }

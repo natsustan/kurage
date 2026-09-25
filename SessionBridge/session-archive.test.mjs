@@ -55,99 +55,68 @@ const lifecycleRows = [
   { docId: 'session-deleted', deleted: true, meta: { parentSessionId: 'root', machineId: 'machine-root' } },
 ];
 
-test('archive marks the lifecycle idle and queues one command per owning machine', async () => {
-  const { repo, metas, flocks } = fixture(lifecycleRows, {
-    'machine-machine-root': { needToArchiveSessions: { 'already-queued': true } },
-  });
-
-  assert.equal(await archiveSession(repo, 'workspace', 'root', 'user-1', 1700000000000), 'archived');
-
+test('archive marks the lifecycle idle without writing machine commands', async () => {
+  const { repo, metas, flocks, calls } = fixture(lifecycleRows);
+  assert.equal(await archiveSession(repo, 'root'), 'archived');
   for (const id of ['root', 'tab', 'opened', 'opened-from-tab']) {
     assert.equal(metas[`session-${id}`].isArchived, true);
     assert.deepEqual(metas[`session-${id}`].status, { type: 'idle' });
     assert.equal(metas[`session-${id}`].title, id);
   }
-  assert.equal(metas['session-unrelated'].isArchived, undefined);
-  assert.equal(metas['session-comment-root'].isArchived, undefined);
-  assert.equal(metas['session-deleted'].isArchived, undefined);
-
-  assert.deepEqual(
-    flocks.get('workspace:mf:machine-root').get(['cmd', 'archiveSession', 'root']),
-    { v: 1, requestedAt: 1700000000000, requestedBy: 'user-1' },
-  );
-  assert.equal(flocks.get('workspace:mf:machine-root').get(['cmd', 'archiveSession', 'tab']), undefined);
-  assert.deepEqual(
-    flocks.get('workspace:mf:machine-opened').get(['cmd', 'archiveSession', 'opened']),
-    { v: 1, requestedAt: 1700000000000, requestedBy: 'user-1' },
-  );
-  assert.deepEqual(
-    flocks.get('workspace:mf:machine-opened-from-tab').get(['cmd', 'archiveSession', 'opened-from-tab']),
-    { v: 1, requestedAt: 1700000000000, requestedBy: 'user-1' },
-  );
-  assert.equal(flocks.has('workspace:mf:machine-other'), false);
-  assert.deepEqual(metas['machine-machine-root'].needToArchiveSessions, {
-    'already-queued': true,
-    root: true,
-  });
-  assert.deepEqual(metas['machine-machine-opened'].needToArchiveSessions, { opened: true });
-});
-
-test('archive is idempotent and omits an empty requester', async () => {
-  const rows = [session('chat', { machineId: 'machine', isArchived: true, status: { type: 'running', activity: 'coding' } })];
-  const { repo, metas, flocks } = fixture(rows);
-  assert.equal(await archiveSession(repo, 'workspace', 'chat', '', 20), 'archived');
-  assert.deepEqual(metas['session-chat'].status, { type: 'idle' });
-  assert.deepEqual(
-    flocks.get('workspace:mf:machine').get(['cmd', 'archiveSession', 'chat']),
-    { v: 1, requestedAt: 20 },
-  );
-});
-
-test('a session without a machine is archived from the list without a command', async () => {
-  const { repo, metas, flocks } = fixture([session('chat')]);
-  assert.equal(await archiveSession(repo, 'workspace', 'chat', 'user-1', 20), 'archived');
-  assert.equal(metas['session-chat'].isArchived, true);
+  for (const id of ['unrelated', 'comment-root', 'deleted']) {
+    assert.equal(metas[`session-${id}`].isArchived, undefined);
+  }
   assert.equal(flocks.size, 0);
-  assert.equal(metas['machine-'], undefined);
+  assert.deepEqual(calls.map(call => call.scope), ['meta']);
+  assert.equal(metas['machine-machine-root'], undefined);
 });
 
-test('archiving a child tab archives descendants without the parent machine command', async () => {
-  const { repo, flocks, metas } = fixture(lifecycleRows);
-  assert.equal(await archiveSession(repo, 'workspace', 'tab', 'user-1', 20), 'archived');
+test('archive is idempotent', async () => {
+  const { repo, metas } = fixture([session('chat', { isArchived: true, status: { type: 'running' } })]);
+  assert.equal(await archiveSession(repo, 'chat'), 'archived');
+  assert.deepEqual(metas['session-chat'].status, { type: 'idle' });
+});
+
+test('archiving a child tab archives descendants without its parent', async () => {
+  const { repo, metas } = fixture(lifecycleRows);
+  assert.equal(await archiveSession(repo, 'tab'), 'archived');
   assert.equal(metas['session-tab'].isArchived, true);
   assert.equal(metas['session-opened-from-tab'].isArchived, true);
   assert.equal(metas['session-root'].isArchived, undefined);
-  assert.equal(flocks.has('workspace:mf:machine-root'), false);
-  assert.deepEqual(
-    flocks.get('workspace:mf:machine-opened-from-tab').get(['cmd', 'archiveSession', 'opened-from-tab']),
-    { v: 1, requestedAt: 20, requestedBy: 'user-1' },
-  );
 });
 
 test('missing session is reported without writes', async () => {
-  const { repo, metas } = fixture([session('chat', { machineId: 'machine' })]);
-  assert.equal(await archiveSession(repo, 'workspace', 'other', 'user-1', 20), 'missing');
+  const { repo, metas } = fixture([session('chat')]);
+  assert.equal(await archiveSession(repo, 'other'), 'missing');
   assert.equal(metas['session-chat'].isArchived, undefined);
 });
 
-test('failed machine command sync is not reported as archived', async () => {
-  const { repo, metas } = fixture([session('chat', { machineId: 'machine', status: { type: 'running' } })]);
-  repo.sync = async options => ({ outcome: options.flockDocIds ? 'failed' : 'synced' });
-  assert.equal(await archiveSession(repo, 'workspace', 'chat', 'user-1', 20), 'unconfirmed');
+test('machine command unavailability and legacy queue cleanup do not reject an archive', async () => {
+  const { repo, metas } = fixture([session('chat', { machineId: 'machine' })], {
+    'machine-machine': { needToArchiveSessions: { chat: true } },
+  });
+  repo.openFlockDoc = async () => { throw new Error('Machine unavailable'); };
+  repo.sync = async () => {
+    metas['machine-machine'].needToArchiveSessions = {};
+    return { outcome: 'synced' };
+  };
+  assert.equal(await archiveSession(repo, 'chat'), 'archived');
   assert.equal(metas['session-chat'].isArchived, true);
-  assert.equal(metas['machine-machine'], undefined);
 });
 
 test('failed metadata confirmation is not reported as archived', async () => {
   const { repo, metas } = fixture([session('chat', { machineId: 'machine' })]);
-  let metaSyncs = 0;
-  repo.sync = async options => {
-    if (options.scope === 'meta' && ++metaSyncs === 2) return { outcome: 'failed' };
-    return { outcome: 'synced' };
-  };
-  assert.equal(await archiveSession(repo, 'workspace', 'chat', 'user-1', 20), 'unconfirmed');
-  assert.equal(metas['machine-machine'].needToArchiveSessions.chat, true);
+  repo.sync = async () => ({ outcome: 'failed' });
+  assert.equal(await archiveSession(repo, 'chat'), 'unconfirmed');
   assert.equal(metas['session-chat'].isArchived, true);
+});
+
+test('concurrently restored or deleted metadata is not reported as archived', async () => {
+  for (const change of [{ meta: { isArchived: false } }, { deleted: true }]) {
+    const { repo } = fixture([session('chat')]);
+    repo.getDocMeta = async () => change;
+    assert.equal(await archiveSession(repo, 'chat'), 'unconfirmed');
+  }
 });
 
 function archivedRow(id, meta = {}) {

@@ -45,6 +45,7 @@ final class AppModel {
     private var searchIndexGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
     private var isSessionSearchActive = false
+    private var isApplicationActive = true
     /// Open conversation subscriptions. Search indexing uses the same sync bridge, so it waits until these finish.
     private var conversationObservationCount = 0
     private(set) var isIndexingSessionSearch = false
@@ -294,6 +295,15 @@ final class AppModel {
         cancelSessionSearchIndex()
     }
 
+    func setApplicationActive(_ active: Bool) {
+        isApplicationActive = active
+        if active {
+            scheduleSessionSearchIndex()
+        } else {
+            cancelSessionSearchIndex()
+        }
+    }
+
     func observeConversation(
         sessionID: String,
         onUpdate: @MainActor (ConversationUpdate) -> Void
@@ -508,7 +518,7 @@ final class AppModel {
 
     @discardableResult
     private func scheduleSessionSearchIndex() -> Task<Void, Never>? {
-        guard isSessionSearchActive, conversationObservationCount == 0, supportsConversations,
+        guard isApplicationActive, isSessionSearchActive, conversationObservationCount == 0, supportsConversations,
               selectedWorkspaceID != nil else {
             isIndexingSessionSearch = false
             return nil
@@ -529,7 +539,7 @@ final class AppModel {
     }
 
     private func performSessionSearchIndex(generation: Int) async {
-        guard isSessionSearchActive, supportsConversations,
+        guard isApplicationActive, isSessionSearchActive, supportsConversations,
               let workspaceID = selectedWorkspaceID else { return }
         let authGeneration = authenticationGeneration
         for session in sessions where searchBodies[workspaceID]?[session.id] == nil {
