@@ -32,6 +32,14 @@ final class AppModel {
     private var archiveLoadStatusNote: StatusNote?
     private var archiveOperationStatusNote: StatusNote?
     var archiveStatusNote: StatusNote? { archiveOperationStatusNote ?? archiveLoadStatusNote }
+    private struct ActiveArchiveOperation: Equatable {
+        let sessionID: SessionSummary.ID
+        let id: UUID
+    }
+    private var activeArchiveOperations: [WorkspaceSummary.ID: ActiveArchiveOperation] = [:]
+    var archivingSessionID: SessionSummary.ID? {
+        selectedWorkspaceID.flatMap { activeArchiveOperations[$0]?.sessionID }
+    }
     private var archiveOperations: [WorkspaceSummary.ID: [ArchivedSessionSummary.ID: UUID]] = [:]
     var archiveBusySessionIDs: Set<ArchivedSessionSummary.ID> {
         guard let workspaceID = selectedWorkspaceID else { return [] }
@@ -169,6 +177,7 @@ final class AppModel {
         cancelSessionRefresh()
         client.signOut()
         archiveOperations = [:]
+        activeArchiveOperations = [:]
         account = nil
         workspaces = []
         workspaceStatusNote = nil
@@ -202,6 +211,7 @@ final class AppModel {
             }
             let workspaceIDs = Set(loaded.map(\.id))
             archiveOperations = archiveOperations.filter { workspaceIDs.contains($0.key) }
+            activeArchiveOperations = activeArchiveOperations.filter { workspaceIDs.contains($0.key) }
             sessionsByWorkspace = sessionsByWorkspace.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -421,11 +431,28 @@ final class AppModel {
         guard supportsSessionArchiving, let workspaceID = selectedWorkspaceID else {
             throw LodyClientError.notConnected
         }
-        let generation = authenticationGeneration
-        let archivedIDs = Set(try await client.archiveSession(sessionID: sessionID, workspaceID: workspaceID))
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
-            throw CancellationError()
+        guard activeArchiveOperations[workspaceID] == nil else { throw CancellationError() }
+        let operation = ActiveArchiveOperation(sessionID: sessionID, id: UUID())
+        activeArchiveOperations[workspaceID] = operation
+        defer {
+            if activeArchiveOperations[workspaceID] == operation {
+                activeArchiveOperations.removeValue(forKey: workspaceID)
+            }
         }
+        let generation = authenticationGeneration
+        let selectionGeneration = workspaceGeneration
+        func isCurrentOperation() -> Bool {
+            isCurrentAuthentication(generation) && selectedWorkspaceID == workspaceID &&
+                workspaceGeneration == selectionGeneration && activeArchiveOperations[workspaceID] == operation
+        }
+        let archivedIDs: Set<SessionSummary.ID>
+        do {
+            archivedIDs = Set(try await client.archiveSession(sessionID: sessionID, workspaceID: workspaceID))
+        } catch {
+            guard isCurrentOperation() else { throw CancellationError() }
+            throw error
+        }
+        guard isCurrentOperation() else { throw CancellationError() }
         cancelSessionSearchIndex()
         sessions.removeAll { archivedIDs.contains($0.id) }
         sessionsByWorkspace[workspaceID] = sessions

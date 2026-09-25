@@ -4,7 +4,6 @@ struct SessionListView: View {
     let model: AppModel
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var archiveFailed = false
-    @State private var archivingSessionID: SessionSummary.ID?
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
     @State private var path = NavigationPath()
@@ -20,7 +19,7 @@ struct SessionListView: View {
                 mode: listMode,
                 supportsConversations: model.supportsConversations,
                 canArchive: model.supportsSessionArchiving,
-                archivingSessionID: archivingSessionID,
+                archivingSessionID: model.archivingSessionID,
                 isRefreshing: model.isRefreshingSessions && !model.hasCachedSessions,
                 isIndexingSearch: model.isIndexingSessionSearch,
                 hasIncompleteSearch: model.hasIncompleteSessionSearch,
@@ -95,6 +94,9 @@ struct SessionListView: View {
                 }
             }
         }
+        .onChange(of: model.workspaceGeneration) { _, _ in
+            archiveFailed = false
+        }
         .alert("Could not archive this session.", isPresented: $archiveFailed) {
             Button("OK", role: .cancel) {}
         }
@@ -107,14 +109,13 @@ struct SessionListView: View {
     }
 
     private func archive(_ session: SessionSummary) async {
-        guard archivingSessionID == nil else { return }
-        archivingSessionID = session.id
-        defer { archivingSessionID = nil }
+        let generation = model.workspaceGeneration
         do {
             try await model.archiveSession(sessionID: session.id)
         } catch is CancellationError {
             return
         } catch {
+            guard model.workspaceGeneration == generation else { return }
             archiveFailed = true
         }
     }

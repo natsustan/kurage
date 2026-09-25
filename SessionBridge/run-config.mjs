@@ -75,8 +75,8 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
   const modelChoices = modelOption ? choices(modelOption) : [];
 
   const efforts = modelValue && Array.isArray(usable?.modelReasoningEfforts?.[modelValue])
-    ? usable.modelReasoningEfforts[modelValue].filter(text) : [];
-  const reasoningChoices = efforts.length > 0
+    ? usable.modelReasoningEfforts[modelValue].filter(text) : undefined;
+  const reasoningChoices = efforts !== undefined
     ? efforts.map(value => ({
       value,
       label: (reasoningOption ? choices(reasoningOption) : [])
@@ -103,7 +103,7 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
   let editable = null;
   if (reasoningOption && reasoningChoices.length > 0) {
     editable = { kind: 'reasoning', configOptionID: reasoningOption.id, options: reasoningChoices };
-  } else if (modelOption && modelChoices.length > 0) {
+  } else if (!reasoningOption && modelOption && modelChoices.length > 0) {
     editable = { kind: 'model', configOptionID: probed ? modelOption.id : null, options: modelChoices };
   }
   if (!model && !reasoning && !editable) return null;

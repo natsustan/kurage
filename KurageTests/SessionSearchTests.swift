@@ -245,6 +245,43 @@ struct SessionSearchLifecycleTests {
         #expect(client.sessionReadCount == reads)
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func activeArchiveStaysScopedAcrossWorkspaceSwitches(returnToOriginal: Bool, oldFails: Bool) async throws {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task { try await model.archiveSession(sessionID: "same") }
+        #expect(await events.next() == "archive:ws-demo")
+        #expect(model.archivingSessionID == "same")
+        await model.selectWorkspace("ws-other")
+        #expect(model.archivingSessionID == nil)
+        let current = Task { try await model.archiveSession(sessionID: "same") }
+        #expect(await events.next() == "archive:ws-other")
+        if returnToOriginal {
+            await model.selectWorkspace("ws-demo")
+            #expect(model.archivingSessionID == "same")
+            await #expect(throws: CancellationError.self) {
+                try await model.archiveSession(sessionID: "same")
+            }
+            #expect(client.archiveOperationCount == 2)
+        }
+        let reads = client.sessionReadCount
+        client.finishArchive("ws-demo", fails: oldFails)
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(client.sessionReadCount == reads)
+        #expect(model.archivingSessionID == (returnToOriginal ? nil : "same"))
+        client.finishArchive("ws-other", fails: true)
+        if returnToOriginal {
+            await #expect(throws: CancellationError.self) { try await current.value }
+        } else {
+            await #expect(throws: LodyClientError.unreachable) { try await current.value }
+        }
+        #expect(model.archivingSessionID == nil)
+    }
+
     @Test func workspaceIdentityChangesOnlyWhenSelectionChanges() async {
         let client = SearchLifecycleClient()
         client.includeOtherWorkspace = true
@@ -363,7 +400,10 @@ private final class SearchLifecycleClient: LodyClient {
     var savedCache: SessionCache?
     let supportsSessionArchiving = true
     func saveSessionCache(_ cache: SessionCache) { savedCache = cache }
-    func archiveSession(sessionID: String, workspaceID: String) async throws -> [String] { archivedIDs }
+    func archiveSession(sessionID: String, workspaceID: String) async throws -> [String] {
+        if deferArchiveOperations { try await archiveOperation(workspaceID: workspaceID) }
+        return archivedIDs
+    }
     var observation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation?
     let events: AsyncStream<String>
     private let signal: AsyncStream<String>.Continuation

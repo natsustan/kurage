@@ -100,3 +100,19 @@ test('runtime option tables replace the old table, including an empty snapshot',
   assert.equal(projected.model.value, 'actual-model');
   assert.equal(projected.reasoning, null);
 });
+
+test('an explicit empty model reasoning list stays read-only', () => {
+  const capability = { ...codexCapability, modelReasoningEfforts: { 'gpt-5.5': [] } };
+  const projected = projectRunConfig({ cliType: 'builtin', agentType: 'codex', capability,
+    turn: { id: 'u1', inputConfig: { modelId: 'gpt-5.5' } } });
+  assert.equal(projected.model.value, 'gpt-5.5');
+  assert.equal(projected.editable, null);
+});
+
+test('an empty global reasoning list does not enable model switching', () => {
+  const capability = { ...codexCapability, configOptions: codexCapability.configOptions.map(option =>
+    option.id === 'reasoning_effort' ? { ...option, options: [] } : option) };
+  const projected = projectRunConfig({ cliType: 'builtin', agentType: 'codex', capability,
+    turn: { id: 'u1', inputConfig: { modelId: 'gpt-5.5' } } });
+  assert.equal(projected.editable, null);
+});
