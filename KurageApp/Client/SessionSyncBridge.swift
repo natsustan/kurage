@@ -63,24 +63,108 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         workspaceID: WorkspaceSummary.ID,
         access: StreamsAccess
     ) async throws -> Conversation {
-        let json = try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL))",
-            workspaceID: workspaceID,
-            access: access,
-            arguments: ["sessionID": sessionID]
-        )
+        let operationID = UUID().uuidString
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                arguments: ["sessionID": sessionID, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
         guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
         return try JSONDecoder().decode(Conversation.self, from: data)
     }
 
-    func sendText(_ text: String, turnID: String, userID: String, sessionID: String,
-                  workspaceID: String, access: StreamsAccess) async throws -> String {
-        try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp))",
+    func sendText(_ text: String, turnID: String, userID: String, runConfig: RunConfigChoice?,
+                  sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
+        let choice: Any = runConfig.map { choice -> [String: Any] in
+            ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
+        } ?? NSNull()
+        return try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig))",
             workspaceID: workspaceID,
             access: access,
             arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
-                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date())]
+                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
+                        "runConfig": choice]
+        )
+    }
+
+    func cancelSession(sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
+        try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageCancelSession(workspaceID, sessionID, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID]
+        )
+    }
+
+    func archiveSession(
+        sessionID: String,
+        workspaceID: String,
+        access: StreamsAccess
+    ) async throws -> SessionArchiveResult {
+        let json = try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageArchiveSession(workspaceID, sessionID, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID]
+        )
+        return try JSONDecoder().decode(SessionArchiveResult.self, from: Data(json.utf8))
+    }
+
+    func archivedSessions(workspaceID: String, access: StreamsAccess) async throws -> [ArchivedSessionSummary] {
+        let operationID = UUID().uuidString
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageArchivedSessions(workspaceID, baseURL, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                arguments: ["operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        guard let data = json.data(using: .utf8) else { throw LodyClientError.notConnected }
+        let snapshot = try JSONDecoder().decode(ArchivedSessionSnapshot.self, from: data)
+        return snapshot.sessions.map { item in
+            ArchivedSessionSummary(
+                id: item.id,
+                title: item.title,
+                lastActivityAt: Date(timeIntervalSince1970: item.lastMessageAt / 1000),
+                canRestore: item.canRestore,
+                projectName: item.projectName
+            )
+        }
+    }
+
+    func restoreArchivedSession(
+        sessionID: String,
+        workspaceID: String,
+        access: StreamsAccess
+    ) async throws -> String {
+        try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageRestoreArchivedSession(workspaceID, sessionID, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID]
+        )
+    }
+
+    func deleteArchivedSession(
+        sessionID: String,
+        workspaceID: String,
+        access: StreamsAccess
+    ) async throws -> String {
+        try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageDeleteArchivedSession(workspaceID, sessionID, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["sessionID": sessionID]
         )
     }
 
@@ -256,6 +340,18 @@ private struct SessionMetadata: Decodable {
 
 private struct SessionSnapshot: Decodable {
     let sessions: [SessionMetadata]
+}
+
+private struct ArchivedSessionItem: Decodable {
+    let id: String
+    let title: String
+    let lastMessageAt: Double
+    let canRestore: Bool
+    let projectName: String?
+}
+
+private struct ArchivedSessionSnapshot: Decodable {
+    let sessions: [ArchivedSessionItem]
 }
 
 struct StreamsHostPolicy {

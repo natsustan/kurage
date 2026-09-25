@@ -32,6 +32,43 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testArchivedSessionsSheetIsNewestFirstAndSupportsRestore() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+
+        let more = app.buttons["more-options"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        tap(more)
+        let archived = app.buttons["archived-sessions"]
+        XCTAssertTrue(archived.waitForExistence(timeout: 2))
+        tap(archived)
+
+        let newer = app.staticTexts["newer archived"]
+        let older = app.staticTexts["older archived"]
+        XCTAssertTrue(newer.waitForExistence(timeout: 5))
+        XCTAssertTrue(older.waitForExistence(timeout: 2))
+        XCTAssertLessThan(newer.frame.minY, older.frame.minY)
+        XCTAssertTrue(app.buttons["close-archived-sessions"].exists)
+        XCTAssertFalse(app.buttons["delete-archived-older"].exists)
+        attachScreen(app, name: "archived-sessions-sheet")
+
+        let restoreNewer = app.buttons["restore-archived-newer"]
+        tap(restoreNewer)
+        XCTAssertTrue(restoreNewer.wait(for: \.exists, toEqual: false, timeout: 5))
+
+        tap(app.buttons["close-archived-sessions"])
+        XCTAssertTrue(app.descendants(matching: .any)["session-archived-newer"].waitForExistence(timeout: 5))
+
+        tap(more)
+        XCTAssertTrue(archived.waitForExistence(timeout: 2))
+        tap(archived)
+        XCTAssertTrue(older.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["delete-archived-older"].exists)
+    }
+
+    @MainActor
     func testSignInOpenSessionAllowAndSend() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -73,8 +110,26 @@ final class ShellFlowTests: XCTestCase {
         tap(field)
         field.typeText("look again")
 
+        let pause = app.buttons["pause-session"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertEqual(pause.label, "Stop reply")
+        // Fixture supports sending while running; stopping remains independently available.
+        let runningSend = app.buttons["send-follow-up"]
+        XCTAssertTrue(runningSend.waitForExistence(timeout: 5))
+        XCTAssertTrue(runningSend.isEnabled)
+        attachScreen(app, name: "running-send-and-stop")
+        tap(runningSend)
+        XCTAssertTrue(app.staticTexts["look again"].waitForExistence(timeout: 5))
+        XCTAssertTrue(pause.exists)
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        tap(field)
+        field.typeText("continue after stopping")
+        tap(pause)
+        XCTAssertTrue(app.buttons["send-follow-up"].waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "continue after stopping")
+
         tap(app.buttons["send-follow-up"])
-        let sentMessage = app.staticTexts["look again"]
+        let sentMessage = app.staticTexts["continue after stopping"]
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run the tests again"].isHittable)
         XCTAssertLessThan(field.frame.minY - sentMessage.frame.maxY, 160)
@@ -114,6 +169,43 @@ final class ShellFlowTests: XCTestCase {
         tap(app.descendants(matching: .any)["follow-up-field"])
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(latest.isHittable)
+    }
+
+    @MainActor
+    func testFocusedComposerShowsRunConfigAndChangesReasoning() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let menu = app.buttons["run-config-menu"]
+        XCTAssertFalse(menu.exists)
+        let composer = app.otherElements["follow-up-composer"]
+        let collapsedHeight = composer.frame.height
+        tap(field)
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(composer.frame.height, collapsedHeight)
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High")
+        attachScreen(app, name: "run-config-row")
+
+        tap(menu)
+        let low = app.buttons["Low"]
+        XCTAssertTrue(low.waitForExistence(timeout: 5))
+        attachScreen(app, name: "run-config-menu")
+        tap(low)
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
+
+        tap(field)
+        field.typeText("go faster")
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(app.staticTexts["go faster"].waitForExistence(timeout: 5))
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
     }
 
     @MainActor
@@ -159,6 +251,157 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertGreaterThan(sent.frame.minY, app.navigationBars.firstMatch.frame.maxY)
         XCTAssertLessThanOrEqual(sent.frame.maxY, field.frame.minY)
         attachScreen(app, name: "multiline-sent")
+    }
+
+    @MainActor
+    func testIncompleteSearchCanRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-search-failure"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let search = app.textFields["session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        tap(search)
+        search.typeText("Question 7")
+        let retry = app.buttons["retry-session-search"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertEqual(search.value as? String, "Question 7")
+        XCTAssertTrue(app.keyboards.firstMatch.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-long"].exists)
+        attachScreen(app, name: "search-incomplete")
+        tap(retry)
+        XCTAssertTrue(app.descendants(matching: .any)["session-session-long"].waitForExistence(timeout: 5))
+        XCTAssertFalse(retry.exists)
+        attachScreen(app, name: "search-retry-recovered")
+    }
+
+    @MainActor
+    func testSessionSearchMatchesTitleAndMessageBody() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        let connect = app.buttons["sign-in-button"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        tap(connect)
+
+        let search = app.textFields["session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        let table = app.tables.firstMatch
+        let sessionList = table.waitForExistence(timeout: 2) ? table : app.collectionViews.firstMatch
+        XCTAssertTrue(sessionList.waitForExistence(timeout: 5))
+        XCTAssertLessThan(search.frame.minY, sessionList.frame.maxY)
+        tap(search)
+        search.typeText("flaky")
+
+        let tests = app.descendants(matching: .any)["session-session-tests"].firstMatch
+        let long = app.descendants(matching: .any)["session-session-long"].firstMatch
+        let pr = app.descendants(matching: .any)["session-session-pr"].firstMatch
+        XCTAssertTrue(tests.waitForExistence(timeout: 5))
+        XCTAssertTrue(tests.label.contains("fix flaky tests"))
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-long"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-pr"].exists)
+        XCTAssertTrue(app.staticTexts["kurage"].exists)
+        XCTAssertFalse(app.staticTexts["prism"].exists)
+        attachScreen(app, name: "search-title")
+
+        tap(app.buttons["session-search-clear"])
+        XCTAssertTrue(long.waitForExistence(timeout: 5))
+        XCTAssertTrue(pr.waitForExistence(timeout: 5))
+
+        tap(search)
+        search.typeText("Question 7")
+        XCTAssertTrue(long.waitForExistence(timeout: 5))
+        XCTAssertTrue(long.label.contains("Question 7"))
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-tests"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-pr"].exists)
+        attachScreen(app, name: "search-body")
+
+        tap(app.buttons["session-search-clear"])
+        tap(search)
+        search.typeText("no-matching-conversation-123\n")
+        XCTAssertTrue(app.staticTexts["No matching sessions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(search.isHittable)
+        let emptyList = app.scrollViews.firstMatch
+        XCTAssertTrue(emptyList.waitForExistence(timeout: 2))
+        emptyList.swipeDown()
+        XCTAssertTrue(app.staticTexts["No matching sessions"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "search-empty")
+
+        tap(app.buttons["session-search-clear"])
+        XCTAssertTrue(long.waitForExistence(timeout: 5))
+        app.tables.firstMatch.swipeDown()
+        XCTAssertTrue(tests.waitForExistence(timeout: 5))
+        attachScreen(app, name: "list-refreshed")
+    }
+
+    @MainActor
+    func testSwipeArchiveRequiresConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        let connect = app.buttons["sign-in-button"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 5))
+        tap(connect)
+
+        let session = app.descendants(matching: .any)["session-session-pr"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        let row = app.cells.containing(.any, identifier: "session-session-pr").firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 2))
+        row.swipeLeft()
+        let archive = app.buttons["Archive"].firstMatch
+        XCTAssertTrue(archive.waitForExistence(timeout: 2))
+        tap(archive)
+
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 2))
+        XCTAssertTrue(alert.staticTexts["This removes the task from the remote task list."].exists)
+        tap(alert.buttons["Cancel"])
+        XCTAssertTrue(session.waitForExistence(timeout: 2))
+
+        row.swipeLeft()
+        XCTAssertTrue(archive.waitForExistence(timeout: 2))
+        tap(archive)
+        XCTAssertTrue(alert.waitForExistence(timeout: 2))
+        let confirm = app.buttons.matching(identifier: "archive-confirm").element(boundBy: 0)
+        XCTAssertTrue(confirm.waitForExistence(timeout: 2))
+        confirm.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertFalse(session.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["session-session-tests"].exists)
+    }
+
+    @MainActor
+    func testConversationShowsSessionImages() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+
+        let session = app.descendants(matching: .any)["session-session-pr"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+
+        let image = app.buttons["conversation-image-pr-shot"]
+        XCTAssertTrue(image.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["The diff is small. Waiting for you."].exists)
+        XCTAssertEqual(image.label, "diff.png")
+        let images = [image, app.buttons["conversation-image-pr-shot-2"], app.buttons["conversation-image-pr-shot-3"]]
+        for thumbnail in images {
+            XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(thumbnail.frame.minX, app.frame.minX + 19.5)
+            XCTAssertLessThanOrEqual(thumbnail.frame.maxX, app.frame.maxX - 19.5)
+            XCTAssertEqual(thumbnail.frame.width, thumbnail.frame.height, accuracy: 1)
+        }
+        XCTAssertEqual(images[0].frame.minY, images[2].frame.minY, accuracy: 1)
+        attachScreen(app, name: "conversation-image")
+        tap(image)
+
+        let preview = app.descendants(matching: .any)["conversation-image-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        attachScreen(app, name: "conversation-image-preview")
+        tap(app.buttons["conversation-image-close"])
+        XCTAssertFalse(preview.waitForExistence(timeout: 2))
+        XCTAssertTrue(image.exists)
     }
 
     @MainActor

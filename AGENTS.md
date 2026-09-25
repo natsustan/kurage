@@ -52,7 +52,8 @@
 ## Protocols and Feature Extensions
 
 - Device sign-in, account restoration, sign-out, workspace switching, session lists, project grouping, live conversation updates, and idle-session plain-text sending are currently integrated.
-- Conversation content currently projects only plain text from users and agents. Structured events such as tool records are not fully displayed. Model new content types explicitly instead of converting arbitrary events directly into prose.
+- Per-session model/reasoning selection applies only to the next new turn's `inputConfig`. When the agent's capability exposes a reasoning option, only reasoning is editable (switching models mid-session can invalidate provider context caches); otherwise the model is editable. Without a capability record, values are read-only.
+- Conversation content projects plain text and session images (`image` and `image_group`) from users and agents. Other structured events such as tool records are not fully displayed. Model new content types explicitly instead of converting arbitrary events directly into prose.
 - Before extending live sending to running sessions or implementing permission actions, verify request IDs, retries, deduplication, and permission semantics. Then update the protocol, live implementation, fixtures, and capability flags together; do not merely enable UI buttons. The current text-send retry ID is held only in process memory.
 - Prefer verified implementations or documentation as protocol references; see `PLAN.md` for reference locations. Do not guess APIs or assume paths from another repository exist in this one.
 - Preserve Streams proxy host and redirect validation, backpressure, chunked UTF-8 handling, cancellation, and token refresh mechanisms.

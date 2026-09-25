@@ -6,6 +6,8 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     let turns: [ConversationTurn]
     let isLoading: Bool
     let scrollRequestID: Int
+    let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
+    let onPreviewImage: (ConversationImage) -> Void
     let onRefresh: () -> Void
     @ViewBuilder let footer: () -> Footer
 
@@ -14,6 +16,8 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: ConversationLayoutController<Footer>, context: Context) {
+        controller.loadImage = loadImage
+        controller.onPreviewImage = onPreviewImage
         controller.update(turns: turns, isLoading: isLoading, scrollRequestID: scrollRequestID,
                           footer: footer(), onRefresh: onRefresh)
     }
@@ -39,6 +43,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var isUserScrolling = false
     private var isAdjustingLayout = false
     private var onRefresh: (() -> Void)?
+    var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
+    var onPreviewImage: ((ConversationImage) -> Void)?
 
     init(footer: Footer) {
         footerHost = UIHostingController(rootView: MeasuredConversationFooter(content: footer, onHeightChange: { _ in }))
@@ -53,7 +59,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         view.backgroundColor = .systemBackground
         contentView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(contentView)
-        // A single layout guide moves the list and composer with the system keyboard.
+        // Track the screen edge when the keyboard is hidden, so the transcript fills the
+        // home-indicator area instead of leaving the view's background as an empty band.
+        view.keyboardLayoutGuide.usesBottomSafeArea = false
         NSLayoutConstraint.activate([
             contentView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
@@ -69,6 +77,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         tableView.estimatedRowHeight = 100
         tableView.contentInsetAdjustmentBehavior = .never
         tableView.automaticallyAdjustsScrollIndicatorInsets = false
+        tableView.bottomEdgeEffect.isHidden = true
         tableView.keyboardDismissMode = .interactive
         tableView.alwaysBounceVertical = true
         tableView.accessibilityIdentifier = "conversation-transcript"
@@ -87,8 +96,12 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             let cell = table.dequeueReusableCell(withIdentifier: "turn", for: indexPath)
             guard let turn = self?.turnsByID[id] else { return cell }
             cell.backgroundColor = .clear
+            let loadImage = self?.loadImage ?? { @MainActor _, _ async throws -> Data in
+                throw LodyClientError.notConnected
+            }
+            let onPreviewImage = self?.onPreviewImage ?? { _ in }
             cell.contentConfiguration = UIHostingConfiguration {
-                TurnRow(author: turn.author, text: turn.text)
+                TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage)
             }
             .margins(.horizontal, 20)
             .margins(.vertical, 14)
@@ -98,11 +111,16 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         install(emptyHost)
         install(footerHost)
         footerHeightConstraint = footerHost.view.heightAnchor.constraint(equalToConstant: 78)
+        // Follow the keyboard, but stay above the home indicator while it is hidden.
+        // The lower-priority equality yields when the safe-area cap is tighter.
+        let footerFollowsKeyboard = footerHost.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        footerFollowsKeyboard.priority = .defaultHigh
         NSLayoutConstraint.activate([
             footerHeightConstraint,
             footerHost.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             footerHost.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            footerHost.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            footerFollowsKeyboard,
+            footerHost.view.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor),
             emptyHost.view.topAnchor.constraint(equalTo: contentView.topAnchor),
             emptyHost.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             emptyHost.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),

@@ -14,6 +14,8 @@ protocol LodyClient: AnyObject {
     var supportsConversations: Bool { get }
     var supportsTextSending: Bool { get }
     var supportsTextSendingWhileRunning: Bool { get }
+    var supportsSessionCancellation: Bool { get }
+    var supportsSessionArchiving: Bool { get }
     var supportsPermissionResponses: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
@@ -24,7 +26,30 @@ protocol LodyClient: AnyObject {
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
-    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    /// Returns the choice used to author the turn, including on retries.
+    /// `nil` means the turn inherited its configuration without an explicit choice.
+    /// `runConfig` applies only when this call creates the turn.
+    @discardableResult
+    func send(
+        _ text: String,
+        runConfig: RunConfigChoice?,
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> RunConfigChoice?
+    func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    /// Returns every confirmed archived document session ID, including lifecycle descendants.
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID]
+    func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary]
+    func restoreArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    func deleteArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    /// `sessionID` is the blob namespace (`storageSessionId` when a fork copied the image).
+    func loadSessionImage(
+        workspaceID: WorkspaceSummary.ID,
+        sessionID: SessionSummary.ID,
+        imageID: String,
+        variant: SessionImageVariant
+    ) async throws -> Data
     func respond(
         _ decision: PermissionDecision,
         requestID: PermissionPrompt.ID,
@@ -42,11 +67,44 @@ extension LodyClient {
         }
     }
 
+    @discardableResult
+    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
+        try await send(text, runConfig: nil, sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     var cachedSession: SessionCache? { nil }
     func saveSessionCache(_ cache: SessionCache) {}
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
     var supportsTextSending: Bool { false }
     var supportsTextSendingWhileRunning: Bool { false }
+    var supportsSessionCancellation: Bool { false }
+    var supportsSessionArchiving: Bool { false }
     var supportsPermissionResponses: Bool { false }
+
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID] {
+        throw LodyClientError.notConnected
+    }
+
+    func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary] {
+        throw LodyClientError.notConnected
+    }
+
+    func restoreArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+        throw LodyClientError.notConnected
+    }
+
+    func deleteArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+        throw LodyClientError.notConnected
+    }
+
+    func loadSessionImage(
+        workspaceID: WorkspaceSummary.ID,
+        sessionID: SessionSummary.ID,
+        imageID: String,
+        variant: SessionImageVariant
+    ) async throws -> Data {
+        throw LodyClientError.notConnected
+    }
 }

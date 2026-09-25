@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Kurage
 
@@ -34,6 +35,25 @@ struct FixtureLodyClientTests {
         #expect(conversation.turns.count == 2)
     }
 
+    @Test func sessionImagesLoadForTheOwningSessionOnly() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let image = try await client.loadSessionImage(
+            workspaceID: "ws-demo", sessionID: "session-pr", imageID: "pr-shot", variant: .square
+        )
+        #expect(image == FixtureImage.png)
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.loadSessionImage(
+                workspaceID: "ws-demo", sessionID: "session-tests", imageID: "pr-shot", variant: .original
+            )
+        }
+        client.signOut()
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.loadSessionImage(
+                workspaceID: "ws-demo", sessionID: "session-pr", imageID: "pr-shot", variant: .original
+            )
+        }
+    }
+
     @Test func sendAppendsTrimmedUserTurn() async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
         try await client.send("  look again  ", sessionID: "session-pr", workspaceID: "ws-demo")
@@ -58,10 +78,116 @@ struct FixtureLodyClientTests {
         #expect(SessionProjectGroup.make(from: model.sessions).first?.id == "local:machine-1:prism")
     }
 
+    @Test func runConfigChoiceAppliesToNextTurn() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        let initial = try #require(await latestRunConfig(model, sessionID: "session-long"))
+        #expect(initial.editable?.kind == .reasoning)
+        #expect(initial.choosing("ultra") == nil)
+        let choice = try #require(initial.choosing("low"))
+        #expect(choice == RunConfigChoice(configOptionID: "reasoning_effort", value: "low"))
+        #expect(initial.applying(choice).reasoning?.label == "Low")
+        #expect(initial.applying(choice).model == initial.model)
+
+        let sentChoice = try await model.send("faster please", runConfig: choice, sessionID: "session-long")
+        #expect(sentChoice == choice)
+        #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value == "low")
+    }
+
+    @Test func runConfigPatchDecodesBridgeProjection() throws {
+        let json = """
+        {"sessionID":"s","order":[],"changed":[],"permission":null,"activity":"idle","syncState":"live",
+         "runConfig":{"model":{"value":"flash","label":"Flash"},"reasoning":null,
+           "editable":{"kind":"model","configOptionID":"model","options":[{"value":"flash","label":"Flash"}]}}}
+        """
+        let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))
+        let update = try patch.applying(to: Conversation(sessionID: "s", turns: [], permission: nil))
+        #expect(update.runConfig?.model?.label == "Flash")
+        #expect(update.runConfig?.reasoning == nil)
+        #expect(update.runConfig?.choosing("flash") == RunConfigChoice(configOptionID: "model", value: "flash"))
+    }
+
+    private func latestRunConfig(_ model: AppModel, sessionID: String) async -> SessionRunConfig? {
+        var latest: SessionRunConfig?
+        try? await model.observeConversation(sessionID: sessionID) { latest = $0.runConfig }
+        return latest
+    }
+
     @Test func emptySendIsRejected() async {
         let client = FixtureLodyClient(startsSignedIn: true)
         await #expect(throws: LodyClientError.emptyMessage) {
             try await client.send("   ", sessionID: "session-pr", workspaceID: "ws-demo")
+        }
+    }
+
+    @Test func cancellingRunningSessionMakesItIdle() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        try await model.cancelSession(sessionID: "session-tests")
+        #expect(model.sessions.first { $0.id == "session-tests" }?.activity == .idle)
+    }
+
+    @Test func archivingRemovesOneSessionFromTheWorkspace() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try await model.archiveSession(sessionID: "session-pr")
+        #expect(model.sessions.map(\.id) == ["session-tests", "session-long"])
+        #expect(try await client.sessions(workspaceID: "ws-demo").map(\.id) == ["session-tests", "session-long"])
+        try await model.archiveSession(sessionID: "session-pr")
+        #expect(model.sessions.map(\.id) == ["session-tests", "session-long"])
+    }
+
+    @Test func archivedSessionsRestoreAndDeleteNewestFirst() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        await model.refreshArchivedSessions()
+        #expect(model.archivedSessions.map(\.id) == ["archived-newer", "archived-older"])
+        #expect(model.sessions.map(\.id) == ["session-tests", "session-long", "session-pr"])
+
+        await model.restoreArchivedSession("archived-newer")
+        #expect(model.archivedSessions.map(\.id) == ["archived-older"])
+        #expect(model.sessions.contains { $0.id == "archived-newer" })
+
+        await model.deleteArchivedSession("archived-older")
+        #expect(model.archivedSessions.isEmpty)
+        try await client.archiveSession(sessionID: "session-pr", workspaceID: "ws-demo")
+        #expect(try await client.archivedSessions(workspaceID: "ws-demo").map(\.id) == ["session-pr"])
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.conversation(sessionID: "archived-older", workspaceID: "ws-demo")
+        }
+        model.signOut()
+        #expect(model.archivedSessions.isEmpty)
+    }
+
+    @Test func restoreRejectsARemovedProjectAndDeleteLeavesActiveSessions() async throws {
+        var removed = SessionRecord(
+            summary: SessionSummary(id: "gone", title: "gone project", agentName: "codex", activity: .idle, preview: ""),
+            turns: []
+        )
+        removed.canRestore = false
+        let client = FixtureLodyClient(startsSignedIn: true, records: [removed], archivedIDs: ["gone"])
+        await #expect(throws: LodyClientError.archivedProjectUnavailable) {
+            try await client.restoreArchivedSession(sessionID: "gone", workspaceID: "ws-demo")
+        }
+        #expect(try await client.archivedSessions(workspaceID: "ws-demo").map(\.canRestore) == [false])
+        await #expect(throws: LodyClientError.notConnected) {
+            try await client.archivedSessions(workspaceID: "other")
+        }
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.deleteArchivedSession(sessionID: "session-tests", workspaceID: "ws-demo")
+        }
+    }
+
+    @Test func archiveRejectsAMissingSession() async {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.archiveSession(sessionID: "missing", workspaceID: "ws-demo")
+        }
+        client.signOut()
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.archiveSession(sessionID: "session-pr", workspaceID: "ws-demo")
         }
     }
 
@@ -208,7 +334,16 @@ private final class DeferredSessionClient: LodyClient {
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         throw LodyClientError.notConnected
     }
-    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+    @discardableResult
+    func send(
+        _ text: String,
+        runConfig: RunConfigChoice?,
+        sessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> RunConfigChoice? {
+        throw LodyClientError.notConnected
+    }
+    func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
         throw LodyClientError.notConnected
     }
     func respond(
@@ -270,6 +405,8 @@ struct ConversationStreamingTests {
         client.observation?.yield(first)
         #expect(await changes.next() == first)
         #expect(model.cachedConversation(sessionID: "s") == first.conversation)
+        // Streaming keeps the snapshot but defers search text until indexing resumes.
+        #expect(model.sessionSearchBody(sessionID: "s").isEmpty)
 
         let switching = Task { await model.selectWorkspace("ws-b") }
         #expect(await requests.next() == "ws-b")
@@ -281,7 +418,90 @@ struct ConversationStreamingTests {
         case .failure(let error): #expect(error is CancellationError)
         }
         #expect(model.cachedConversation(sessionID: "s") == nil)
+        #expect(model.sessionSearchBody(sessionID: "s").isEmpty)
         signal.finish()
         #expect(await changes.next() == nil)
+    }
+}
+
+@MainActor
+struct ConversationRunConfigStateTests {
+    private let low = RunConfigChoice(configOptionID: "reasoning_effort", value: "low")
+    private let high = RunConfigChoice(configOptionID: "reasoning_effort", value: "high")
+
+    private var initial: SessionRunConfig {
+        SessionRunConfig(
+            model: .init(value: "model", label: "Model"),
+            reasoning: .init(value: "medium", label: "Medium"),
+            editable: .init(kind: .reasoning, configOptionID: "reasoning_effort", options: [
+                .init(value: "low", label: "Low"),
+                .init(value: "medium", label: "Medium"),
+                .init(value: "high", label: "High"),
+            ])
+        )
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func retryKeepsUnusedChoice(observationBeforeCompletion: Bool, originalHasChoice: Bool) {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        if originalHasChoice { state.choose(low.value) }
+        let originalChoice = state.choice
+        // The first attempt is unconfirmed. A different choice is made before retrying.
+        state.choose(high.value)
+        let confirmed = initial.applying(originalChoice)
+        if observationBeforeCompletion { state.receive(confirmed) }
+        state.didSend(originalChoice)
+        if !observationBeforeCompletion { state.receive(confirmed) }
+
+        #expect(state.config == confirmed)
+        #expect(state.choice == high)
+        #expect(state.displayed?.reasoning?.value == "high")
+        // Sending the next new turn consumes the preserved choice.
+        state.didSend(state.choice)
+        #expect(state.config?.reasoning?.value == "high")
+        #expect(state.choice == nil)
+    }
+
+    @Test func successfulSendClearsOnlyTheAppliedChoice() {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        state.choose(low.value)
+        state.didSend(low)
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.choice == nil)
+
+        state.choose(high.value)
+        state.receive(initial.applying(high))
+        state.choose("medium") // A new selection made while the send is completing.
+        state.didSend(high)
+        #expect(state.config?.reasoning?.value == "high")
+        #expect(state.choice?.value == "medium")
+    }
+
+    @Test(arguments: [true, false])
+    func retryPreservesExplicitReturnToBaseline(observationBeforeCompletion: Bool) {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        state.choose(low.value)
+        let originalChoice = state.choice
+        // Sending Low was unconfirmed. The user chooses the original Medium
+        // baseline for their next draft before retrying the earlier message.
+        state.choose("medium")
+        let nextChoice = RunConfigChoice(configOptionID: "reasoning_effort", value: "medium")
+        #expect(state.choice == nextChoice)
+
+        let confirmed = initial.applying(originalChoice)
+        if observationBeforeCompletion { state.receive(confirmed) }
+        state.didSend(originalChoice)
+        if !observationBeforeCompletion { state.receive(confirmed) }
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.choice == nextChoice)
+        #expect(state.displayed?.reasoning?.value == "medium")
+
+        // The next new turn sends Medium explicitly instead of inheriting Low.
+        state.didSend(state.choice)
+        #expect(state.config?.reasoning?.value == "medium")
+        #expect(state.choice == nil)
     }
 }

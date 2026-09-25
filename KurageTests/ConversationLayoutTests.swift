@@ -27,6 +27,25 @@ struct ConversationLayoutTests {
         expectAtBottom(table)
     }
 
+    @Test func transcriptFillsPastTheHomeIndicatorWhileTheComposerStaysAboveIt() throws {
+        let (controller, window) = try makeController()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        controller.additionalSafeAreaInsets.bottom = 34
+        update(controller, turns: sampleTurns())
+        let content = try #require(controller.view.subviews.first)
+        #expect(abs(content.frame.maxY - controller.view.bounds.height) < 1)
+        let footer = try #require(content.subviews.filter { !($0 is UITableView) }.max { $0.frame.maxY < $1.frame.maxY })
+        let footerBottom = content.convert(footer.frame, to: controller.view).maxY
+        let safeBottom = controller.view.bounds.height - controller.view.safeAreaInsets.bottom
+        #expect(abs(footerBottom - safeBottom) < 1)
+        let table = try transcript(in: controller.view)
+        #expect(abs(table.frame.maxY - content.bounds.height) < 1)
+        #expect(table.frame.maxY > footer.frame.maxY + 20)
+    }
+
     @Test func readingHistorySurvivesResizeAndOutputUntilSend() throws {
         let (controller, window) = try makeController()
         defer {

@@ -6,7 +6,8 @@ struct KurageApp: App {
 
     init() {
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
-            ? FixtureLodyClient()
+            ? FixtureLodyClient(failingConversationIDsOnce:
+                ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [])
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

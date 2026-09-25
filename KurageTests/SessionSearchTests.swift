@@ -1,0 +1,500 @@
+import Foundation
+import Testing
+import SwiftUI
+import UIKit
+@testable import Kurage
+
+struct SessionSearchTests {
+    @Test func indexesEachTextPartOnceAndKeepsLegacyText() {
+        let turns = [
+            ConversationTurn(id: "legacy", author: .user, text: "Legacy"),
+            ConversationTurn(id: "parts", author: .agent, text: "A\n\nB", parts: [
+                .text("A"), .image(ConversationImage(imageID: "shot", mimeType: "image/png")), .text("B"),
+            ]),
+        ]
+        #expect(SessionSearch.bodyText(turns) == "Legacy\nA\nB")
+    }
+
+    @Test func matchesTitleWithoutASnippet() {
+        let result = SessionSearch.result(title: "Fix flaky tests", body: "Running npm test", query: "  FLAKY ")
+        #expect(result == SessionSearch.Result(snippet: nil))
+    }
+
+    @Test func matchesTranscriptLineAndIgnoresCaseAndDiacritics() {
+        let body = "Question 1\nQuestion 7\nThe café is open"
+        #expect(SessionSearch.result(title: "long conversation", body: body, query: "question 7")?.snippet == "Question 7")
+        #expect(SessionSearch.result(title: "Notes", body: body, query: "cafe")?.snippet == "The café is open")
+        #expect(SessionSearch.result(title: "修复测试", body: "运行 npm test", query: "npm")?.snippet == "运行 npm test")
+    }
+
+    @Test func rejectsBlankQueriesAndUnrelatedSessions() {
+        #expect(SessionSearch.result(title: "fix flaky tests", body: "Running npm test", query: "   ") == nil)
+        #expect(SessionSearch.result(title: "review the PR", body: "Look at this PR", query: "Question 7") == nil)
+    }
+
+    @Test func windowsALongMatchingLine() {
+        let line = String(repeating: "a", count: 100) + "needle" + String(repeating: "b", count: 100)
+        let snippet = SessionSearch.result(title: "t", body: line, query: "needle")?.snippet
+        #expect(snippet?.contains("needle") == true)
+        #expect(snippet?.hasPrefix("…") == true)
+        #expect(snippet?.hasSuffix("…") == true)
+        #expect((snippet?.count ?? 0) <= 82)
+    }
+}
+
+@MainActor
+struct SessionSearchIndexTests {
+    @Test func indexesTurnTextSeparatelyPerSession() async {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+
+        #expect(model.sessionSearchBody(sessionID: "session-long").contains("Question 7"))
+        #expect(model.sessionSearchBody(sessionID: "session-tests").contains("Running npm test"))
+        #expect(!model.sessionSearchBody(sessionID: "session-pr").contains("Question 7"))
+        #expect(!model.isIndexingSessionSearch)
+    }
+
+    @Test func reloadsTranscriptsAfterTheSessionListRefreshes() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+
+        try await model.send("unique-needle", sessionID: "session-pr")
+        await model.indexSessionsForSearch()
+
+        let body = model.sessionSearchBody(sessionID: "session-pr")
+        #expect(body.contains("unique-needle"))
+        #expect(body.contains("Look at this PR"))
+        #expect(model.sessionSearchBody(sessionID: "session-long").contains("Question 7"))
+    }
+
+    @Test func signOutDropsSearchText() async {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+        model.signOut()
+        #expect(model.sessionSearchBody(sessionID: "session-long").isEmpty)
+        #expect(!model.isIndexingSessionSearch)
+    }
+}
+
+@MainActor
+struct SessionSearchLifecycleTests {
+    @Test(.timeLimit(.minutes(1))) func streamingDefersSearchProjectionUntilSearchResumes() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+        model.stopSessionSearch()
+        let original = model.sessionSearchBody(sessionID: "session-pr")
+        let reads = client.readCount
+        let (processed, signal) = AsyncStream<Void>.makeStream()
+        var updates = processed.makeAsyncIterator()
+        let observation = Task {
+            try await model.observeConversation(sessionID: "session-pr") { _ in signal.yield(()) }
+        }
+        var events = client.events.makeAsyncIterator()
+        while await events.next() != "observe" {}
+        for text in ["first streaming text", "latest streaming text"] {
+            client.observation?.yield(ConversationUpdate(
+                conversation: Conversation(sessionID: "session-pr", turns: [
+                    ConversationTurn(id: "turn", author: .agent, text: text),
+                ], permission: nil), activity: .running, syncState: .live
+            ))
+            _ = await updates.next()
+            #expect(model.sessionSearchBody(sessionID: "session-pr") == original)
+        }
+        observation.cancel()
+        _ = await observation.result
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr") == "latest streaming text")
+        #expect(client.readCount == reads)
+    }
+
+    @Test func failedSearchDropsStaleBodyAndRetries() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        _ = try await model.conversation(sessionID: "session-pr")
+        await model.indexSessionsForSearch()
+        #expect(!model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        model.stopSessionSearch()
+        client.failedReads = ["session-pr"]
+        await model.refreshSessions()
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        #expect(!model.sessionSearchBody(sessionID: "session-long").isEmpty)
+        #expect(model.hasIncompleteSessionSearch)
+        #expect(!model.isIndexingSessionSearch)
+        // Retrying must not resurrect the older conversation cache on failure.
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        client.failedReads = []
+        client.replacementBody = "new search content"
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr") == "new search content")
+        #expect(!model.hasIncompleteSessionSearch)
+        model.signOut()
+        #expect(!model.hasIncompleteSessionSearch)
+    }
+
+    @Test func searchFailureDoesNotCrossWorkspaces() async {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        client.includeOtherWorkspace = true
+        client.failedReads = ["session-pr"]
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+        #expect(model.hasIncompleteSessionSearch)
+        await model.selectWorkspace("ws-other")
+        await model.indexSessionsForSearch()
+        #expect(!model.hasIncompleteSessionSearch)
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        await model.selectWorkspace("ws-demo")
+        await model.indexSessionsForSearch()
+        #expect(model.hasIncompleteSessionSearch)
+    }
+
+    @Test func archiveRemovesEveryConfirmedTargetWhenRefreshFails() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        for id in ["session-pr", "session-long"] {
+            _ = try await model.conversation(sessionID: id)
+        }
+        await model.indexSessionsForSearch()
+        client.archivedIDs = ["session-pr", "session-long"]
+        client.failSessionLoad = true
+        try await model.archiveSession(sessionID: "session-pr")
+        #expect(model.sessions.map(\.id) == ["session-tests"])
+        #expect(client.savedCache?.sessionsByWorkspace["ws-demo"]?.map(\.id) == ["session-tests"])
+        for id in client.archivedIDs {
+            #expect(model.cachedConversation(sessionID: id) == nil)
+            #expect(model.sessionSearchBody(sessionID: id).isEmpty)
+        }
+        #expect(!model.sessionSearchBody(sessionID: "session-tests").isEmpty)
+    }
+
+    @Test func archiveResultDecodesDocumentIDs() throws {
+        let data = Data(#"{"status":"archived","sessionIDs":["root","opened"]}"#.utf8)
+        let result = try JSONDecoder().decode(SessionArchiveResult.self, from: data)
+        #expect(result.status == "archived")
+        #expect(result.sessionIDs == ["root", "opened"])
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func archiveOperationsStayScopedAcrossWorkspaceSwitches(delete: Bool, oldFails: Bool) async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-demo")
+        await model.selectWorkspace("ws-other")
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        let current = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-other")
+        client.finishArchive("ws-demo", fails: oldFails)
+        await old.value
+        #expect(model.archiveBusySessionIDs == ["same"])
+        #expect(model.archiveStatusNote == nil)
+        client.finishArchive("ws-other", fails: true)
+        await current.value
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        #expect(model.archiveStatusNote != nil)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func returningToWorkspaceDoesNotReviveOldArchiveOperation(delete: Bool, oldFails: Bool) async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-demo")
+        await model.selectWorkspace("ws-other")
+        await model.selectWorkspace("ws-demo")
+        #expect(model.archiveBusySessionIDs == ["same"])
+        // Both operation types share the lock until the original write finishes.
+        await model.restoreArchivedSession("same")
+        await model.deleteArchivedSession("same")
+        #expect(client.archiveOperationCount == 1)
+        let reads = client.sessionReadCount
+        client.finishArchive("ws-demo", fails: oldFails)
+        await old.value
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        #expect(model.archiveStatusNote == nil)
+        #expect(client.sessionReadCount == reads)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func activeArchiveStaysScopedAcrossWorkspaceSwitches(returnToOriginal: Bool, oldFails: Bool) async throws {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task { try await model.archiveSession(sessionID: "same") }
+        #expect(await events.next() == "archive:ws-demo")
+        #expect(model.archivingSessionID == "same")
+        await model.selectWorkspace("ws-other")
+        #expect(model.archivingSessionID == nil)
+        let current = Task { try await model.archiveSession(sessionID: "same") }
+        #expect(await events.next() == "archive:ws-other")
+        if returnToOriginal {
+            await model.selectWorkspace("ws-demo")
+            #expect(model.archivingSessionID == "same")
+            await #expect(throws: CancellationError.self) {
+                try await model.archiveSession(sessionID: "same")
+            }
+            #expect(client.archiveOperationCount == 2)
+        }
+        let reads = client.sessionReadCount
+        client.finishArchive("ws-demo", fails: oldFails)
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(client.sessionReadCount == reads)
+        #expect(model.archivingSessionID == (returnToOriginal ? nil : "same"))
+        client.finishArchive("ws-other", fails: true)
+        if returnToOriginal {
+            await #expect(throws: CancellationError.self) { try await current.value }
+        } else {
+            await #expect(throws: LodyClientError.unreachable) { try await current.value }
+        }
+        #expect(model.archivingSessionID == nil)
+    }
+
+    @Test func workspaceIdentityChangesOnlyWhenSelectionChanges() async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let first = model.workspaceGeneration
+        await model.refreshWorkspaces()
+        await model.selectWorkspace("ws-demo")
+        model.setApplicationActive(false)
+        model.setApplicationActive(true)
+        #expect(model.workspaceGeneration == first)
+        await model.selectWorkspace("ws-other")
+        #expect(model.workspaceGeneration != first)
+        let second = model.workspaceGeneration
+        await model.selectWorkspace("ws-demo")
+        #expect(model.workspaceGeneration != first)
+        #expect(model.workspaceGeneration != second)
+    }
+
+    @Test func successfulArchiveRefreshClearsOnlyTheLoadError() async {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        client.failArchiveLoad = true
+        await model.refreshArchivedSessions()
+        #expect(model.archiveStatusNote?.text == "Could not load archived sessions.")
+        client.failArchiveLoad = false
+        await model.refreshArchivedSessions()
+        #expect(!model.archivedSessions.isEmpty)
+        #expect(model.archiveStatusNote == nil)
+        await model.restoreArchivedSession("archived-newer")
+        let operationError = model.archiveStatusNote
+        #expect(operationError != nil)
+        await model.refreshArchivedSessions()
+        #expect(model.archiveStatusNote == operationError)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func backgroundCancelsReadsAndForegroundResumes() async {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let indexing = Task { await model.indexSessionsForSearch() }
+        #expect(await events.next() == "read")
+        model.setApplicationActive(false)
+        #expect(await events.next() == "cancelled")
+        await indexing.value
+        await model.indexSessionsForSearch()
+        #expect(client.readCount == 1)
+        #expect(!model.isIndexingSessionSearch)
+        model.setApplicationActive(true)
+        #expect(await events.next() == "read")
+        model.stopSessionSearch()
+        #expect(await events.next() == "cancelled")
+        #expect(client.readCount == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func endingObservationInBackgroundDoesNotRestartSearch() async throws {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let observation = Task { try await model.observeConversation(sessionID: "session-pr") { _ in } }
+        #expect(await events.next() == "observe")
+        await model.indexSessionsForSearch()
+        model.setApplicationActive(false)
+        observation.cancel()
+        _ = await observation.result
+        await model.indexSessionsForSearch()
+        #expect(client.readCount == 0)
+        #expect(!model.isIndexingSessionSearch)
+        model.setApplicationActive(true)
+        #expect(await events.next() == "read")
+        model.stopSessionSearch()
+        #expect(await events.next() == "cancelled")
+    }
+}
+
+@MainActor
+private final class SearchLifecycleClient: LodyClient {
+    private let fixture = FixtureLodyClient(startsSignedIn: true)
+    var account: Account? { fixture.account }
+    let supportsConversations = true
+    private(set) var readCount = 0
+    private(set) var sessionReadCount = 0
+    var emptySessions = false
+    var immediateReads = false
+    var deferArchiveOperations = false
+    private(set) var archiveOperationCount = 0
+    private var pendingArchives: [String: CheckedContinuation<Void, Error>] = [:]
+    func restoreArchivedSession(sessionID: String, workspaceID: String) async throws {
+        try await archiveOperation(workspaceID: workspaceID)
+    }
+    func deleteArchivedSession(sessionID: String, workspaceID: String) async throws {
+        try await archiveOperation(workspaceID: workspaceID)
+    }
+    private func archiveOperation(workspaceID: String) async throws {
+        guard deferArchiveOperations else { throw LodyClientError.notConnected }
+        archiveOperationCount += 1
+        try await withCheckedThrowingContinuation { continuation in
+            pendingArchives[workspaceID] = continuation
+            signal.yield("archive:" + workspaceID)
+        }
+    }
+    func finishArchive(_ workspaceID: String, fails: Bool) {
+        let pending = pendingArchives.removeValue(forKey: workspaceID)
+        if fails { pending?.resume(throwing: LodyClientError.unreachable) }
+        else { pending?.resume() }
+    }
+    var failArchiveLoad = false
+    var failSessionLoad = false
+    var includeOtherWorkspace = false
+    var failedReads: Set<String> = []
+    var replacementBody: String?
+    var archivedIDs: [String] = []
+    var savedCache: SessionCache?
+    let supportsSessionArchiving = true
+    func saveSessionCache(_ cache: SessionCache) { savedCache = cache }
+    func archiveSession(sessionID: String, workspaceID: String) async throws -> [String] {
+        if deferArchiveOperations { try await archiveOperation(workspaceID: workspaceID) }
+        return archivedIDs
+    }
+    var observation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation?
+    let events: AsyncStream<String>
+    private let signal: AsyncStream<String>.Continuation
+
+    init() { (events, signal) = AsyncStream.makeStream() }
+    func beginDeviceAuthorization() async throws -> DeviceAuthorization { try await fixture.beginDeviceAuthorization() }
+    func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
+        try await fixture.finishDeviceAuthorization(authorization)
+    }
+    func restoreSession() async -> Account? { account }
+    func signOut() { fixture.signOut() }
+    func workspaces() async throws -> [WorkspaceSummary] {
+        var result = try await fixture.workspaces()
+        if includeOtherWorkspace { result.append(WorkspaceSummary(id: "ws-other", name: "Other", slug: "other")) }
+        return result
+    }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] {
+        sessionReadCount += 1
+        if failSessionLoad { throw LodyClientError.unreachable }
+        if workspaceID == "ws-other" { return [] }
+        return emptySessions ? [] : try await fixture.sessions(workspaceID: workspaceID)
+    }
+    func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
+        readCount += 1
+        if failedReads.contains(sessionID) { throw LodyClientError.unreachable }
+        if let replacementBody {
+            return Conversation(sessionID: sessionID, turns: [
+                ConversationTurn(id: "new", author: .agent, text: replacementBody),
+            ])
+        }
+        if immediateReads { return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID) }
+        signal.yield("read")
+        do {
+            try await Task.sleep(for: .seconds(60))
+        } catch {
+            signal.yield("cancelled")
+            throw error
+        }
+        return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID)
+    }
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        let (stream, continuation) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream()
+        observation = continuation
+        signal.yield("observe")
+        return stream
+    }
+    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { runConfig }
+    func cancelSession(sessionID: String, workspaceID: String) async throws {}
+    func archivedSessions(workspaceID: String) async throws -> [ArchivedSessionSummary] {
+        if failArchiveLoad { throw LodyClientError.unreachable }
+        return try await fixture.archivedSessions(workspaceID: workspaceID)
+    }
+
+    func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws {}
+}
+
+@MainActor
+struct SessionListRefreshTests {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func pullingToRefreshReloadsSessions(empty: Bool) async throws {
+        let client = SearchLifecycleClient()
+        client.emptySessions = empty
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let initialReads = client.sessionReadCount
+        let host = UIHostingController(rootView: SessionListView(model: model))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        for _ in 0..<50 {
+            window.layoutIfNeeded()
+            if refreshControl(in: host.view) != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let control = try #require(refreshControl(in: host.view))
+        control.beginRefreshing()
+        control.sendActions(for: .valueChanged)
+        for _ in 0..<50 {
+            if client.sessionReadCount > initialReads && !control.isRefreshing { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(client.sessionReadCount == initialReads + 1)
+        #expect(!control.isRefreshing)
+    }
+
+    private func refreshControl(in view: UIView) -> UIRefreshControl? {
+        if let control = view as? UIRefreshControl { return control }
+        if let control = (view as? UIScrollView)?.refreshControl { return control }
+        return view.subviews.lazy.compactMap { refreshControl(in: $0) }.first
+    }
+}
