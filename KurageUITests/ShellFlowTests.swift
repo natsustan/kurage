@@ -113,12 +113,23 @@ final class ShellFlowTests: XCTestCase {
         let pause = app.buttons["pause-session"]
         XCTAssertTrue(pause.waitForExistence(timeout: 5))
         XCTAssertEqual(pause.label, "Stop reply")
+        // Fixture supports sending while running; stopping remains independently available.
+        let runningSend = app.buttons["send-follow-up"]
+        XCTAssertTrue(runningSend.waitForExistence(timeout: 5))
+        XCTAssertTrue(runningSend.isEnabled)
+        attachScreen(app, name: "running-send-and-stop")
+        tap(runningSend)
+        XCTAssertTrue(app.staticTexts["look again"].waitForExistence(timeout: 5))
+        XCTAssertTrue(pause.exists)
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        tap(field)
+        field.typeText("continue after stopping")
         tap(pause)
         XCTAssertTrue(app.buttons["send-follow-up"].waitForExistence(timeout: 5))
-        XCTAssertEqual(field.value as? String, "look again")
+        XCTAssertEqual(field.value as? String, "continue after stopping")
 
         tap(app.buttons["send-follow-up"])
-        let sentMessage = app.staticTexts["look again"]
+        let sentMessage = app.staticTexts["continue after stopping"]
         XCTAssertTrue(sentMessage.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Run the tests again"].isHittable)
         XCTAssertLessThan(field.frame.minY - sentMessage.frame.maxY, 160)

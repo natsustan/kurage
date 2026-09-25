@@ -49,6 +49,7 @@ struct ConversationView: View {
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
                 supportsTextSending: model.supportsTextSending,
+                supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
                 supportsSessionCancellation: model.supportsSessionCancellation,
                 supportsPermissionResponses: model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
@@ -133,8 +134,9 @@ struct ConversationView: View {
     }
 
     private func sendDraft() {
-        guard !isSending, !isCancelling,
-              model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
+        guard !isSending, !isCancelling, model.supportsTextSending,
+              model.supportsTextSendingWhileRunning ||
+                model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let choice = runConfigState.choice
@@ -352,6 +354,7 @@ private struct ConversationFooter: View {
     let isSessionRunning: Bool
     let banner: String?
     let supportsTextSending: Bool
+    let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
@@ -385,6 +388,8 @@ private struct ConversationFooter: View {
             if supportsTextSending || supportsSessionCancellation && isSessionRunning {
                 FollowUpComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
                                  isSessionRunning: isSessionRunning,
+                                 supportsTextSending: supportsTextSending,
+                                 supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                  supportsSessionCancellation: supportsSessionCancellation,
                                  runConfig: runConfig,
                                  onSend: onSend, onCancel: onCancel,
@@ -439,6 +444,8 @@ private struct FollowUpComposer: View {
     let isSending: Bool
     let isCancelling: Bool
     let isSessionRunning: Bool
+    let supportsTextSending: Bool
+    let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
     let runConfig: SessionRunConfig?
     let onSend: () -> Void
@@ -453,8 +460,12 @@ private struct FollowUpComposer: View {
         )
     }
 
+    private var showsSend: Bool {
+        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning)
+    }
+
     private var canSend: Bool {
-        !isSending && !isCancelling && !isSessionRunning &&
+        showsSend && !isSending && !isCancelling &&
             !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -486,22 +497,36 @@ private struct FollowUpComposer: View {
                 .focused($isFocused)
                 .padding(.vertical, 9)
                 .accessibilityIdentifier("follow-up-field")
-            Button {
-                if isSessionRunning { onCancel() } else { onSend() }
-            } label: {
-                Image(systemName: isSessionRunning ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(canSend || isSessionRunning ? Color.white : Color.secondary)
-                    .frame(width: 36, height: 36)
-                    .background(canSend || isSessionRunning ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-                    .frame(width: 44, height: 44)
+            if isSessionRunning && supportsSessionCancellation {
+                Button(action: onCancel) {
+                    composerIcon("stop.fill", enabled: !isSending && !isCancelling)
+                }
+                .disabled(isSending || isCancelling)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop reply")
+                .accessibilityIdentifier("pause-session")
             }
-            .disabled(isSessionRunning ? !supportsSessionCancellation || isSending || isCancelling : !canSend)
-            .buttonStyle(.plain)
-            .accessibilityLabel(isSessionRunning ? "Stop reply" : "Send")
-            .accessibilityIdentifier(isSessionRunning ? "pause-session" : "send-follow-up")
+            if showsSend {
+                Button(action: onSend) {
+                    composerIcon("arrow.up", enabled: canSend)
+                }
+                .disabled(!canSend)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Send")
+                .accessibilityIdentifier("send-follow-up")
+            }
         }
     }
+
+    private func composerIcon(_ name: String, enabled: Bool) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(enabled ? Color.white : Color.secondary)
+            .frame(width: 36, height: 36)
+            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+            .frame(width: 44, height: 44)
+    }
+
 }
 
 private extension SessionRunConfig {
