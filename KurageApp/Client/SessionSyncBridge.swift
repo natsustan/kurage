@@ -107,13 +107,14 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         sessionID: String,
         workspaceID: String,
         access: StreamsAccess
-    ) async throws -> String {
-        try await callBridge(
+    ) async throws -> SessionArchiveResult {
+        let json = try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageArchiveSession(workspaceID, sessionID, baseURL))",
             workspaceID: workspaceID,
             access: access,
             arguments: ["sessionID": sessionID]
         )
+        return try JSONDecoder().decode(SessionArchiveResult.self, from: Data(json.utf8))
     }
 
     func archivedSessions(workspaceID: String, access: StreamsAccess) async throws -> [ArchivedSessionSummary] {

@@ -37,7 +37,9 @@ protocol LodyClient: AnyObject {
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice?
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
-    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    /// Returns every confirmed archived document session ID, including lifecycle descendants.
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID]
     func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary]
     func restoreArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
     func deleteArchivedSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
@@ -80,7 +82,8 @@ extension LodyClient {
     var supportsSessionArchiving: Bool { false }
     var supportsPermissionResponses: Bool { false }
 
-    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID] {
         throw LodyClientError.notConnected
     }
 

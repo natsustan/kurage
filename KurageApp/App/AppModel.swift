@@ -44,6 +44,7 @@ final class AppModel {
     private var searchBodies: [WorkspaceSummary.ID: [SessionSummary.ID: String]] = [:]
     /// Sessions whose transcript was read since the last list refresh.
     private var freshSearchBodies: [WorkspaceSummary.ID: Set<SessionSummary.ID>] = [:]
+    private var failedSearchBodies: [WorkspaceSummary.ID: Set<SessionSummary.ID>] = [:]
     private var dirtySearchBodies: [WorkspaceSummary.ID: Set<SessionSummary.ID>] = [:]
     private var searchIndexGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
@@ -52,6 +53,11 @@ final class AppModel {
     /// Open conversation subscriptions. Search indexing uses the same sync bridge, so it waits until these finish.
     private var conversationObservationCount = 0
     private(set) var isIndexingSessionSearch = false
+
+    var hasIncompleteSessionSearch: Bool {
+        guard let workspaceID = selectedWorkspaceID else { return false }
+        return failedSearchBodies[workspaceID]?.isEmpty == false
+    }
 
     init(client: any LodyClient) {
         self.client = client
@@ -162,6 +168,7 @@ final class AppModel {
         conversationCache = [:]
         stopSessionSearch()
         searchBodies = [:]
+        failedSearchBodies = [:]
         freshSearchBodies = [:]
         dirtySearchBodies = [:]
         sessionsByWorkspace = [:]
@@ -186,6 +193,7 @@ final class AppModel {
             let workspaceIDs = Set(loaded.map(\.id))
             sessionsByWorkspace = sessionsByWorkspace.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
+            failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
             dirtySearchBodies = dirtySearchBodies.filter { workspaceIDs.contains($0.key) }
             persistSession()
@@ -248,6 +256,7 @@ final class AppModel {
             let ids = Set(loaded.map(\.id))
             searchBodies[workspaceID] = searchBodies[workspaceID]?.filter { ids.contains($0.key) }
             dirtySearchBodies[workspaceID] = dirtySearchBodies[workspaceID]?.intersection(ids)
+            failedSearchBodies[workspaceID] = failedSearchBodies[workspaceID]?.intersection(ids)
             freshSearchBodies[workspaceID] = []
             persistSession()
             currentStatusNote = nil
@@ -402,16 +411,20 @@ final class AppModel {
             throw LodyClientError.notConnected
         }
         let generation = authenticationGeneration
-        try await client.archiveSession(sessionID: sessionID, workspaceID: workspaceID)
+        let archivedIDs = Set(try await client.archiveSession(sessionID: sessionID, workspaceID: workspaceID))
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
             throw CancellationError()
         }
-        sessions.removeAll { $0.id == sessionID }
+        cancelSessionSearchIndex()
+        sessions.removeAll { archivedIDs.contains($0.id) }
         sessionsByWorkspace[workspaceID] = sessions
-        conversationCache[workspaceID]?.removeValue(forKey: sessionID)
-        searchBodies[workspaceID]?.removeValue(forKey: sessionID)
-        freshSearchBodies[workspaceID]?.remove(sessionID)
-        dirtySearchBodies[workspaceID]?.remove(sessionID)
+        for id in archivedIDs {
+            conversationCache[workspaceID]?.removeValue(forKey: id)
+            searchBodies[workspaceID]?.removeValue(forKey: id)
+            freshSearchBodies[workspaceID]?.remove(id)
+            dirtySearchBodies[workspaceID]?.remove(id)
+            failedSearchBodies[workspaceID]?.remove(id)
+        }
         persistSession()
         await refreshSessions(restart: true)
     }
@@ -554,7 +567,8 @@ final class AppModel {
         let authGeneration = authenticationGeneration
         for session in sessions where searchBodies[workspaceID]?[session.id] == nil ||
             dirtySearchBodies[workspaceID]?.contains(session.id) == true {
-            if let cached = conversationCache[workspaceID]?[session.id] {
+            if failedSearchBodies[workspaceID]?.contains(session.id) != true,
+               let cached = conversationCache[workspaceID]?[session.id] {
                 searchBodies[workspaceID, default: [:]][session.id] = SessionSearch.bodyText(cached.turns)
                 dirtySearchBodies[workspaceID]?.remove(session.id)
             }
@@ -583,12 +597,17 @@ final class AppModel {
             } catch LodyClientError.signedOut {
                 return
             } catch {
-                continue
+                guard !Task.isCancelled, searchIndexGeneration == generation,
+                      isCurrentAuthentication(authGeneration), selectedWorkspaceID == workspaceID,
+                      sessions.contains(where: { $0.id == sessionID }) else { return }
+                searchBodies[workspaceID]?.removeValue(forKey: sessionID)
+                failedSearchBodies[workspaceID, default: []].insert(sessionID)
             }
         }
     }
 
     private func storeSearchBody(_ conversation: Conversation, workspaceID: WorkspaceSummary.ID) {
+        failedSearchBodies[workspaceID]?.remove(conversation.sessionID)
         searchBodies[workspaceID, default: [:]][conversation.sessionID] = SessionSearch.bodyText(conversation.turns)
         freshSearchBodies[workspaceID, default: []].insert(conversation.sessionID)
         dirtySearchBodies[workspaceID]?.remove(conversation.sessionID)
@@ -597,6 +616,7 @@ final class AppModel {
     // Streaming only marks the cached snapshot for indexing. Build text once
     // search resumes, rather than joining the entire history on every update.
     private func invalidateSearchBody(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) {
+        failedSearchBodies[workspaceID]?.remove(sessionID)
         dirtySearchBodies[workspaceID, default: []].insert(sessionID)
         freshSearchBodies[workspaceID, default: []].insert(sessionID)
     }

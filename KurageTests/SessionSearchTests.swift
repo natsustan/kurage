@@ -113,6 +113,80 @@ struct SessionSearchLifecycleTests {
         #expect(client.readCount == reads)
     }
 
+    @Test func failedSearchDropsStaleBodyAndRetries() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        _ = try await model.conversation(sessionID: "session-pr")
+        await model.indexSessionsForSearch()
+        #expect(!model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        model.stopSessionSearch()
+        client.failedReads = ["session-pr"]
+        await model.refreshSessions()
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        #expect(!model.sessionSearchBody(sessionID: "session-long").isEmpty)
+        #expect(model.hasIncompleteSessionSearch)
+        #expect(!model.isIndexingSessionSearch)
+        // Retrying must not resurrect the older conversation cache on failure.
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        client.failedReads = []
+        client.replacementBody = "new search content"
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr") == "new search content")
+        #expect(!model.hasIncompleteSessionSearch)
+        model.signOut()
+        #expect(!model.hasIncompleteSessionSearch)
+    }
+
+    @Test func searchFailureDoesNotCrossWorkspaces() async {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        client.includeOtherWorkspace = true
+        client.failedReads = ["session-pr"]
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+        #expect(model.hasIncompleteSessionSearch)
+        await model.selectWorkspace("ws-other")
+        await model.indexSessionsForSearch()
+        #expect(!model.hasIncompleteSessionSearch)
+        #expect(model.sessionSearchBody(sessionID: "session-pr").isEmpty)
+        await model.selectWorkspace("ws-demo")
+        await model.indexSessionsForSearch()
+        #expect(model.hasIncompleteSessionSearch)
+    }
+
+    @Test func archiveRemovesEveryConfirmedTargetWhenRefreshFails() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        for id in ["session-pr", "session-long"] {
+            _ = try await model.conversation(sessionID: id)
+        }
+        await model.indexSessionsForSearch()
+        client.archivedIDs = ["session-pr", "session-long"]
+        client.failSessionLoad = true
+        try await model.archiveSession(sessionID: "session-pr")
+        #expect(model.sessions.map(\.id) == ["session-tests"])
+        #expect(client.savedCache?.sessionsByWorkspace["ws-demo"]?.map(\.id) == ["session-tests"])
+        for id in client.archivedIDs {
+            #expect(model.cachedConversation(sessionID: id) == nil)
+            #expect(model.sessionSearchBody(sessionID: id).isEmpty)
+        }
+        #expect(!model.sessionSearchBody(sessionID: "session-tests").isEmpty)
+    }
+
+    @Test func archiveResultDecodesDocumentIDs() throws {
+        let data = Data(#"{"status":"archived","sessionIDs":["root","opened"]}"#.utf8)
+        let result = try JSONDecoder().decode(SessionArchiveResult.self, from: data)
+        #expect(result.status == "archived")
+        #expect(result.sessionIDs == ["root", "opened"])
+    }
+
     @Test func successfulArchiveRefreshClearsOnlyTheLoadError() async {
         let client = SearchLifecycleClient()
         let model = AppModel(client: client)
@@ -182,6 +256,15 @@ private final class SearchLifecycleClient: LodyClient {
     var emptySessions = false
     var immediateReads = false
     var failArchiveLoad = false
+    var failSessionLoad = false
+    var includeOtherWorkspace = false
+    var failedReads: Set<String> = []
+    var replacementBody: String?
+    var archivedIDs: [String] = []
+    var savedCache: SessionCache?
+    let supportsSessionArchiving = true
+    func saveSessionCache(_ cache: SessionCache) { savedCache = cache }
+    func archiveSession(sessionID: String, workspaceID: String) async throws -> [String] { archivedIDs }
     var observation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation?
     let events: AsyncStream<String>
     private let signal: AsyncStream<String>.Continuation
@@ -193,13 +276,25 @@ private final class SearchLifecycleClient: LodyClient {
     }
     func restoreSession() async -> Account? { account }
     func signOut() { fixture.signOut() }
-    func workspaces() async throws -> [WorkspaceSummary] { try await fixture.workspaces() }
+    func workspaces() async throws -> [WorkspaceSummary] {
+        var result = try await fixture.workspaces()
+        if includeOtherWorkspace { result.append(WorkspaceSummary(id: "ws-other", name: "Other", slug: "other")) }
+        return result
+    }
     func sessions(workspaceID: String) async throws -> [SessionSummary] {
         sessionReadCount += 1
+        if failSessionLoad { throw LodyClientError.unreachable }
+        if workspaceID == "ws-other" { return [] }
         return emptySessions ? [] : try await fixture.sessions(workspaceID: workspaceID)
     }
     func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
         readCount += 1
+        if failedReads.contains(sessionID) { throw LodyClientError.unreachable }
+        if let replacementBody {
+            return Conversation(sessionID: sessionID, turns: [
+                ConversationTurn(id: "new", author: .agent, text: replacementBody),
+            ])
+        }
         if immediateReads { return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID) }
         signal.yield("read")
         do {

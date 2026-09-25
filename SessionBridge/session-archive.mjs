@@ -58,17 +58,17 @@ export function collectLifecycle(sessionID, rows) {
 // No machine command or legacy queue is needed to accept the archive request.
 export async function archiveSession(repo, sessionID) {
   const lifecycle = collectLifecycle(sessionID, await repo.listDoc());
-  if (lifecycle.length === 0) return 'missing';
+  if (lifecycle.length === 0) return { status: 'missing', sessionIDs: [] };
 
   for (const session of lifecycle) {
     await repo.upsertDocMeta(session.docId, { isArchived: true, status: { type: 'idle' } });
   }
-  if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'] }))) return 'unconfirmed';
+  if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'] }))) return { status: 'unconfirmed', sessionIDs: [] };
   for (const session of lifecycle) {
     const confirmed = await repo.getDocMeta(session.docId);
-    if (!confirmed || confirmed.deleted || confirmed.meta?.isArchived !== true) return 'unconfirmed';
+    if (!confirmed || confirmed.deleted || confirmed.meta?.isArchived !== true) return { status: 'unconfirmed', sessionIDs: [] };
   }
-  return 'archived';
+  return { status: 'archived', sessionIDs: lifecycle.map(session => session.docSessionID) };
 }
 
 function isDeleted(row) {

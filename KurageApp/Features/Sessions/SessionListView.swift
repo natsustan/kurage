@@ -23,6 +23,8 @@ struct SessionListView: View {
                 archivingSessionID: archivingSessionID,
                 isRefreshing: model.isRefreshingSessions && !model.hasCachedSessions,
                 isIndexingSearch: model.isIndexingSessionSearch,
+                hasIncompleteSearch: model.hasIncompleteSessionSearch,
+                onRetrySearch: { Task { await model.indexSessionsForSearch() } },
                 statusNote: model.statusNote,
                 searchQuery: $searchQuery,
                 query: searchQuery,
@@ -131,6 +133,8 @@ private struct SessionList: View {
     let archivingSessionID: SessionSummary.ID?
     let isRefreshing: Bool
     let isIndexingSearch: Bool
+    let hasIncompleteSearch: Bool
+    let onRetrySearch: () -> Void
     let statusNote: StatusNote?
     @Binding var searchQuery: String
     let query: String
@@ -151,7 +155,8 @@ private struct SessionList: View {
     }
 
     var body: some View {
-        Group {
+        // Keep the search overlay alive when results switch to an empty state.
+        ZStack(alignment: .top) {
             if sessions.isEmpty {
                 emptyState(
                     loading: isRefreshing,
@@ -164,7 +169,7 @@ private struct SessionList: View {
                     loading: isIndexingSearch,
                     title: "No matching sessions",
                     systemImage: "magnifyingglass",
-                    description: "No title or message matches.",
+                    description: hasIncompleteSearch ? "Some messages could not be searched." : "No title or message matches.",
                     loadingTitle: "Searching messages…"
                 )
             } else {
@@ -172,7 +177,7 @@ private struct SessionList: View {
                     rows: rows,
                     canArchive: canArchive,
                     opensSessions: supportsConversations,
-                    bottomContentInset: Self.floatingSearchClearance,
+                    bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
                     onOpen: onOpen,
                     onToggleProject: toggleProject,
                     onArchive: onArchive
@@ -185,6 +190,16 @@ private struct SessionList: View {
         // keeps its own safe-area padding so it floats above that area.
         .overlay(alignment: .bottom) {
             SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty)
+                .overlay(alignment: .top) {
+                    if hasIncompleteSearch && !trimmedQuery.isEmpty {
+                        Button("Search incomplete. Retry", action: onRetrySearch)
+                            .font(.footnote)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isIndexingSearch)
+                            .accessibilityIdentifier("retry-session-search")
+                            .offset(y: -44)
+                    }
+                }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
                 .safeAreaPadding(.bottom)

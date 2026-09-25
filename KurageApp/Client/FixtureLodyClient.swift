@@ -19,13 +19,16 @@ final class FixtureLodyClient: LodyClient {
         "archived-older": Date(timeIntervalSince1970: 1_600_000_000),
     ]
     private var nextTurnNumber = 0
+    private var failingConversationIDsOnce: Set<String>
 
     init(
         startsSignedIn: Bool = false,
         records: [SessionRecord] = SessionRecord.samples,
-        archivedIDs: Set<SessionSummary.ID>? = nil
+        archivedIDs: Set<SessionSummary.ID>? = nil,
+        failingConversationIDsOnce: Set<String> = []
     ) {
         self.records = records
+        self.failingConversationIDsOnce = failingConversationIDsOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -77,6 +80,7 @@ final class FixtureLodyClient: LodyClient {
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if failingConversationIDsOnce.remove(sessionID) != nil { throw LodyClientError.unreachable }
         let record = try record(sessionID)
         return Conversation(
             sessionID: record.summary.id,
@@ -153,7 +157,8 @@ final class FixtureLodyClient: LodyClient {
         return FixtureImage.png
     }
 
-    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID] {
         try requireAccount()
         try requireWorkspace(workspaceID)
         guard records.contains(where: { $0.summary.id == sessionID }) else {
@@ -161,6 +166,7 @@ final class FixtureLodyClient: LodyClient {
         }
         archivedSessionIDs.insert(sessionID)
         archivedActivity[sessionID] = Date()
+        return [sessionID]
     }
 
     func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary] {

@@ -219,7 +219,7 @@ window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL) => 
   try {
     const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
     if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await archiveSession(repo, sessionID);
+    return JSON.stringify(await archiveSession(repo, sessionID));
   } finally {
     await repo.destroy();
   }

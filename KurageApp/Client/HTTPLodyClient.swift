@@ -525,7 +525,8 @@ final class HTTPLodyClient: LodyClient {
         }
     }
 
-    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
+    @discardableResult
+    func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID] {
         guard account != nil else { throw LodyClientError.signedOut }
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
@@ -537,8 +538,8 @@ final class HTTPLodyClient: LodyClient {
             sessionID: sessionID, workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
-        switch result {
-        case "archived": return
+        switch result.status {
+        case "archived": return result.sessionIDs
         case "missing": throw LodyClientError.sessionMissing
         default: throw LodyClientError.deliveryUnconfirmed
         }

@@ -254,6 +254,29 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testIncompleteSearchCanRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-search-failure"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let search = app.textFields["session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        tap(search)
+        search.typeText("Question 7")
+        let retry = app.buttons["retry-session-search"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertTrue(retry.isHittable)
+        XCTAssertEqual(search.value as? String, "Question 7")
+        XCTAssertTrue(app.keyboards.firstMatch.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["session-session-long"].exists)
+        attachScreen(app, name: "search-incomplete")
+        tap(retry)
+        XCTAssertTrue(app.descendants(matching: .any)["session-session-long"].waitForExistence(timeout: 5))
+        XCTAssertFalse(retry.exists)
+        attachScreen(app, name: "search-retry-recovered")
+    }
+
+    @MainActor
     func testSessionSearchMatchesTitleAndMessageBody() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

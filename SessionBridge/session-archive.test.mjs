@@ -57,7 +57,9 @@ const lifecycleRows = [
 
 test('archive marks the lifecycle idle without writing machine commands', async () => {
   const { repo, metas, flocks, calls } = fixture(lifecycleRows);
-  assert.equal(await archiveSession(repo, 'root'), 'archived');
+  assert.deepEqual(await archiveSession(repo, 'root'), {
+    status: 'archived', sessionIDs: ['root', 'tab', 'opened', 'opened-from-tab'],
+  });
   for (const id of ['root', 'tab', 'opened', 'opened-from-tab']) {
     assert.equal(metas[`session-${id}`].isArchived, true);
     assert.deepEqual(metas[`session-${id}`].status, { type: 'idle' });
@@ -73,13 +75,13 @@ test('archive marks the lifecycle idle without writing machine commands', async 
 
 test('archive is idempotent', async () => {
   const { repo, metas } = fixture([session('chat', { isArchived: true, status: { type: 'running' } })]);
-  assert.equal(await archiveSession(repo, 'chat'), 'archived');
+  assert.equal((await archiveSession(repo, 'chat')).status, 'archived');
   assert.deepEqual(metas['session-chat'].status, { type: 'idle' });
 });
 
 test('archiving a child tab archives descendants without its parent', async () => {
   const { repo, metas } = fixture(lifecycleRows);
-  assert.equal(await archiveSession(repo, 'tab'), 'archived');
+  assert.equal((await archiveSession(repo, 'tab')).status, 'archived');
   assert.equal(metas['session-tab'].isArchived, true);
   assert.equal(metas['session-opened-from-tab'].isArchived, true);
   assert.equal(metas['session-root'].isArchived, undefined);
@@ -87,7 +89,7 @@ test('archiving a child tab archives descendants without its parent', async () =
 
 test('missing session is reported without writes', async () => {
   const { repo, metas } = fixture([session('chat')]);
-  assert.equal(await archiveSession(repo, 'other'), 'missing');
+  assert.equal((await archiveSession(repo, 'other')).status, 'missing');
   assert.equal(metas['session-chat'].isArchived, undefined);
 });
 
@@ -100,14 +102,14 @@ test('machine command unavailability and legacy queue cleanup do not reject an a
     metas['machine-machine'].needToArchiveSessions = {};
     return { outcome: 'synced' };
   };
-  assert.equal(await archiveSession(repo, 'chat'), 'archived');
+  assert.equal((await archiveSession(repo, 'chat')).status, 'archived');
   assert.equal(metas['session-chat'].isArchived, true);
 });
 
 test('failed metadata confirmation is not reported as archived', async () => {
   const { repo, metas } = fixture([session('chat', { machineId: 'machine' })]);
   repo.sync = async () => ({ outcome: 'failed' });
-  assert.equal(await archiveSession(repo, 'chat'), 'unconfirmed');
+  assert.equal((await archiveSession(repo, 'chat')).status, 'unconfirmed');
   assert.equal(metas['session-chat'].isArchived, true);
 });
 
@@ -115,7 +117,7 @@ test('concurrently restored or deleted metadata is not reported as archived', as
   for (const change of [{ meta: { isArchived: false } }, { deleted: true }]) {
     const { repo } = fixture([session('chat')]);
     repo.getDocMeta = async () => change;
-    assert.equal(await archiveSession(repo, 'chat'), 'unconfirmed');
+    assert.equal((await archiveSession(repo, 'chat')).status, 'unconfirmed');
   }
 });
 

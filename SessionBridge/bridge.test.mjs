@@ -12,7 +12,7 @@ import {
 const source = (await readFile(new URL('./bridge.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\n/gm, '');
 
-function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async () => 'requested', archive = async () => 'archived', extras = {}) {
+function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async () => 'requested', archive = async () => ({ status: 'archived', sessionIDs: ['chat'] }), extras = {}) {
   const repos = [];
   const transports = [];
   class Repo {
@@ -80,11 +80,11 @@ test('archiving uses a short-lived writer for the requested session', async () =
   const { window, repos } = makeBridge(async () => ({ outcome: 'synced', ok: true }), [], async () => 'requested',
     async (repo, sessionID) => {
       request = { repo, sessionID };
-      return 'archived';
+      return { status: 'archived', sessionIDs: ['chat', 'opened'] };
     });
-  assert.equal(
-    await window.kurageArchiveSession('workspace', 'chat', 'https://gateway.lody.ai'),
-    'archived',
+  assert.deepEqual(
+    JSON.parse(await window.kurageArchiveSession('workspace', 'chat', 'https://gateway.lody.ai')),
+    { status: 'archived', sessionIDs: ['chat', 'opened'] },
   );
   assert.equal(request.sessionID, 'chat');
   assert.equal(request.repo, repos[0]);

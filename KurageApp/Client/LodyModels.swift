@@ -313,3 +313,9 @@ struct SessionCache: Codable, Equatable, Sendable {
     var selectedWorkspaceID: String?
     var sessionsByWorkspace: [String: [SessionSummary]] = [:]
 }
+
+/// Confirmed archive targets use document IDs, matching the active session list.
+struct SessionArchiveResult: Decodable, Sendable {
+    let status: String
+    let sessionIDs: [String]
+}
