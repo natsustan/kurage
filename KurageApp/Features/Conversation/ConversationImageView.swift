@@ -65,30 +65,56 @@ struct ConversationImageGroup: View {
             )
             .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
         } else {
-            VStack(alignment: alignment, spacing: 8) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: 8) {
-                        if alignment == .trailing { Spacer(minLength: 0) }
-                        ForEach(Array(row.enumerated()), id: \.offset) { _, image in
-                            ConversationImageTile(
-                                image: image,
-                                variant: .square,
-                                size: CGSize(width: 112, height: 112),
-                                fills: true,
-                                loadImage: loadImage,
-                                onPreview: onPreview
-                            )
-                        }
-                        if alignment == .leading { Spacer(minLength: 0) }
-                    }
+            ConversationImageGrid(trailing: alignment == .trailing) {
+                ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                    ConversationImageTile(
+                        image: image,
+                        variant: .square,
+                        size: nil,
+                        fills: true,
+                        loadImage: loadImage,
+                        onPreview: onPreview
+                    )
                 }
             }
         }
     }
 
-    private var rows: [[ConversationImage]] {
-        stride(from: 0, to: images.count, by: 3).map { start in
-            Array(images[start..<min(start + 3, images.count)])
+}
+
+/// Up to three square thumbnails, sized by the actual chat content width.
+private struct ConversationImageGrid: Layout {
+    let trailing: Bool
+    private let spacing: CGFloat = 8
+
+    private func metrics(width: CGFloat?, count: Int) -> (columns: Int, side: CGFloat, width: CGFloat) {
+        let columns = min(3, max(1, count))
+        let idealWidth = CGFloat(columns) * 112 + CGFloat(columns - 1) * spacing
+        let width = max(0, width ?? idealWidth)
+        let side = min(112, max(0, (width - CGFloat(columns - 1) * spacing) / CGFloat(columns)))
+        return (columns, side, width)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let grid = metrics(width: proposal.width, count: subviews.count)
+        let rows = (subviews.count + grid.columns - 1) / grid.columns
+        return CGSize(width: grid.width, height: CGFloat(rows) * grid.side + CGFloat(max(0, rows - 1)) * spacing)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let grid = metrics(width: bounds.width, count: subviews.count)
+        for (index, view) in subviews.enumerated() {
+            let row = index / grid.columns
+            let column = index % grid.columns
+            let count = min(grid.columns, subviews.count - row * grid.columns)
+            let rowWidth = CGFloat(count) * grid.side + CGFloat(count - 1) * spacing
+            let start = trailing ? bounds.maxX - rowWidth : bounds.minX
+            view.place(
+                at: CGPoint(x: start + CGFloat(column) * (grid.side + spacing),
+                            y: bounds.minY + CGFloat(row) * (grid.side + spacing)),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: grid.side, height: grid.side)
+            )
         }
     }
 }
@@ -134,6 +160,7 @@ struct ConversationImagePreview: View {
             }
             .toolbarBackground(.visible, for: .navigationBar)
         }
+        .preferredColorScheme(.dark)
         .task { await loadOriginal() }
     }
 
@@ -171,7 +198,7 @@ enum ConversationImageFrame {
 private struct ConversationImageTile: View {
     let image: ConversationImage
     let variant: SessionImageVariant
-    let size: CGSize
+    let size: CGSize?
     let fills: Bool
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreview: (ConversationImage) -> Void
@@ -182,29 +209,32 @@ private struct ConversationImageTile: View {
         Button {
             onPreview(image)
         } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.primary.opacity(0.06))
-                if let loaded {
-                    Image(uiImage: loaded)
-                        .resizable()
-                        .aspectRatio(contentMode: fills ? .fill : .fit)
-                } else if failed {
-                    Image(systemName: "photo")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+                .overlay {
+                    Group {
+                        if let loaded {
+                            Image(uiImage: loaded)
+                                .resizable()
+                                .aspectRatio(contentMode: fills ? .fill : .fit)
+                        } else if failed {
+                            Image(systemName: "photo")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+                    .accessibilityHidden(true)
                 }
-            }
-            .frame(width: size.width, height: size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-            }
+                .frame(width: size?.width, height: size?.height)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(.rect)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(image.accessibilityName)

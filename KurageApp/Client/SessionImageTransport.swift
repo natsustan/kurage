@@ -89,6 +89,7 @@ enum SessionImageTransport {
         return data
     }
 
+    @concurrent
     private static func fetch(
         session: URLSession,
         baseURL: URL,
@@ -110,10 +111,10 @@ enum SessionImageTransport {
         request.setValue("image/png, image/jpeg, image/webp, image/gif", forHTTPHeaderField: "Accept")
         request.setValue(LodyEndpoints.webOrigin, forHTTPHeaderField: "Origin")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let data: Data
+        let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (data, response) = try await session.data(
+            (bytes, response) = try await session.bytes(
                 for: request,
                 delegate: SessionImageRedirectGuard(allowedHost: host)
             )
@@ -127,6 +128,7 @@ enum SessionImageTransport {
             }
             throw LodyClientError.unreachable
         }
+        defer { bytes.task.cancel() }
         try Task.checkCancellation()
         guard let http = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
         switch http.statusCode {
@@ -135,6 +137,18 @@ enum SessionImageTransport {
                let declared = Int(length), declared > maxBytes {
                 throw LodyClientError.notConnected
             }
+            var data = Data()
+            do {
+                for try await byte in bytes {
+                    guard data.count < maxBytes else { throw LodyClientError.notConnected }
+                    data.append(byte)
+                }
+            } catch {
+                if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                if let error = error as? LodyClientError { throw error }
+                throw LodyClientError.unreachable
+            }
+            try Task.checkCancellation()
             guard let image = validatedImage(data, contentType: http.value(forHTTPHeaderField: "Content-Type")) else {
                 throw LodyClientError.notConnected
             }

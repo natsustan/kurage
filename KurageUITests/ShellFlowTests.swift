@@ -351,6 +351,14 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(image.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["The diff is small. Waiting for you."].exists)
         XCTAssertEqual(image.label, "diff.png")
+        let images = [image, app.buttons["conversation-image-pr-shot-2"], app.buttons["conversation-image-pr-shot-3"]]
+        for thumbnail in images {
+            XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+            XCTAssertGreaterThanOrEqual(thumbnail.frame.minX, app.frame.minX + 19.5)
+            XCTAssertLessThanOrEqual(thumbnail.frame.maxX, app.frame.maxX - 19.5)
+            XCTAssertEqual(thumbnail.frame.width, thumbnail.frame.height, accuracy: 1)
+        }
+        XCTAssertEqual(images[0].frame.minY, images[2].frame.minY, accuracy: 1)
         attachScreen(app, name: "conversation-image")
         tap(image)
 

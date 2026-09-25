@@ -253,12 +253,20 @@ window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, opera
       throw new Error('Session is missing from this workspace');
     }
     const handle = await repo.openPersistedDoc(docID);
-    const report = await repo.sync({
-      scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal: controller.signal,
-    });
-    controller.signal.throwIfAborted();
-    if (!report.ok) throw new Error('Session history sync failed');
-    return JSON.stringify(projectConversation(sessionID, handle.doc.getList('history').toJSON()));
+    try {
+      const report = await repo.sync({
+        scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal: controller.signal,
+      });
+      controller.signal.throwIfAborted();
+      if (!report.ok) throw new Error('Session history sync failed');
+      return JSON.stringify(projectConversation(sessionID, handle.doc.getList('history').toJSON()));
+    } finally {
+      // Search reads every transcript. Keep only documents used by a pending
+      // or active observation; unloading those would invalidate its handle.
+      const observed = [...observations.values()].some(observation =>
+        observation.workspaceID === workspaceID && observation.sessionID === sessionID);
+      if (!observed) await repo.unloadDoc(docID);
+    }
   }, false, controller.signal); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
@@ -267,11 +275,11 @@ const observations = new Map();
 window.kurageStopConversation = (id) => {
   const observation = observations.get(id);
   observations.delete(id);
-  observation?.abort();
+  observation?.controller.abort();
 };
 window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id) => {
   const controller = new AbortController();
-  observations.set(id, controller);
+  observations.set(id, { controller, workspaceID, sessionID });
   try {
     await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
       if (controller.signal.aborted) return;

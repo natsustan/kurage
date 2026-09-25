@@ -1,5 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
-import { applyRunConfigChoice } from './run-config.mjs';
+import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn } from './run-config.mjs';
 
 function synced(report) {
   return report.outcome === 'synced';
@@ -58,8 +58,9 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
          row.meta.latestUserMsgId !== row.meta.settledActivationUserMsgId)) {
       return 'busy';
     }
-    const lastConfig = [...entries].reverse()
-      .find(entry => entry?.role === 'user' && entry.inputConfig)?.inputConfig ?? {};
+    const lastConfig = effectiveRunConfig(
+      latestUserTurn(entries), handle.doc.getMap('acpRuntimeConfig').toJSON(),
+    );
     let config = {
       prompt: text, inputBlocks: [{ type: 'text', text }], cliType, agentType,
     };

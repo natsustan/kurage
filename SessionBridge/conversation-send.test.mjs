@@ -129,3 +129,37 @@ test('a competing activation after metadata write is not reported as sent', asyn
     'unconfirmed');
   assert.equal(meta.latestUserMsgId, 'turn-2');
 });
+
+
+test('new turns use the matching runtime baseline, while retries keep their authored config', async () => {
+  const { repo, doc, meta } = fixture();
+  doc.getList('history').push({ id: 'u0', role: 'user', items: [], inputConfig: {
+    modelId: 'old-model', modeId: 'old-mode',
+    configOptionValues: { reasoning_effort: 'high', removed: 'old' },
+  } });
+  const runtime = doc.getMap('acpRuntimeConfig');
+  runtime.set('basedOnUserTurnId', 'u0');
+  runtime.set('modelId', 'actual-model');
+  runtime.set('modeId', 'actual-mode');
+  runtime.set('configOptionValues', { reasoning_effort: 'medium' });
+  doc.commit();
+  await sendText(repo, 'chat', 'u1', 'current-user', 'Hello', 'now',
+    { configOptionID: 'reasoning_effort', value: 'low' });
+  const authored = doc.getList('history').toJSON()[1].inputConfig;
+  assert.equal(authored.modelId, 'actual-model');
+  assert.equal(authored.modeId, 'actual-mode');
+  assert.deepEqual(authored.configOptionValues, { reasoning_effort: 'low' });
+
+  runtime.set('basedOnUserTurnId', 'u1');
+  runtime.set('modelId', 'later-model');
+  doc.commit();
+  meta.lastHandledUserMsgId = 'u1';
+  await sendText(repo, 'chat', 'u1', 'current-user', 'Hello', 'now',
+    { configOptionID: 'reasoning_effort', value: 'high' });
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig, authored);
+
+  runtime.set('basedOnUserTurnId', 'stale-turn');
+  doc.commit();
+  await sendText(repo, 'chat', 'u2', 'current-user', 'Again', 'now');
+  assert.equal(doc.getList('history').toJSON()[2].inputConfig.modelId, 'actual-model');
+});

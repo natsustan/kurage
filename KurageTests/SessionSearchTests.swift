@@ -81,6 +81,56 @@ struct SessionSearchIndexTests {
 
 @MainActor
 struct SessionSearchLifecycleTests {
+    @Test(.timeLimit(.minutes(1))) func streamingDefersSearchProjectionUntilSearchResumes() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        await model.indexSessionsForSearch()
+        model.stopSessionSearch()
+        let original = model.sessionSearchBody(sessionID: "session-pr")
+        let reads = client.readCount
+        let (processed, signal) = AsyncStream<Void>.makeStream()
+        var updates = processed.makeAsyncIterator()
+        let observation = Task {
+            try await model.observeConversation(sessionID: "session-pr") { _ in signal.yield(()) }
+        }
+        var events = client.events.makeAsyncIterator()
+        while await events.next() != "observe" {}
+        for text in ["first streaming text", "latest streaming text"] {
+            client.observation?.yield(ConversationUpdate(
+                conversation: Conversation(sessionID: "session-pr", turns: [
+                    ConversationTurn(id: "turn", author: .agent, text: text),
+                ], permission: nil), activity: .running, syncState: .live
+            ))
+            _ = await updates.next()
+            #expect(model.sessionSearchBody(sessionID: "session-pr") == original)
+        }
+        observation.cancel()
+        _ = await observation.result
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-pr") == "latest streaming text")
+        #expect(client.readCount == reads)
+    }
+
+    @Test func successfulArchiveRefreshClearsOnlyTheLoadError() async {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        client.failArchiveLoad = true
+        await model.refreshArchivedSessions()
+        #expect(model.archiveStatusNote?.text == "Could not load archived sessions.")
+        client.failArchiveLoad = false
+        await model.refreshArchivedSessions()
+        #expect(!model.archivedSessions.isEmpty)
+        #expect(model.archiveStatusNote == nil)
+        await model.restoreArchivedSession("archived-newer")
+        let operationError = model.archiveStatusNote
+        #expect(operationError != nil)
+        await model.refreshArchivedSessions()
+        #expect(model.archiveStatusNote == operationError)
+    }
+
     @Test(.timeLimit(.minutes(1))) func backgroundCancelsReadsAndForegroundResumes() async {
         let client = SearchLifecycleClient()
         let model = AppModel(client: client)
@@ -130,6 +180,9 @@ private final class SearchLifecycleClient: LodyClient {
     private(set) var readCount = 0
     private(set) var sessionReadCount = 0
     var emptySessions = false
+    var immediateReads = false
+    var failArchiveLoad = false
+    var observation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation?
     let events: AsyncStream<String>
     private let signal: AsyncStream<String>.Continuation
 
@@ -147,6 +200,7 @@ private final class SearchLifecycleClient: LodyClient {
     }
     func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
         readCount += 1
+        if immediateReads { return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID) }
         signal.yield("read")
         do {
             try await Task.sleep(for: .seconds(60))
@@ -157,12 +211,18 @@ private final class SearchLifecycleClient: LodyClient {
         return try await fixture.conversation(sessionID: sessionID, workspaceID: workspaceID)
     }
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
-        let (stream, _) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream()
+        let (stream, continuation) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream()
+        observation = continuation
         signal.yield("observe")
         return stream
     }
     func send(_ text: String, runConfig: RunConfigChoice?, sessionID: String, workspaceID: String) async throws {}
     func cancelSession(sessionID: String, workspaceID: String) async throws {}
+    func archivedSessions(workspaceID: String) async throws -> [ArchivedSessionSummary] {
+        if failArchiveLoad { throw LodyClientError.unreachable }
+        return try await fixture.archivedSessions(workspaceID: workspaceID)
+    }
+
     func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws {}
 }
 

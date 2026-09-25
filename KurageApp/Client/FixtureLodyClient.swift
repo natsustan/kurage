@@ -286,8 +286,8 @@ extension SessionRunConfig {
 }
 
 enum FixtureImage {
-    /// 1×1 PNG. Fixture conversations use it for every known session image.
-    static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")!
+    /// 120×80 PNG, so fixture layouts also exercise non-square image content.
+    static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAYAAADSm7GJAAAA00lEQVR4nO3RMQ0AIADAMPwLQARyMAQySEaP/ks21tyHrvE6AIMxGIM/ZXCcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGx10d8AQ+quhfSQAAAABJRU5ErkJggg==")!
 }
 
 extension SessionRecord {
@@ -365,6 +365,8 @@ extension SessionRecord {
                             imageID: "pr-shot", mimeType: "image/png", fileName: "diff.png",
                             width: 120, height: 80
                         )),
+                        .image(ConversationImage(imageID: "pr-shot-2", mimeType: "image/png", fileName: "details.png")),
+                        .image(ConversationImage(imageID: "pr-shot-3", mimeType: "image/png", fileName: "result.png")),
                     ]
                 ),
             ],

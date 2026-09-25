@@ -197,6 +197,40 @@ struct ConversationImageTests {
         await #expect(throws: LodyClientError.signedOut) { try await load.value }
     }
 
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func oversizedImageStopsBeforeTheResponseFinishes(declaredLength: Bool) async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let pending = DeferredImageRequestBox()
+        let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
+        DeferredImageURLProtocol.onStart = { pending.capture($0); startedSignal.yield(()) }
+        DeferredImageURLProtocol.onStop = { stoppedSignal.yield(()) }
+        defer {
+            DeferredImageURLProtocol.onStart = nil
+            DeferredImageURLProtocol.onStop = nil
+        }
+        let client = try await deferredImageClient()
+        var requests = started.makeAsyncIterator()
+        var cancellations = stopped.makeAsyncIterator()
+        let load = Task {
+            try await client.loadSessionImage(workspaceID: "workspace", sessionID: "chat",
+                                              imageID: "large", variant: .original)
+        }
+        _ = await requests.next()
+        let request = try #require(pending.current())
+        request.beginImage(length: declaredLength ? SessionImageTransport.maxBytes + 1 : nil)
+        if declaredLength {
+            // URLProtocol/AsyncBytes buffers small chunks before handing off
+            // the response. This is still far below the declared size/limit.
+            request.send(Data(count: 32 * 1024))
+        } else {
+            request.send(Data(count: SessionImageTransport.maxBytes / 2))
+            request.send(Data(count: SessionImageTransport.maxBytes / 2 + 1))
+        }
+        // No completion is sent: rejecting only after the body finishes would hang.
+        await #expect(throws: LodyClientError.notConnected) { try await load.value }
+        _ = await cancellations.next()
+    }
+
     private func loadImage(_ client: HTTPLodyClient) async throws -> Data {
         try await client.loadSessionImage(workspaceID: "workspace", sessionID: "chat", imageID: "shot", variant: .inline)
     }
@@ -326,6 +360,15 @@ private final class DeferredImageURLProtocol: URLProtocol, @unchecked Sendable {
     }
     override func stopLoading() { Self.onStop?() }
     func succeed() { respond(FixtureImage.png, type: "image/png") }
+    func beginImage(length: Int?) {
+        var headers = ["Content-Type": "image/png"]
+        if let length { headers["Content-Length"] = String(length) }
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: headers)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    }
+    func send(_ data: Data) { client?.urlProtocol(self, didLoad: data) }
+
     private func respond(_ data: Data, type: String) {
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
                                        headerFields: ["Content-Type": type])!

@@ -87,3 +87,16 @@ test('a choice changes only its own field', () => {
   assert.equal(applyRunConfigChoice(base, null), base);
   assert.throws(() => applyRunConfigChoice(base, { value: '' }), /Invalid/);
 });
+
+
+test('runtime option tables replace the old table, including an empty snapshot', () => {
+  const turn = { id: 'u1', inputConfig: {
+    modelId: 'old-model', configOptionValues: { reasoning_effort: 'high' },
+  } };
+  const projected = projectRunConfig({ cliType: 'builtin', agentType: 'codex',
+    capability: codexCapability, turn,
+    runtimeConfig: { basedOnUserTurnId: 'u1', modelId: 'actual-model', configOptionValues: {} },
+  });
+  assert.equal(projected.model.value, 'actual-model');
+  assert.equal(projected.reasoning, null);
+});

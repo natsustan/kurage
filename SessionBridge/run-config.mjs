@@ -39,20 +39,33 @@ export function latestUserTurn(entries) {
   return entries.findLast(entry => entry?.role === 'user' && record(entry.inputConfig));
 }
 
+function matchingRuntime(turn, runtimeConfig) {
+  return text(turn?.id) && runtimeConfig?.basedOnUserTurnId === turn.id
+    ? runtimeConfig : undefined;
+}
+
+// Use the same baseline for the picker and new turns. A reported option table
+// is a complete snapshot: omitted keys must not come back from the old input.
+export function effectiveRunConfig(turn, runtimeConfig) {
+  const input = record(turn?.inputConfig) ?? {};
+  const runtime = matchingRuntime(turn, runtimeConfig);
+  return {
+    ...input,
+    ...(text(runtime?.modelId) ? { modelId: runtime.modelId } : {}),
+    ...(text(runtime?.modeId) ? { modeId: runtime.modeId } : {}),
+    ...(record(runtime?.configOptionValues) ? { configOptionValues: runtime.configOptionValues } : {}),
+  };
+}
+
 export function projectRunConfig({ cliType, agentType, capability, turn, runtimeConfig }) {
   const usable = record(capability) && capability.cliType === cliType &&
     capability.agentType === agentType ? capability : undefined;
   const options = usable ? selectOptions(usable) : [];
   // Registry and custom agents carry the model as a config option value.
   const probed = cliType === 'registry' || cliType === 'custom';
-  const input = record(turn?.inputConfig) ?? {};
-  // The CLI's applied config is authoritative only for the turn it answered.
-  const runtime = text(turn?.id) && runtimeConfig?.basedOnUserTurnId === turn.id
-    ? runtimeConfig : undefined;
-  const values = {
-    ...(record(input.configOptionValues) ?? {}),
-    ...(record(runtime?.configOptionValues) ?? {}),
-  };
+  const input = effectiveRunConfig(turn, runtimeConfig);
+  const runtime = matchingRuntime(turn, runtimeConfig);
+  const values = record(input.configOptionValues) ?? {};
 
   const modelOption = options.find(option => option.category === 'model');
   const reasoningOption = options.find(option =>
@@ -73,7 +86,8 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
   const reasoningID = reasoningOption?.id ??
     KNOWN_REASONING_CONFIG_IDS.find(id => text(values[id]));
   const reasoningValue = reasoningID
-    ? text(values[reasoningID]) ?? text(reasoningOption?.currentValue) : undefined;
+    ? text(values[reasoningID]) ?? (record(runtime?.configOptionValues)
+      ? undefined : text(reasoningOption?.currentValue)) : undefined;
 
   const model = modelValue ? {
     value: modelValue,

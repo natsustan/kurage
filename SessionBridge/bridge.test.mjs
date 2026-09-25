@@ -16,7 +16,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   const repos = [];
   const transports = [];
   class Repo {
-    constructor() { this.destroyed = false; }
+    constructor() { this.destroyed = false; this.loaded = new Set(); }
     static async create() {
       const repo = new Repo();
       repos.push(repo);
@@ -31,7 +31,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
         flock: { scan: () => [] },
       };
     }
-    async openPersistedDoc() { return { doc: { getList: () => ({ toJSON: () => [] }) } }; }
+    async openPersistedDoc(id) { this.loaded.add(id); return { doc: { getList: () => ({ toJSON: () => [] }) } }; }
+    async unloadDoc(id) { this.loaded.delete(id); }
     async getDocMeta() { return undefined; }
     async destroy() { this.destroyed = true; }
   }
@@ -315,4 +316,49 @@ test('cancelling a queued transcript read skips document sync', async () => {
   await refresh;
   await outcome;
   assert.equal(syncs, 1);
+});
+
+
+test('one-shot reads release all loaded transcripts on success and sync failure', async () => {
+  let fail = false;
+  const { window, repos } = makeBridge(async () => {
+    if (fail) throw new Error('offline');
+    return { ok: true };
+  }, ['a', 'b', 'c'].map(id => ({ docId: `session-${id}`, meta: {} })));
+  for (const id of ['a', 'b', 'c']) {
+    await window.kurageConversation('workspace', id, 'https://gateway.lody.ai', id);
+    assert.equal(repos[0].loaded.size, 0);
+  }
+  fail = true;
+  await assert.rejects(window.kurageConversation('workspace', 'a', 'https://gateway.lody.ai', 'failure'), /offline/);
+  assert.equal(repos[0].loaded.size, 0);
+});
+
+test('a one-shot read does not unload an observed conversation', async () => {
+  const { window, repos } = makeBridge(async () => ({ ok: true }),
+    [{ docId: 'session-chat', meta: {} }]);
+  await window.kurageObserveConversation('workspace', 'chat', 'https://gateway.lody.ai', 'observe');
+  await window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'read');
+  assert.equal(repos[0].loaded.has('session-chat'), true);
+  window.kurageStopConversation('observe');
+  await window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'read-again');
+  assert.equal(repos[0].loaded.size, 0);
+});
+
+
+test('cancelling an unobserved search read unloads its document', async () => {
+  const started = Promise.withResolvers();
+  const { window, repos } = makeBridge(options => {
+    if (options.scope !== 'doc') return { ok: true };
+    started.resolve();
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+    });
+  }, [{ docId: 'session-chat', meta: {} }]);
+  const read = window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'search');
+  const outcome = assert.rejects(read, { name: 'AbortError' });
+  await started.promise;
+  window.kurageCancel('search');
+  await outcome;
+  assert.equal(repos[0].loaded.size, 0);
 });

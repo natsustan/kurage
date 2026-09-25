@@ -403,7 +403,8 @@ struct ConversationStreamingTests {
         client.observation?.yield(first)
         #expect(await changes.next() == first)
         #expect(model.cachedConversation(sessionID: "s") == first.conversation)
-        #expect(model.sessionSearchBody(sessionID: "s") == "Partial")
+        // Streaming keeps the snapshot but defers search text until indexing resumes.
+        #expect(model.sessionSearchBody(sessionID: "s").isEmpty)
 
         let switching = Task { await model.selectWorkspace("ws-b") }
         #expect(await requests.next() == "ws-b")
@@ -415,6 +416,7 @@ struct ConversationStreamingTests {
         case .failure(let error): #expect(error is CancellationError)
         }
         #expect(model.cachedConversation(sessionID: "s") == nil)
+        #expect(model.sessionSearchBody(sessionID: "s").isEmpty)
         signal.finish()
         #expect(await changes.next() == nil)
     }

@@ -24,7 +24,9 @@ final class AppModel {
     private(set) var archivedSessions: [ArchivedSessionSummary] = []
     private(set) var isRefreshingSessions = false
     private(set) var isRefreshingArchivedSessions = false
-    private(set) var archiveStatusNote: StatusNote?
+    private var archiveLoadStatusNote: StatusNote?
+    private var archiveOperationStatusNote: StatusNote?
+    var archiveStatusNote: StatusNote? { archiveOperationStatusNote ?? archiveLoadStatusNote }
     private(set) var archiveBusySessionIDs: Set<ArchivedSessionSummary.ID> = []
     private(set) var isSigningIn = false
     private var currentStatusNote: StatusNote?
@@ -42,6 +44,7 @@ final class AppModel {
     private var searchBodies: [WorkspaceSummary.ID: [SessionSummary.ID: String]] = [:]
     /// Sessions whose transcript was read since the last list refresh.
     private var freshSearchBodies: [WorkspaceSummary.ID: Set<SessionSummary.ID>] = [:]
+    private var dirtySearchBodies: [WorkspaceSummary.ID: Set<SessionSummary.ID>] = [:]
     private var searchIndexGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
     private var isSessionSearchActive = false
@@ -160,6 +163,7 @@ final class AppModel {
         stopSessionSearch()
         searchBodies = [:]
         freshSearchBodies = [:]
+        dirtySearchBodies = [:]
         sessionsByWorkspace = [:]
         currentStatusNote = nil
     }
@@ -183,6 +187,7 @@ final class AppModel {
             sessionsByWorkspace = sessionsByWorkspace.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
+            dirtySearchBodies = dirtySearchBodies.filter { workspaceIDs.contains($0.key) }
             persistSession()
         } catch LodyClientError.signedOut {
             guard isCurrentAuthentication(generation) else { return }
@@ -242,6 +247,7 @@ final class AppModel {
             sessionsByWorkspace[workspaceID] = loaded
             let ids = Set(loaded.map(\.id))
             searchBodies[workspaceID] = searchBodies[workspaceID]?.filter { ids.contains($0.key) }
+            dirtySearchBodies[workspaceID] = dirtySearchBodies[workspaceID]?.intersection(ids)
             freshSearchBodies[workspaceID] = []
             persistSession()
             currentStatusNote = nil
@@ -274,7 +280,7 @@ final class AppModel {
         let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
         conversationCache[workspaceID, default: [:]][sessionID] = loaded
-        storeSearchBody(loaded, workspaceID: workspaceID)
+        invalidateSearchBody(sessionID: sessionID, workspaceID: workspaceID)
         return loaded
     }
 
@@ -326,7 +332,7 @@ final class AppModel {
             }
             guard update.conversation.sessionID == sessionID else { throw LodyClientError.notConnected }
             conversationCache[workspaceID, default: [:]][sessionID] = update.conversation
-            storeSearchBody(update.conversation, workspaceID: workspaceID)
+            invalidateSearchBody(sessionID: sessionID, workspaceID: workspaceID)
             if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
                sessions[index].activity != activity {
                 sessions[index].activity = activity
@@ -403,6 +409,7 @@ final class AppModel {
         conversationCache[workspaceID]?.removeValue(forKey: sessionID)
         searchBodies[workspaceID]?.removeValue(forKey: sessionID)
         freshSearchBodies[workspaceID]?.remove(sessionID)
+        dirtySearchBodies[workspaceID]?.remove(sessionID)
         persistSession()
         await refreshSessions(restart: true)
     }
@@ -425,6 +432,7 @@ final class AppModel {
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
             archivedSessions = Self.newestArchivedFirst(loaded)
+            archiveLoadStatusNote = nil
         } catch is CancellationError {
             return
         } catch LodyClientError.signedOut {
@@ -435,7 +443,7 @@ final class AppModel {
             guard isCurrentArchivedRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            archiveStatusNote = StatusNote(tone: .failure, text: "Could not load archived sessions.")
+            archiveLoadStatusNote = StatusNote(tone: .failure, text: "Could not load archived sessions.")
         }
     }
 
@@ -448,7 +456,7 @@ final class AppModel {
         do {
             try await client.restoreArchivedSession(sessionID: sessionID, workspaceID: workspaceID)
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
-            archiveStatusNote = nil
+            archiveOperationStatusNote = nil
             archivedSessions.removeAll { $0.id == sessionID }
             await refreshSessions(restart: true)
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
@@ -460,13 +468,13 @@ final class AppModel {
             signOut()
         } catch LodyClientError.archivedProjectUnavailable {
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
-            archiveStatusNote = StatusNote(
+            archiveOperationStatusNote = StatusNote(
                 tone: .info,
                 text: "Re-add this local project to restore its conversations."
             )
         } catch {
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
-            archiveStatusNote = StatusNote(tone: .failure, text: "Could not restore the session.")
+            archiveOperationStatusNote = StatusNote(tone: .failure, text: "Could not restore the session.")
         }
     }
 
@@ -479,7 +487,7 @@ final class AppModel {
         do {
             try await client.deleteArchivedSession(sessionID: sessionID, workspaceID: workspaceID)
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
-            archiveStatusNote = nil
+            archiveOperationStatusNote = nil
             archivedSessions.removeAll { $0.id == sessionID }
             await refreshArchivedSessions()
         } catch is CancellationError {
@@ -489,7 +497,7 @@ final class AppModel {
             signOut()
         } catch {
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { return }
-            archiveStatusNote = StatusNote(tone: .failure, text: "Could not delete the session.")
+            archiveOperationStatusNote = StatusNote(tone: .failure, text: "Could not delete the session.")
         }
     }
 
@@ -542,9 +550,11 @@ final class AppModel {
         guard isApplicationActive, isSessionSearchActive, supportsConversations,
               let workspaceID = selectedWorkspaceID else { return }
         let authGeneration = authenticationGeneration
-        for session in sessions where searchBodies[workspaceID]?[session.id] == nil {
+        for session in sessions where searchBodies[workspaceID]?[session.id] == nil ||
+            dirtySearchBodies[workspaceID]?.contains(session.id) == true {
             if let cached = conversationCache[workspaceID]?[session.id] {
                 searchBodies[workspaceID, default: [:]][session.id] = SessionSearch.bodyText(cached.turns)
+                dirtySearchBodies[workspaceID]?.remove(session.id)
             }
         }
         let pending = sessions.map(\.id).filter { freshSearchBodies[workspaceID]?.contains($0) != true }
@@ -579,6 +589,14 @@ final class AppModel {
     private func storeSearchBody(_ conversation: Conversation, workspaceID: WorkspaceSummary.ID) {
         searchBodies[workspaceID, default: [:]][conversation.sessionID] = SessionSearch.bodyText(conversation.turns)
         freshSearchBodies[workspaceID, default: []].insert(conversation.sessionID)
+        dirtySearchBodies[workspaceID]?.remove(conversation.sessionID)
+    }
+
+    // Streaming only marks the cached snapshot for indexing. Build text once
+    // search resumes, rather than joining the entire history on every update.
+    private func invalidateSearchBody(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) {
+        dirtySearchBodies[workspaceID, default: []].insert(sessionID)
+        freshSearchBodies[workspaceID, default: []].insert(sessionID)
     }
 
     private func cancelSessionRefresh() {
@@ -596,7 +614,8 @@ final class AppModel {
     private func clearArchivedSessions() {
         archiveRefreshGeneration += 1
         archivedSessions = []
-        archiveStatusNote = nil
+        archiveLoadStatusNote = nil
+        archiveOperationStatusNote = nil
         archiveBusySessionIDs = []
         isRefreshingArchivedSessions = false
     }
