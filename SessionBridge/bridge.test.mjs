@@ -2,11 +2,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import {
+  deleteArchivedSession,
+  readLocalProjectState,
+  restoreArchivedSession,
+  selectArchivedSessions,
+} from './session-archive.mjs';
 
 const source = (await readFile(new URL('./bridge.js', import.meta.url), 'utf8'))
   .replace(/^import .*;\n/gm, '');
 
-function makeBridge(sync = async () => ({ ok: true }), rows = []) {
+function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async () => 'requested', archive = async () => 'archived', extras = {}) {
   const repos = [];
   const transports = [];
   class Repo {
@@ -25,6 +31,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = []) {
         flock: { scan: () => [] },
       };
     }
+    async getDocMeta() { return undefined; }
     async destroy() { this.destroyed = true; }
   }
   class Transport {
@@ -40,12 +47,90 @@ function makeBridge(sync = async () => ({ ok: true }), rows = []) {
     projectConversation: () => ({}),
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
+    cancelSession: cancel,
+    archiveSession: archive,
+    selectArchivedSessions,
+    readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
+    restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
+    deleteArchivedSession: extras.deleteArchivedSession ?? deleteArchivedSession,
     fetch: async () => {},
     AbortController,
   });
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('session cancellation uses the requested workspace and releases its writer', async () => {
+  let request;
+  const { window, repos, transports } = makeBridge(
+    async () => ({ outcome: 'synced', ok: true }), [],
+    async (repo, sessionID) => { request = { repo, sessionID }; return 'requested'; },
+  );
+  assert.equal(await window.kurageCancelSession('workspace', 'chat', 'https://gateway.lody.ai'), 'requested');
+  assert.equal(request.sessionID, 'chat');
+  assert.equal(request.repo, repos[0]);
+  assert.equal(transports[0].metaStreamId, 'workspace:meta');
+  assert.equal(repos[0].destroyed, true);
+});
+
+test('archiving uses a short-lived writer for the requested session', async () => {
+  let request;
+  const { window, repos } = makeBridge(async () => ({ outcome: 'synced', ok: true }), [], async () => 'requested',
+    async (repo, workspaceID, sessionID, userID, requestedAt) => {
+      request = { repo, workspaceID, sessionID, userID, requestedAt };
+      return 'archived';
+    });
+  assert.equal(
+    await window.kurageArchiveSession('workspace', 'chat', 'https://gateway.lody.ai', 'user-1', 20),
+    'archived',
+  );
+  assert.deepEqual(
+    { workspaceID: request.workspaceID, sessionID: request.sessionID, userID: request.userID, requestedAt: request.requestedAt },
+    { workspaceID: 'workspace', sessionID: 'chat', userID: 'user-1', requestedAt: 20 },
+  );
+  assert.equal(request.repo, repos[0]);
+  assert.equal(repos[0].destroyed, true);
+});
+
+test('archived sessions stay out of the active list and keep newest-first order', async () => {
+  const rows = [
+    { docId: 'session-older', meta: { isArchived: true, title: 'Older', lastMessageAt: 1 } },
+    { docId: 'session-newer', meta: { isArchived: true, title: 'Newer', lastMessageAt: 5 } },
+    { docId: 'session-tab', meta: { isArchived: true, parentSessionId: 'newer', title: 'Tab', lastMessageAt: 9 } },
+    { docId: 'session-live', meta: { title: 'Live', lastMessageAt: 3 } },
+    { docId: 'session-comment-newer', meta: { isArchived: true, title: 'Comment' } },
+  ];
+  const { window } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), rows);
+  const active = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'active'));
+  const archived = JSON.parse(await window.kurageArchivedSessions('workspace', 'https://gateway.lody.ai', 'archived'));
+  assert.deepEqual(active.sessions.map(session => session.id), ['live']);
+  assert.deepEqual(archived.sessions.map(session => session.id), ['newer', 'older']);
+  assert.equal(archived.sessions[0].canRestore, true);
+});
+
+test('restore and delete use a short-lived writer', async () => {
+  let restored;
+  let deleted;
+  const { window, repos } = makeBridge(async () => ({ outcome: 'synced', ok: true }), [], async () => 'requested', async () => 'archived', {
+    restoreArchivedSession: async (repo, workspaceID, sessionID) => {
+      restored = { repo, workspaceID, sessionID };
+      return 'restored';
+    },
+    deleteArchivedSession: async (repo, sessionID) => {
+      deleted = { repo, sessionID };
+      return 'deleted';
+    },
+  });
+  assert.equal(await window.kurageRestoreArchivedSession('workspace', 'chat', 'https://gateway.lody.ai'), 'restored');
+  assert.equal(await window.kurageDeleteArchivedSession('workspace', 'chat', 'https://gateway.lody.ai'), 'deleted');
+  assert.equal(restored.workspaceID, 'workspace');
+  assert.equal(restored.sessionID, 'chat');
+  assert.equal(deleted.sessionID, 'chat');
+  assert.equal(restored.repo, repos[0]);
+  assert.equal(deleted.repo, repos[1]);
+  assert.equal(repos[0].destroyed, true);
+  assert.equal(repos[1].destroyed, true);
+});
 
 test('refresh reuses the workspace repo', async () => {
   const { window, repos, transports } = makeBridge();

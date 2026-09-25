@@ -39,6 +39,25 @@ test('a text turn syncs before its dispatch pointer and retry keeps one ID', asy
     /another turn/);
 });
 
+test('a run-config choice applies to the new turn and keeps inherited values', async () => {
+  const { repo, doc, meta } = fixture();
+  doc.getList('history').push({ id: 'u0', role: 'user', items: [], inputConfig: {
+    modelId: 'gpt-5.5', configOptionValues: { reasoning_effort: 'high', fast: 'on' },
+  } });
+  doc.commit();
+  assert.equal(await sendText(repo, 'chat', 'turn-1', 'current-user', 'Hello', 'now',
+    { configOptionID: 'reasoning_effort', value: 'low' }), 'sent');
+  const entry = doc.getList('history').toJSON()[1];
+  assert.equal(entry.inputConfig.modelId, 'gpt-5.5');
+  assert.deepEqual(entry.inputConfig.configOptionValues, { reasoning_effort: 'low', fast: 'on' });
+
+  meta.lastHandledUserMsgId = 'turn-1';
+
+  await assert.rejects(sendText(repo, 'chat', 'turn-2', 'current-user', 'Again', 'now',
+    { configOptionID: 'reasoning_effort', value: '' }), /Invalid/);
+  assert.equal(doc.getList('history').length, 2);
+});
+
 test('a failed body sync does not publish dispatch', async () => {
   const { repo, doc, meta } = fixture();
   let count = 0;

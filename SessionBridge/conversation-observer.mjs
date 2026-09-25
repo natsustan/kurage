@@ -1,5 +1,6 @@
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
+import { latestUserTurn, projectRunConfig } from './run-config.mjs';
 
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
@@ -8,14 +9,31 @@ export function conversationPatch(previous, next) {
     order: next.turns.map(turn => turn.id),
     changed: next.turns.filter(turn => {
       const before = old.get(turn.id);
-      return !before || before.text !== turn.text || before.author !== turn.author;
+      return !before || before.text !== turn.text || before.author !== turn.author ||
+        JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []);
     }),
     permission: next.permission,
   };
 }
 
+async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, changed }) {
+  const { machineId, agentConfigId } = meta;
+  if (typeof workspaceID !== 'string' || typeof machineId !== 'string' || !machineId ||
+      typeof agentConfigId !== 'string' || !agentConfigId) return undefined;
+  try {
+    const handle = await repo.openFlockDoc(`${workspaceID}:mf:${machineId}`);
+    if (isStopped()) return undefined;
+    own(handle.flock.subscribe(changed));
+    // Capabilities only affect the run-config picker; they never gate the transcript.
+    handle.joinRoom().then(room => own(() => room.unsubscribe()), () => {});
+    return () => handle.flock.get(['acpCapability', agentConfigId]);
+  } catch {
+    return undefined;
+  }
+}
+
 // The setup promise finishes after joining. The signal owns the lasting leases.
-export async function observeConversation({ repo, sessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
+export async function observeConversation({ repo, workspaceID, sessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
   const cleanup = [];
   let timer;
   let previous;
@@ -40,6 +58,8 @@ export async function observeConversation({ repo, sessionID, signal, emit, sched
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
+    let latestTurn;
+    let capability;
     const publish = async () => {
       timer = undefined;
       if (stopped) return;
@@ -50,11 +70,20 @@ export async function observeConversation({ repo, sessionID, signal, emit, sched
         const meta = await repo.getDocMeta(docID);
         if (stopped) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
-        const next = historyChanged || !previous
-          ? projectConversation(sessionID, handle.doc.getList('history').toJSON()) : previous;
+        let next = previous;
+        if (historyChanged || !previous) {
+          const entries = handle.doc.getList('history').toJSON();
+          next = projectConversation(sessionID, entries);
+          latestTurn = latestUserTurn(entries);
+        }
         historyChanged = false;
         const update = conversationPatch(previous, next);
         update.activity = projectSessionActivity(meta.meta.status);
+        update.runConfig = projectRunConfig({
+          cliType: meta.meta.cliType, agentType: meta.meta.agentType,
+          capability: capability?.(), turn: latestTurn,
+          runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON(),
+        });
         update.syncState = rooms.length === 2 && rooms.every(room => room.status === 'joined') ? 'live' : 'connecting';
         await emit(update);
         previous = next;
@@ -71,6 +100,10 @@ export async function observeConversation({ repo, sessionID, signal, emit, sched
       if (ready && !stopped && timer === undefined) timer = schedule(() => { void publish(); }, 80);
     };
     own(handle.doc.subscribe(() => { historyChanged = true; queue(); }));
+    capability = await watchCapabilities({
+      repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
+    });
+    if (stopped) return;
     const watch = repo.watch(queue, {
       docIds: [docID], kinds: ['doc-metadata', 'doc-existence-changed'],
     });

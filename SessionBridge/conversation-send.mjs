@@ -1,4 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
+import { applyRunConfigChoice } from './run-config.mjs';
 
 function synced(report) {
   return report.outcome === 'synced';
@@ -18,7 +19,8 @@ function competingActivation(meta, entries, turnID) {
 
 // A retry keeps its turn ID. If the body reached Streams before the reply was
 // lost, only the dispatch pointer needs another attempt.
-export async function sendText(repo, sessionID, turnID, userID, text, timestamp) {
+// `runConfig` changes one model or reasoning value, and only for a new turn.
+export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig) {
   const docID = `session-${sessionID}`;
   const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
   if (!row || row.meta.isArchived || row.meta.parentSessionId) {
@@ -58,13 +60,14 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp)
     }
     const lastConfig = [...entries].reverse()
       .find(entry => entry?.role === 'user' && entry.inputConfig)?.inputConfig ?? {};
-    const config = {
+    let config = {
       prompt: text, inputBlocks: [{ type: 'text', text }], cliType, agentType,
     };
     for (const key of ['modeId', 'modelId', 'configOptionValues', 'mcpServerIds',
       'agentRoleId', 'agentRoleRevision', 'chainDepth']) {
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];
     }
+    config = applyRunConfigChoice(config, runConfig);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {
       config.resume = row.meta.acpSessionId;
     }

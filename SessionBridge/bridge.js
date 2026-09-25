@@ -7,6 +7,8 @@ import { projectSessionActivity } from './session-activity.mjs';
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
+import { cancelSession } from './conversation-cancel.mjs';
+import { archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
 const nativeFetch = createNativeFetch(
   message => window.webkit.messageHandlers.streamFetch.postMessage(message),
@@ -164,14 +166,78 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 
+window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
+    const rows = await repo.listDoc();
+    const machineIDs = new Set(rows
+      .filter(row => row.docId?.startsWith('session-') && !row.docId.startsWith('session-comment-') &&
+        !row.deleted && row.meta?.isArchived === true && !row.meta?.parentSessionId &&
+        row.meta?.project?.kind === 'local' && typeof row.meta.machineId === 'string')
+      .map(row => row.meta.machineId)
+      .filter(id => id.length > 0));
+    const availability = new Map();
+    await Promise.all([...machineIDs].map(async (machineID) => {
+      availability.set(
+        machineID,
+        await readLocalProjectState(repo, workspaceID, machineID, controller.signal),
+      );
+    }));
+    controller.signal.throwIfAborted();
+    return JSON.stringify({ sessions: selectArchivedSessions(rows, availability) });
+  }, true, controller.signal); }
+  finally { if (operationID) sessionRefreshes.delete(operationID); }
+};
+
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp) => {
+window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
   try {
     const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
     if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await sendText(repo, sessionID, turnID, userID, text, timestamp);
+    return await sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig);
+  } finally {
+    await repo.destroy();
+  }
+};
+
+window.kurageCancelSession = async (workspaceID, sessionID, gatewayBaseURL) => {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+  try {
+    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
+    return await cancelSession(repo, sessionID);
+  } finally {
+    await repo.destroy();
+  }
+};
+
+window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL, userID, requestedAt) => {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+  try {
+    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
+    return await archiveSession(repo, workspaceID, sessionID, userID, requestedAt);
+  } finally {
+    await repo.destroy();
+  }
+};
+
+window.kurageRestoreArchivedSession = async (workspaceID, sessionID, gatewayBaseURL) => {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+  try {
+    return await restoreArchivedSession(repo, workspaceID, sessionID);
+  } finally {
+    await repo.destroy();
+  }
+};
+
+window.kurageDeleteArchivedSession = async (workspaceID, sessionID, gatewayBaseURL) => {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+  try {
+    return await deleteArchivedSession(repo, sessionID);
   } finally {
     await repo.destroy();
   }
@@ -202,7 +268,7 @@ window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL
   try {
     await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
       if (controller.signal.aborted) return;
-      await observeConversation({ repo, sessionID, signal: controller.signal,
+      await observeConversation({ repo, workspaceID, sessionID, signal: controller.signal,
         emit: update => window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'conversation', id, update,
         }),

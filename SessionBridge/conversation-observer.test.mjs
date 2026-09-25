@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { LoroDoc } from 'loro-crdt';
 import { conversationPatch, observeConversation } from './conversation-observer.mjs';
 
-function harness({ waitFor } = {}) {
+function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}) {
   const doc = new LoroDoc();
   const timers = new Map();
   let nextTimer = 0;
@@ -21,14 +21,15 @@ function harness({ waitFor } = {}) {
     return room;
   };
   const repo = {
-    getDocMeta: async () => ({ meta: { status: { type: 'running' } } }),
+    getDocMeta: async () => ({ meta }),
     openPersistedDoc: async () => ({ doc, joinRoom: createRoom }),
+    openFlockDoc: async id => flock.open(id),
     joinMetaRoom: createRoom,
     watch(listener) { metaListener = listener; return { unsubscribe() { metaListener = undefined; } }; },
   };
   const updates = [];
   const controller = new AbortController();
-  const start = () => observeConversation({ repo, sessionID: 'abc', signal: controller.signal,
+  const start = () => observeConversation({ repo, workspaceID: 'ws', sessionID: 'abc', signal: controller.signal,
     emit: async update => { updates.push(update); },
     schedule: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
     unschedule: id => timers.delete(id),
@@ -89,6 +90,51 @@ test('cancelling while initial sync is pending releases both rooms without stale
   assert.deepEqual(h.updates, []);
 });
 
+test('run config follows capabilities that arrive after the transcript', async () => {
+  const rows = new Map();
+  let flockListener;
+  let openedID;
+  let flockReleased = false;
+  const flock = {
+    open: async id => {
+      openedID = id;
+      return {
+        flock: {
+          get: key => rows.get(JSON.stringify(key)),
+          subscribe: listener => { flockListener = listener; return () => { flockListener = undefined; }; },
+        },
+        joinRoom: async () => ({ unsubscribe() { flockReleased = true; } }),
+      };
+    },
+  };
+  const h = harness({ flock, meta: {
+    status: { type: 'idle' }, cliType: 'builtin', agentType: 'codex',
+    machineId: 'm1', agentConfigId: 'cfg',
+  } });
+  h.doc.getList('history').push({ id: 'u1', role: 'user', items: [],
+    inputConfig: { modelId: 'gpt-5.5', configOptionValues: { reasoning_effort: 'high' } } });
+  h.doc.commit();
+  await h.start();
+  assert.equal(openedID, 'ws:mf:m1');
+  assert.deepEqual(h.updates[0].runConfig, {
+    model: { value: 'gpt-5.5', label: 'gpt-5.5' }, reasoning: { value: 'high', label: 'High' },
+    editable: null,
+  });
+
+  rows.set(JSON.stringify(['acpCapability', 'cfg']), {
+    cliType: 'builtin', agentType: 'codex', models: [], configOptions: [
+      { id: 'reasoning_effort', name: 'Reasoning', type: 'select', currentValue: 'medium',
+        options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] },
+    ],
+  });
+  flockListener();
+  await h.flush();
+  assert.equal(h.updates.at(-1).runConfig.editable.kind, 'reasoning');
+  h.controller.abort();
+  assert.equal(flockListener, undefined);
+  assert.equal(flockReleased, true);
+});
+
 test('patch keeps turn identity and explicitly transmits ordering and removals', () => {
   const a = { id: 'a', text: 'one', author: 'agent' };
   const b = { id: 'b', text: 'two', author: 'user' };
@@ -97,4 +143,16 @@ test('patch keeps turn identity and explicitly transmits ordering and removals',
   assert.deepEqual(conversationPatch(previous, next), {
     sessionID: 'abc', order: ['b', 'a'], changed: [{ ...a, text: 'one more' }], permission: null,
   });
+});
+
+test('patch transmits an image added to an unchanged text turn', () => {
+  const before = { id: 'a', author: 'agent', text: 'See', parts: [{ type: 'text', text: 'See' }] };
+  const after = {
+    ...before,
+    parts: [...before.parts, { type: 'image', imageID: 'shot', mimeType: 'image/png' }],
+  };
+  const previous = { sessionID: 'abc', turns: [before], permission: null };
+  const next = { sessionID: 'abc', turns: [after], permission: null };
+  assert.deepEqual(conversationPatch(previous, next).changed, [after]);
+  assert.deepEqual(conversationPatch(next, next).changed, []);
 });
