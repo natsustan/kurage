@@ -478,4 +478,30 @@ struct ConversationRunConfigStateTests {
         #expect(state.config?.reasoning?.value == "high")
         #expect(state.choice?.value == "medium")
     }
+
+    @Test(arguments: [true, false])
+    func retryPreservesExplicitReturnToBaseline(observationBeforeCompletion: Bool) {
+        var state = ConversationRunConfigState()
+        state.receive(initial)
+        state.choose(low.value)
+        let originalChoice = state.choice
+        // Sending Low was unconfirmed. The user chooses the original Medium
+        // baseline for their next draft before retrying the earlier message.
+        state.choose("medium")
+        let nextChoice = RunConfigChoice(configOptionID: "reasoning_effort", value: "medium")
+        #expect(state.choice == nextChoice)
+
+        let confirmed = initial.applying(originalChoice)
+        if observationBeforeCompletion { state.receive(confirmed) }
+        state.didSend(originalChoice)
+        if !observationBeforeCompletion { state.receive(confirmed) }
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.choice == nextChoice)
+        #expect(state.displayed?.reasoning?.value == "medium")
+
+        // The next new turn sends Medium explicitly instead of inheriting Low.
+        state.didSend(state.choice)
+        #expect(state.config?.reasoning?.value == "medium")
+        #expect(state.choice == nil)
+    }
 }

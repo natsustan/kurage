@@ -206,7 +206,8 @@ struct ConversationView: View {
         Task {
             defer { isSending = false }
             do {
-                try await model.send(text, sessionID: sessionID)
+                let sentChoice = try await model.send(text, sessionID: sessionID)
+                runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message confirmed. Review your draft before sending."
@@ -614,8 +615,9 @@ struct ConversationRunConfigState {
 
     mutating func choose(_ value: String) {
         guard let selected = config?.choosing(value) else { return }
-        let current = config?.editable?.kind == .reasoning ? config?.reasoning : config?.model
-        choice = current?.value == value ? nil : selected
+        // Even selecting the current baseline is explicit intent: an unconfirmed
+        // earlier turn can still change the configuration the next turn inherits.
+        choice = selected
     }
 
     mutating func didSend(_ sentChoice: RunConfigChoice?) {
