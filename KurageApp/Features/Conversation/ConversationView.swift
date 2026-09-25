@@ -6,6 +6,27 @@ struct ConversationView: View {
     let title: String
     let model: AppModel
 
+    var body: some View {
+        ConversationContent(sessionID: sessionID, title: title, model: model,
+                            workspaceGeneration: model.workspaceGeneration)
+            .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration))
+    }
+}
+
+private struct ConversationScope: Hashable {
+    let sessionID: String
+    let workspaceGeneration: Int
+}
+
+// Scope the owner of all transient state, not just its layout subtree.
+private struct ConversationContent: View {
+    let sessionID: SessionSummary.ID
+    let title: String
+    let model: AppModel
+    let workspaceGeneration: Int
+
+    private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
+
     @Environment(\.scenePhase) private var scenePhase
     @State private var observedWorkspaceID: String?
     @State private var observedSessionID: String?
@@ -104,6 +125,7 @@ struct ConversationView: View {
     }
 
     private func observe() async {
+        guard isCurrentWorkspace else { return }
         observedWorkspaceID = model.selectedWorkspaceID
         observedSessionID = sessionID
         conversation = model.cachedConversation(sessionID: sessionID)
@@ -113,6 +135,7 @@ struct ConversationView: View {
         while !Task.isCancelled {
             do {
                 try await model.observeConversation(sessionID: sessionID) { update in
+                    guard isCurrentWorkspace else { return }
                     conversation = update.conversation
                     runConfigState.receive(update.runConfig)
                     isLoading = false
@@ -134,7 +157,7 @@ struct ConversationView: View {
     }
 
     private func sendDraft() {
-        guard !isSending, !isCancelling, model.supportsTextSending,
+        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
@@ -145,9 +168,11 @@ struct ConversationView: View {
         banner = nil
         isSending = true
         Task {
+            guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
                 let sentChoice = try await model.send(text, runConfig: choice, sessionID: sessionID)
+                guard isCurrentWorkspace else { return }
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 runConfigState.didSend(sentChoice)
@@ -180,15 +205,17 @@ struct ConversationView: View {
     }
 
     private func chooseRunConfig(_ value: String) {
+        guard isCurrentWorkspace else { return }
         runConfigState.choose(value)
     }
 
     private func cancelSession() {
-        guard !isSending, !isCancelling, model.supportsSessionCancellation,
+        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
               model.sessions.first(where: { $0.id == sessionID })?.activity == .running else { return }
         isCancelling = true
         banner = nil
         Task {
+            guard isCurrentWorkspace else { return }
             defer { isCancelling = false }
             do {
                 try await model.cancelSession(sessionID: sessionID)
@@ -201,14 +228,16 @@ struct ConversationView: View {
     }
 
     private func retryPreviousSend() {
-        guard !isSending, let text = previousPendingText,
+        guard isCurrentWorkspace, !isSending, let text = previousPendingText,
               previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
         isSending = true
         banner = nil
         Task {
+            guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
                 let sentChoice = try await model.send(text, sessionID: sessionID)
+                guard isCurrentWorkspace else { return }
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil

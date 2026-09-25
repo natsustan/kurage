@@ -187,6 +187,83 @@ struct SessionSearchLifecycleTests {
         #expect(result.sessionIDs == ["root", "opened"])
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func archiveOperationsStayScopedAcrossWorkspaceSwitches(delete: Bool, oldFails: Bool) async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-demo")
+        await model.selectWorkspace("ws-other")
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        let current = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-other")
+        client.finishArchive("ws-demo", fails: oldFails)
+        await old.value
+        #expect(model.archiveBusySessionIDs == ["same"])
+        #expect(model.archiveStatusNote == nil)
+        client.finishArchive("ws-other", fails: true)
+        await current.value
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        #expect(model.archiveStatusNote != nil)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func returningToWorkspaceDoesNotReviveOldArchiveOperation(delete: Bool, oldFails: Bool) async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        client.deferArchiveOperations = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let old = Task {
+            if delete { await model.deleteArchivedSession("same") }
+            else { await model.restoreArchivedSession("same") }
+        }
+        #expect(await events.next() == "archive:ws-demo")
+        await model.selectWorkspace("ws-other")
+        await model.selectWorkspace("ws-demo")
+        #expect(model.archiveBusySessionIDs == ["same"])
+        // Both operation types share the lock until the original write finishes.
+        await model.restoreArchivedSession("same")
+        await model.deleteArchivedSession("same")
+        #expect(client.archiveOperationCount == 1)
+        let reads = client.sessionReadCount
+        client.finishArchive("ws-demo", fails: oldFails)
+        await old.value
+        #expect(model.archiveBusySessionIDs.isEmpty)
+        #expect(model.archiveStatusNote == nil)
+        #expect(client.sessionReadCount == reads)
+    }
+
+    @Test func workspaceIdentityChangesOnlyWhenSelectionChanges() async {
+        let client = SearchLifecycleClient()
+        client.includeOtherWorkspace = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let first = model.workspaceGeneration
+        await model.refreshWorkspaces()
+        await model.selectWorkspace("ws-demo")
+        model.setApplicationActive(false)
+        model.setApplicationActive(true)
+        #expect(model.workspaceGeneration == first)
+        await model.selectWorkspace("ws-other")
+        #expect(model.workspaceGeneration != first)
+        let second = model.workspaceGeneration
+        await model.selectWorkspace("ws-demo")
+        #expect(model.workspaceGeneration != first)
+        #expect(model.workspaceGeneration != second)
+    }
+
     @Test func successfulArchiveRefreshClearsOnlyTheLoadError() async {
         let client = SearchLifecycleClient()
         let model = AppModel(client: client)
@@ -255,6 +332,28 @@ private final class SearchLifecycleClient: LodyClient {
     private(set) var sessionReadCount = 0
     var emptySessions = false
     var immediateReads = false
+    var deferArchiveOperations = false
+    private(set) var archiveOperationCount = 0
+    private var pendingArchives: [String: CheckedContinuation<Void, Error>] = [:]
+    func restoreArchivedSession(sessionID: String, workspaceID: String) async throws {
+        try await archiveOperation(workspaceID: workspaceID)
+    }
+    func deleteArchivedSession(sessionID: String, workspaceID: String) async throws {
+        try await archiveOperation(workspaceID: workspaceID)
+    }
+    private func archiveOperation(workspaceID: String) async throws {
+        guard deferArchiveOperations else { throw LodyClientError.notConnected }
+        archiveOperationCount += 1
+        try await withCheckedThrowingContinuation { continuation in
+            pendingArchives[workspaceID] = continuation
+            signal.yield("archive:" + workspaceID)
+        }
+    }
+    func finishArchive(_ workspaceID: String, fails: Bool) {
+        let pending = pendingArchives.removeValue(forKey: workspaceID)
+        if fails { pending?.resume(throwing: LodyClientError.unreachable) }
+        else { pending?.resume() }
+    }
     var failArchiveLoad = false
     var failSessionLoad = false
     var includeOtherWorkspace = false
