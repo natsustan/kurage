@@ -32,7 +32,7 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testArchivedSessionsAreNewestFirstAndSupportRestoreAndDelete() {
+    func testArchivedSessionsSheetIsNewestFirstAndSupportsRestore() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
         app.launch()
@@ -50,25 +50,22 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(newer.waitForExistence(timeout: 5))
         XCTAssertTrue(older.waitForExistence(timeout: 2))
         XCTAssertLessThan(newer.frame.minY, older.frame.minY)
+        XCTAssertTrue(app.buttons["close-archived-sessions"].exists)
+        XCTAssertFalse(app.buttons["delete-archived-older"].exists)
+        attachScreen(app, name: "archived-sessions-sheet")
 
-        tap(app.buttons["restore-archived-newer"])
-        XCTAssertFalse(newer.waitForExistence(timeout: 2))
+        let restoreNewer = app.buttons["restore-archived-newer"]
+        tap(restoreNewer)
+        XCTAssertTrue(restoreNewer.wait(for: \.exists, toEqual: false, timeout: 5))
 
-        let back = app.navigationBars.buttons["Kurage"]
-        XCTAssertTrue(back.waitForExistence(timeout: 2))
-        tap(back)
+        tap(app.buttons["close-archived-sessions"])
         XCTAssertTrue(app.descendants(matching: .any)["session-archived-newer"].waitForExistence(timeout: 5))
 
         tap(more)
         XCTAssertTrue(archived.waitForExistence(timeout: 2))
         tap(archived)
         XCTAssertTrue(older.waitForExistence(timeout: 5))
-        tap(app.buttons["delete-archived-older"])
-        let confirm = app.buttons["confirm-delete-archived-session"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 2))
-        tap(confirm)
-        XCTAssertFalse(older.waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["No archived sessions"].waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["delete-archived-older"].exists)
     }
 
     @MainActor

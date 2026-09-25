@@ -2,65 +2,73 @@ import SwiftUI
 
 struct ArchivedSessionsView: View {
     let model: AppModel
-    @State private var pendingDelete: ArchivedSessionSummary?
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if let archiveStatusNote = model.archiveStatusNote {
-                    Label(
-                        archiveStatusNote.text,
-                        systemImage: archiveStatusNote.tone == .failure ? "exclamationmark.circle" : "info.circle"
-                    )
-                    .foregroundStyle(archiveStatusNote.tone == .failure ? Color.red : Color.secondary)
-                    .padding(.bottom, 16)
-                }
+        VStack(spacing: 0) {
+            ZStack {
+                Text("Archived sessions")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 56)
 
-                if model.archivedSessions.isEmpty {
-                    if model.isRefreshingArchivedSessions {
-                        ProgressView("Loading archived sessions…")
-                            .frame(maxWidth: .infinity, minHeight: 160)
-                    } else {
-                        ContentUnavailableView(
-                            "No archived sessions",
-                            systemImage: "archivebox",
-                            description: Text("Sessions you archive show up here, newest first.")
-                        )
-                        .frame(maxWidth: .infinity)
+                HStack {
+                    Spacer()
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 20, weight: .medium))
+                            .frame(width: 44, height: 44)
+                            .background {
+                                Circle().strokeBorder(Color(.separator), lineWidth: 0.5)
+                            }
                     }
-                } else {
-                    ForEach(model.archivedSessions) { session in
-                        archivedRow(session)
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
+                    .accessibilityIdentifier("close-archived-sessions")
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 20)
-            .padding(.bottom, 32)
+            .padding(.top, 16)
+            .padding(.bottom, 20)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let archiveStatusNote = model.archiveStatusNote {
+                        Label(
+                            archiveStatusNote.text,
+                            systemImage: archiveStatusNote.tone == .failure ? "exclamationmark.circle" : "info.circle"
+                        )
+                        .foregroundStyle(archiveStatusNote.tone == .failure ? Color.red : Color.secondary)
+                        .padding(.bottom, 16)
+                    }
+
+                    if model.archivedSessions.isEmpty {
+                        if model.isRefreshingArchivedSessions {
+                            ProgressView("Loading archived sessions…")
+                                .frame(maxWidth: .infinity, minHeight: 160)
+                        } else {
+                            ContentUnavailableView(
+                                "No archived sessions",
+                                systemImage: "archivebox",
+                                description: Text("Sessions you archive show up here, newest first.")
+                            )
+                            .frame(maxWidth: .infinity)
+                        }
+                    } else {
+                        ForEach(model.archivedSessions) { session in
+                            archivedRow(session)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 32)
+            }
+            .refreshable { await model.refreshArchivedSessions() }
         }
         .background(Color(.systemBackground))
-        .navigationTitle("Archived sessions")
-        .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await model.refreshArchivedSessions() }
         .task(id: model.selectedWorkspaceID) { await model.refreshArchivedSessions() }
-        .confirmationDialog(
-            pendingDelete.map { "Delete \"\($0.title)\"?" } ?? "Delete this archived session?",
-            isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingDelete
-        ) { session in
-            Button("Delete Session", role: .destructive) {
-                Task { await model.deleteArchivedSession(session.id) }
-            }
-            .accessibilityIdentifier("confirm-delete-archived-session")
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("This permanently deletes the archived session.")
-        }
-        .accessibilityIdentifier("archived-sessions-screen")
     }
 
     private func archivedRow(_ session: ArchivedSessionSummary) -> some View {
@@ -69,7 +77,7 @@ struct ArchivedSessionsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title)
                     .font(.body)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .truncationMode(.tail)
                 Text(session.lastActivityAt, format: .relative(presentation: .named))
                     .font(.subheadline)
@@ -86,24 +94,16 @@ struct ArchivedSessionsView: View {
             Button {
                 Task { await model.restoreArchivedSession(session.id) }
             } label: {
-                Label("Restore", systemImage: "arrow.uturn.backward")
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Rectangle())
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.plain)
             .disabled(!session.canRestore || isBusy)
+            .accessibilityLabel("Restore")
             .accessibilityIdentifier("restore-\(session.id)")
-
-            Button(role: .destructive) {
-                pendingDelete = session
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(isBusy)
-            .accessibilityIdentifier("delete-\(session.id)")
         }
         .padding(.vertical, 14)
         .opacity(isBusy ? 0.45 : 1)

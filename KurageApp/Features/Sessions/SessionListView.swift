@@ -47,9 +47,6 @@ struct SessionListView: View {
                     model: model
                 )
             }
-            .navigationDestination(isPresented: $showArchivedSessions) {
-                ArchivedSessionsView(model: model)
-            }
             .toolbar {
                 if model.workspaces.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
@@ -98,6 +95,12 @@ struct SessionListView: View {
         }
         .alert("Could not archive this session.", isPresented: $archiveFailed) {
             Button("OK", role: .cancel) {}
+        }
+        .sheet(isPresented: $showArchivedSessions) {
+            ArchivedSessionsView(model: model)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(36)
         }
     }
 
@@ -541,7 +544,6 @@ private final class SessionBrowserCell: UITableViewCell {
             if session.activity == .running {
                 spinner.startAnimating()
             }
-            accessoryType = .disclosureIndicator
             accessibilityIdentifier = "session-\(session.id)"
             contentView.alpha = dimmed ? 0.45 : 1
             accessibilityLabel = snippet.map { "\(session.title). \($0)" } ?? session.title
