@@ -51,7 +51,7 @@ test('projects session images in order and keeps image-only turns', () => {
       { type: 'image_group', images: [
         { imageId: 'one', mimeType: 'image/jpeg', sizeBytes: 8, storageSessionId: 'fork-session' },
         { imageId: 'skip', mimeType: 'text/plain', sizeBytes: 8 },
-        { imageId: 'two', mimeType: 'image/webp' },
+        { imageId: 'two' },
       ] },
       { type: 'tool_call', content: [{ type: 'image', imageId: 'tool', mimeType: 'image/png', sizeBytes: 4 }] },
     ] },
@@ -70,7 +70,7 @@ test('projects session images in order and keeps image-only turns', () => {
       parts: [
         { type: 'text', text: 'Generated' },
         { type: 'image', imageID: 'one', mimeType: 'image/jpeg', storageSessionID: 'fork-session' },
-        { type: 'image', imageID: 'two', mimeType: 'image/webp' },
+        { type: 'image', imageID: 'two' },
       ],
     },
   ]);

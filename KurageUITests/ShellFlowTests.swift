@@ -329,7 +329,7 @@ final class ShellFlowTests: XCTestCase {
         app.launch()
         tap(app.buttons["sign-in-button"])
 
-        let session = app.buttons["session-session-pr"]
+        let session = app.descendants(matching: .any)["session-session-pr"]
         XCTAssertTrue(session.waitForExistence(timeout: 5))
         tap(session)
 

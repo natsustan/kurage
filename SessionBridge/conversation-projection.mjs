@@ -24,12 +24,14 @@ function optionalDimension(value) {
 }
 
 function projectImage(item) {
-  if (!isImageReference(item?.imageId) || !IMAGE_MIME_TYPES.has(item.mimeType)) return undefined;
+  if (!isImageReference(item?.imageId) ||
+      (item.mimeType != null && !IMAGE_MIME_TYPES.has(item.mimeType))) return undefined;
   if (item.sizeBytes != null &&
       (!Number.isInteger(item.sizeBytes) || item.sizeBytes <= 0 || item.sizeBytes > MAX_IMAGE_BYTES)) {
     return undefined;
   }
-  const image = { type: 'image', imageID: item.imageId, mimeType: item.mimeType };
+  const image = { type: 'image', imageID: item.imageId };
+  if (item.mimeType) image.mimeType = item.mimeType;
   const fileName = optionalFileName(item.fileName);
   if (fileName) image.fileName = fileName;
   if (isImageReference(item.storageSessionId)) image.storageSessionID = item.storageSessionId;

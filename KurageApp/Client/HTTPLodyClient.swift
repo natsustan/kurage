@@ -32,6 +32,7 @@ final class HTTPLodyClient: LodyClient {
     private let session: URLSession
     private let tokenStore: any AuthTokenStore
     private let baseURL: URL
+    private let imageBaseURL: URL
     // A shared queue also orders writes from successive client instances.
     private static let cacheQueue = DispatchQueue(label: "ai.lody.kurage.session-cache", qos: .utility)
     private var lastScheduledCache: SavedSession?
@@ -50,11 +51,13 @@ final class HTTPLodyClient: LodyClient {
         session: URLSession = .shared,
         tokenStore: any AuthTokenStore = KeychainAuthTokenStore(),
         baseURL: URL = LodyEndpoints.authBaseURL,
+        imageBaseURL: URL = LodyEndpoints.cloudAPIBaseURL,
         cacheURL: URL? = nil
     ) {
         self.session = session
         self.tokenStore = tokenStore
         self.baseURL = baseURL
+        self.imageBaseURL = imageBaseURL
         self.cacheURL = cacheURL ?? URL.applicationSupportDirectory
             .appendingPathComponent("Kurage", isDirectory: true)
             .appendingPathComponent("session-cache.json")
@@ -372,7 +375,7 @@ final class HTTPLodyClient: LodyClient {
         }
         let task = Task {
             try await SessionImageTransport.load(
-                session: session, baseURL: baseURL, workspaceID: workspaceID, sessionID: sessionID,
+                session: session, baseURL: imageBaseURL, workspaceID: workspaceID, sessionID: sessionID,
                 imageID: imageID, variant: variant, token: token
             )
         }

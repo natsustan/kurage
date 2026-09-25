@@ -22,6 +22,7 @@ struct ConversationImageTests {
         {"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"See","parts":[
           {"type":"text","text":"See"},
           {"type":"image","imageID":"shot","mimeType":"image/png","fileName":"diff.png","width":4,"height":2},
+          {"type":"image","imageID":"unlabeled","fileName":"photo.png"},
           {"type":"image","imageID":"vector","mimeType":"image/svg+xml"},
           {"type":"tool_call","text":"hidden"}
         ]}],"permission":null,"activity":"idle","syncState":"live"}
@@ -33,6 +34,7 @@ struct ConversationImageTests {
                 .image(ConversationImage(
                     imageID: "shot", mimeType: "image/png", fileName: "diff.png", width: 4, height: 2
                 )),
+                .image(ConversationImage(imageID: "unlabeled", mimeType: nil, fileName: "photo.png")),
             ]),
         ])
     }
@@ -57,13 +59,13 @@ struct ConversationImageTests {
 
     @Test func imageURLUsesStorageSessionAndThumbnailQuery() throws {
         let url = try #require(SessionImageTransport.url(
-            baseURL: URL(string: "https://backend.lody.ai")!,
+            baseURL: LodyEndpoints.cloudAPIBaseURL,
             workspaceID: "work id",
             sessionID: "session id",
             imageID: "image-id",
             variant: .inline
         ))
-        #expect(url.absoluteString == "https://backend.lody.ai/api/workspaces/work%20id/session-images/session%20id/image-id/thumbnail?width=768&fit=scale-down&quality=85")
+        #expect(url.absoluteString == "https://api.lody.ai/api/workspaces/work%20id/session-images/session%20id/image-id/thumbnail?width=768&fit=scale-down&quality=85")
     }
 
     @Test func imageBytesMustMatchAnAllowedImage() {
@@ -76,18 +78,20 @@ struct ConversationImageTests {
     }
 
     @Test func redirectKeepsAuthorizationOnlyOnTheImageHost() throws {
-        let sameHost = URLRequest(url: URL(string: "https://backend.lody.ai/api/workspaces/w/session-images/s/i")!)
+        let sameHost = URLRequest(url: URL(string: "https://api.lody.ai/api/workspaces/w/session-images/s/i")!)
         let followed = try #require(SessionImageRedirect.request(
-            sameHost, allowedHost: "backend.lody.ai", authorization: "Bearer secret"
+            sameHost, allowedHost: "api.lody.ai", authorization: "Bearer secret"
         ))
         #expect(followed.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
 
         let foreign = URLRequest(url: URL(string: "https://evil.example/image")!)
-        #expect(SessionImageRedirect.request(foreign, allowedHost: "backend.lody.ai", authorization: "Bearer secret") == nil)
-        let downgrade = URLRequest(url: URL(string: "http://backend.lody.ai/image")!)
-        #expect(SessionImageRedirect.request(downgrade, allowedHost: "backend.lody.ai", authorization: "Bearer secret") == nil)
-        let credentials = URLRequest(url: URL(string: "https://user:pass@backend.lody.ai/image")!)
-        #expect(SessionImageRedirect.request(credentials, allowedHost: "backend.lody.ai", authorization: "Bearer secret") == nil)
+        #expect(SessionImageRedirect.request(foreign, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
+        let authHost = URLRequest(url: URL(string: "https://backend.lody.ai/image")!)
+        #expect(SessionImageRedirect.request(authHost, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
+        let downgrade = URLRequest(url: URL(string: "http://api.lody.ai/image")!)
+        #expect(SessionImageRedirect.request(downgrade, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
+        let credentials = URLRequest(url: URL(string: "https://user:pass@api.lody.ai/image")!)
+        #expect(SessionImageRedirect.request(credentials, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
     }
 
     @Test func liveClientDownloadsThumbnailsAndFallsBackToTheOriginal() async throws {
@@ -112,8 +116,8 @@ struct ConversationImageTests {
         #expect(data == FixtureImage.png)
         #expect(log.imageRequests == 2)
         #expect(log.authorizations == ["Bearer account-token", "Bearer account-token"])
-        #expect(log.urls.contains { $0.contains("/api/workspaces/work%20id/session-images/fork-session/shot/thumbnail?width=768&fit=scale-down&quality=85") })
-        #expect(log.urls.contains { $0.hasSuffix("/api/workspaces/work%20id/session-images/fork-session/shot") })
+        #expect(log.urls.contains { $0.contains("https://api.lody.ai/api/workspaces/work%20id/session-images/fork-session/shot/thumbnail?width=768&fit=scale-down&quality=85") })
+        #expect(log.urls.contains { $0 == "https://api.lody.ai/api/workspaces/work%20id/session-images/fork-session/shot" })
         log.resetCount()
         let cached = try await client.loadSessionImage(
             workspaceID: "work id", sessionID: "fork-session", imageID: "shot", variant: .inline

@@ -43,7 +43,7 @@ enum SessionImageVariant: Hashable, Sendable {
 
 struct ConversationImage: Codable, Equatable, Sendable, Identifiable {
     var imageID: String
-    var mimeType: String
+    var mimeType: String?
     var fileName: String?
     var storageSessionID: String?
     var width: Int?
@@ -52,7 +52,8 @@ struct ConversationImage: Codable, Equatable, Sendable, Identifiable {
     var id: String { "\(storageSessionID ?? "")\n\(imageID)" }
 
     var isDisplayable: Bool {
-        Self.displayableMIMETypes.contains(mimeType.lowercased()) && Self.isReference(imageID)
+        (mimeType.map { Self.displayableMIMETypes.contains($0.lowercased()) } ?? true)
+            && Self.isReference(imageID)
     }
 
     var accessibilityName: String {
@@ -155,7 +156,7 @@ private struct PartBox: Codable {
         case .image(let image):
             try container.encode("image", forKey: .type)
             try container.encode(image.imageID, forKey: .imageID)
-            try container.encode(image.mimeType, forKey: .mimeType)
+            try container.encodeIfPresent(image.mimeType, forKey: .mimeType)
             try container.encodeIfPresent(image.fileName, forKey: .fileName)
             try container.encodeIfPresent(image.storageSessionID, forKey: .storageSessionID)
             try container.encodeIfPresent(image.width, forKey: .width)
