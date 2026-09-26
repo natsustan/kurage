@@ -415,14 +415,14 @@ private struct ConversationFooter: View {
                 PermissionCard(permission: permission, onDecision: onDecision)
             }
             if supportsTextSending || supportsSessionCancellation && isSessionRunning {
-                FollowUpComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
-                                 isSessionRunning: isSessionRunning,
-                                 supportsTextSending: supportsTextSending,
-                                 supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
-                                 supportsSessionCancellation: supportsSessionCancellation,
-                                 runConfig: runConfig,
-                                 onSend: onSend, onCancel: onCancel,
-                                 onChooseRunConfig: onChooseRunConfig)
+                SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
+                                isSessionRunning: isSessionRunning,
+                                supportsTextSending: supportsTextSending,
+                                supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
+                                supportsSessionCancellation: supportsSessionCancellation,
+                                runConfig: runConfig?.menu,
+                                onSend: onSend, onCancel: onCancel,
+                                onChooseRunConfig: { _, value in onChooseRunConfig(value) })
             } else {
                 Label("Read-only conversation", systemImage: "lock")
                     .font(.footnote)
@@ -465,169 +465,6 @@ private struct PermissionCard: View {
         } message: {
             Text(permission.detail)
         }
-    }
-}
-
-private struct FollowUpComposer: View {
-    @Binding var draft: String
-    let isSending: Bool
-    let isCancelling: Bool
-    let isSessionRunning: Bool
-    let supportsTextSending: Bool
-    let supportsTextSendingWhileRunning: Bool
-    let supportsSessionCancellation: Bool
-    let runConfig: SessionRunConfig?
-    let onSend: () -> Void
-    let onCancel: () -> Void
-    let onChooseRunConfig: (String) -> Void
-    @FocusState private var isFocused: Bool
-
-    private var editableDraft: Binding<String> {
-        Binding(
-            get: { draft },
-            set: { if !isSending { draft = $0 } }
-        )
-    }
-
-    private var showsSend: Bool {
-        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning)
-    }
-
-    private var canSend: Bool {
-        showsSend && !isSending && !isCancelling &&
-            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            inputRow
-            if isFocused, let runConfig, runConfig.summary != nil {
-                RunConfigRow(runConfig: runConfig, onChoose: onChooseRunConfig)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-        }
-        .animation(.snappy(duration: 0.2), value: isFocused)
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
-        .padding(.vertical, 6)
-        .frame(minHeight: 60)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 30))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("follow-up-composer")
-    }
-
-    private var inputRow: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Send a follow-up", text: editableDraft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .fixedSize(horizontal: false, vertical: true)
-                .submitLabel(.send)
-                .focused($isFocused)
-                .padding(.vertical, 9)
-                .accessibilityIdentifier("follow-up-field")
-            if isSessionRunning && supportsSessionCancellation {
-                Button(action: onCancel) {
-                    composerIcon("stop.fill", enabled: !isSending && !isCancelling)
-                }
-                .disabled(isSending || isCancelling)
-                .buttonStyle(.plain)
-                .accessibilityLabel("Stop reply")
-                .accessibilityIdentifier("pause-session")
-            }
-            if showsSend {
-                Button(action: onSend) {
-                    composerIcon("arrow.up", enabled: canSend)
-                }
-                .disabled(!canSend)
-                .buttonStyle(.plain)
-                .accessibilityLabel("Send")
-                .accessibilityIdentifier("send-follow-up")
-            }
-        }
-    }
-
-    private func composerIcon(_ name: String, enabled: Bool) -> some View {
-        Image(systemName: name)
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(enabled ? Color.white : Color.secondary)
-            .frame(width: 36, height: 36)
-            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-            .frame(width: 44, height: 44)
-    }
-
-}
-
-private extension SessionRunConfig {
-    var summary: String? {
-        let parts = [model?.label, reasoning?.label].compactMap { $0 }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    var accessibilitySummary: String {
-        [model.map { "Model \($0.label)" }, reasoning.map { "reasoning \($0.label)" }]
-            .compactMap { $0 }.joined(separator: ", ")
-    }
-}
-
-/// Shows the next turn's model and reasoning. Only the value the agent can
-/// change without switching models (reasoning when available) is editable.
-private struct RunConfigRow: View {
-    let runConfig: SessionRunConfig
-    let onChoose: (String) -> Void
-
-    var body: some View {
-        Group {
-            if let editable = runConfig.editable {
-                Menu {
-                    let title = editable.kind == .reasoning ? "Reasoning" : "Model"
-                    Section(title) {
-                        Picker(title, selection: selection(for: editable)) {
-                            ForEach(editable.options) { option in
-                                Text(option.label).tag(option.value)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    }
-                } label: {
-                    summary(icon: editable.kind == .reasoning ? "gauge.with.dots.needle.50percent" : "cpu",
-                            showsChevron: true)
-                }
-                .menuOrder(.fixed)
-                .tint(.secondary)
-                .accessibilityLabel(runConfig.accessibilitySummary)
-                .accessibilityHint("Applies to your next message")
-                .accessibilityIdentifier("run-config-menu")
-            } else {
-                summary(icon: "cpu", showsChevron: false)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(runConfig.accessibilitySummary)
-                    .accessibilityIdentifier("run-config-summary")
-            }
-        }
-        .frame(minHeight: 36)
-    }
-
-    private func selection(for editable: SessionRunConfig.Editable) -> Binding<String> {
-        Binding(
-            get: { (editable.kind == .reasoning ? runConfig.reasoning : runConfig.model)?.value ?? "" },
-            set: onChoose
-        )
-    }
-
-    private func summary(icon: String, showsChevron: Bool) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-            Text(runConfig.summary ?? "")
-                .lineLimit(1)
-            if showsChevron {
-                Image(systemName: "chevron.up.chevron.down")
-                    .imageScale(.small)
-            }
-        }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .contentShape(.rect)
     }
 }
 

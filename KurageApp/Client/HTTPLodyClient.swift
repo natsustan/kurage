@@ -6,6 +6,7 @@ import CryptoKit
 final class HTTPLodyClient: LodyClient {
     let supportsConversations = true
     var supportsTextSending: Bool { account?.id?.isEmpty == false }
+    var supportsSessionCreation: Bool { supportsTextSending }
     let supportsSessionCancellation = true
     let supportsSessionArchiving = true
 
@@ -29,6 +30,20 @@ final class HTTPLodyClient: LodyClient {
         let runConfig: RunConfigChoice?
     }
 
+    private struct StartKey: Hashable {
+        let userID: String
+        let workspaceID: String
+        let projectID: String
+    }
+
+    private struct PendingStart {
+        let text: String
+        let sessionID: String
+        let turnID: String
+        let agentConfigID: String?
+        let selections: [RunConfigChoice]
+    }
+
     private struct SessionImageLoad {
         let id: UUID
         let task: Task<Void, Never>
@@ -49,6 +64,7 @@ final class HTTPLodyClient: LodyClient {
     private var sessionBridge: SessionSyncBridge?
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
     private var pendingSends: [SendKey: PendingSend] = [:]
+    private var pendingStarts: [StartKey: PendingStart] = [:]
     private var sessionImageCache: [SessionImageCacheKey: Data] = [:]
     private var sessionImageOrder: [SessionImageCacheKey] = []
     private var sessionImageLoads: [SessionImageCacheKey: SessionImageLoad] = [:]
@@ -199,6 +215,7 @@ final class HTTPLodyClient: LodyClient {
         sessionBridge = nil
         streamsAccessCache = [:]
         pendingSends = [:]
+        pendingStarts = [:]
         for load in sessionImageLoads.values {
             load.task.cancel()
             for waiter in load.waiters.values { waiter.resume(throwing: LodyClientError.signedOut) }
@@ -506,6 +523,65 @@ final class HTTPLodyClient: LodyClient {
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
         if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
         return pending.runConfig
+    }
+
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String?,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> NewSessionOptions {
+        guard account != nil else { throw LodyClientError.signedOut }
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let options = try await bridge.newSessionOptions(
+            templateSessionID: templateSessionID, agentConfigID: agentConfigID,
+            workspaceID: workspaceID, access: access
+        )
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return options
+    }
+
+    func startSession(
+        _ text: String,
+        agentConfigID: String?,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> SessionSummary.ID {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        // An unconfirmed start may already exist remotely. Resume it rather
+        // than creating a second session with different text.
+        let key = StartKey(userID: userID, workspaceID: workspaceID, projectID: projectID)
+        if let pending = pendingStarts[key], pending.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.text)
+        }
+        // A retry keeps the agent and configuration it was first authored with.
+        let pending = pendingStarts[key] ?? PendingStart(
+            text: trimmed, sessionID: UUID().uuidString.lowercased(),
+            turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
+        )
+        pendingStarts[key] = pending
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.startSession(
+            trimmed, sessionID: pending.sessionID, turnID: pending.turnID, userID: userID,
+            agentConfigID: pending.agentConfigID, selections: pending.selections,
+            templateSessionID: templateSessionID,
+            workspaceID: workspaceID, access: access
+        )
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
+        if pendingStarts[key]?.sessionID == pending.sessionID { pendingStarts.removeValue(forKey: key) }
+        return pending.sessionID
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

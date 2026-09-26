@@ -184,20 +184,46 @@ final class ShellFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["follow-up-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         let menu = app.buttons["run-config-menu"]
-        XCTAssertFalse(menu.exists)
-        let composer = app.otherElements["follow-up-composer"]
-        let collapsedHeight = composer.frame.height
-        tap(field)
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(composer.frame.height, collapsedHeight)
+        tap(field)
+        XCTAssertGreaterThan(menu.frame.minY, field.frame.minY)
+        XCTAssertGreaterThan(app.buttons["send-follow-up"].frame.minY, field.frame.minY)
         XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High")
         attachScreen(app, name: "run-config-row")
 
         tap(menu)
+        let dial = app.otherElements["reasoning-dial"]
+        XCTAssertTrue(dial.waitForExistence(timeout: 5))
+        app.buttons["run-config-dismiss"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)).tap()
+        XCTAssertTrue(dial.wait(for: \.exists, toEqual: false, timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        tap(menu)
+        XCTAssertTrue(dial.waitForExistence(timeout: 5))
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        XCTAssertEqual(dial.value as? String, "Low")
+        attachScreen(app, name: "reasoning-low-at-start")
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertEqual(dial.value as? String, "Medium")
+        let start = dial.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let end = dial.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertEqual(dial.value as? String, "High")
+        attachScreen(app, name: "reasoning-dial")
+        tap(app.buttons["run-config-advanced"])
+        tap(app.staticTexts["run-config-reasoning-label"])
+        XCTAssertFalse(app.buttons["Low"].exists)
+        tap(app.buttons["run-config-reasoning"])
         let low = app.buttons["Low"]
         XCTAssertTrue(low.waitForExistence(timeout: 5))
         attachScreen(app, name: "run-config-menu")
         tap(low)
+        XCTAssertTrue(app.keyboards.firstMatch.wait(for: \.exists, toEqual: false, timeout: 5))
+        let speed = app.descendants(matching: .any)["run-config-speed"]
+        XCTAssertTrue(speed.exists)
+        XCTAssertFalse(speed.frame.isEmpty)
+        XCTAssertTrue(app.frame.contains(speed.frame))
+        attachScreen(app, name: "run-config-advanced")
+        tap(app.buttons["run-config-done"])
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
 
@@ -246,11 +272,82 @@ final class ShellFlowTests: XCTestCase {
         let sent = app.staticTexts["First line\nSecond line\nThird line\nFourth line\nFifth line"]
         XCTAssertTrue(sent.waitForExistence(timeout: 5))
         XCTAssertTrue(sent.wait(for: \.frame.isEmpty, toEqual: false, timeout: 5))
-        XCTAssertTrue(app.keyboards.firstMatch.isHittable)
+        XCTAssertTrue(app.keyboards.firstMatch.wait(for: \.isHittable, toEqual: true, timeout: 5))
         XCTAssertGreaterThan(sent.frame.height, 70)
         XCTAssertGreaterThan(sent.frame.minY, app.navigationBars.firstMatch.frame.maxY)
         XCTAssertLessThanOrEqual(sent.frame.maxY, field.frame.minY)
         attachScreen(app, name: "multiline-sent")
+    }
+
+    @MainActor
+    func testProjectRowStartsNewSessionWithChosenModel() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        XCTAssertEqual(newSession.label, "New session in prism")
+        attachScreen(app, name: "project-new-session-button")
+        tap(newSession)
+
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["spike@mac"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["prism"].exists)
+        // New sessions and follow-ups share the gauge and Advanced controls.
+        let menu = app.buttons["run-config-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertEqual(menu.label, "Provider Claude Code, model Sonnet")
+        XCTAssertFalse(app.buttons["new-session-send"].isEnabled)
+
+        tap(menu)
+        tap(app.buttons["run-config-advanced"])
+        tap(app.buttons["run-config-model"])
+        let opus = app.buttons["Opus"]
+        XCTAssertTrue(opus.waitForExistence(timeout: 5))
+        tap(opus)
+        tap(app.buttons["run-config-done"])
+        XCTAssertTrue(menu.wait(for: \.label, toEqual: "Provider Claude Code, model Opus", timeout: 5))
+        tap(field)
+        XCTAssertTrue(field.isHittable)
+
+        tap(menu)
+        tap(app.buttons["run-config-advanced"])
+        tap(app.buttons["run-config-provider"])
+        let codex = app.buttons["Codex"]
+        XCTAssertTrue(codex.waitForExistence(timeout: 5))
+        attachScreen(app, name: "new-session-menu")
+        tap(codex)
+        let reasoningControl = app.buttons["run-config-reasoning"]
+        XCTAssertTrue(reasoningControl.waitForExistence(timeout: 2))
+        XCTAssertTrue(app.buttons["run-config-model"].label.contains("gpt-5.5"))
+        tap(reasoningControl)
+        let medium = app.buttons["Medium"]
+        XCTAssertTrue(medium.waitForExistence(timeout: 5))
+        tap(medium)
+        attachScreen(app, name: "new-session-advanced-neutral")
+        tap(app.buttons["run-config-done"])
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        XCTAssertEqual(menu.label, "Provider Codex, model gpt-5.5, reasoning Medium")
+        attachScreen(app, name: "new-session")
+
+        tap(field)
+        field.typeText("Add a settings screen")
+        tap(app.buttons["new-session-send"])
+
+        let sent = app.staticTexts["Add a settings screen"]
+        XCTAssertTrue(sent.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "new-session-started")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        let started = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'session-session-new-'")
+        ).firstMatch
+        XCTAssertTrue(started.waitForExistence(timeout: 5))
+        XCTAssertLessThan(started.frame.minY, app.descendants(matching: .any)["session-session-pr"].frame.minY)
     }
 
     @MainActor
@@ -423,7 +520,7 @@ final class ShellFlowTests: XCTestCase {
 
     @MainActor
     private func attachScreen(_ app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

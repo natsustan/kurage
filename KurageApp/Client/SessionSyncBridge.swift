@@ -94,6 +94,36 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
         )
     }
 
+    func newSessionOptions(templateSessionID: String, agentConfigID: String?, workspaceID: String,
+                           access: StreamsAccess) async throws -> NewSessionOptions {
+        let json = try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull()]
+        )
+        return try JSONDecoder().decode(NewSessionOptions.self, from: Data(json.utf8))
+    }
+
+    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
+                      workspaceID: String, access: StreamsAccess) async throws -> String {
+        let request: [String: Any] = [
+            "templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
+            "sessionID": sessionID, "turnID": turnID,
+            "userID": userID, "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "selections": selections.map { choice -> [String: Any] in
+                ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
+            },
+        ]
+        return try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageStartSession(workspaceID, baseURL, request))",
+            workspaceID: workspaceID,
+            access: access,
+            arguments: ["request": request]
+        )
+    }
+
     func cancelSession(sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
         try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageCancelSession(workspaceID, sessionID, baseURL))",

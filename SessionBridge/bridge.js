@@ -8,6 +8,7 @@ import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
+import { newSessionOptions, startSession } from './session-start.mjs';
 import { archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
 const nativeFetch = createNativeFetch(
@@ -29,7 +30,8 @@ let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
 
-async function createWorkspaceRepo(workspaceID, gatewayBaseURL) {
+// Only a replica that authors a new session may create its document stream.
+async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false } = {}) {
   const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
   try {
     const transport = new StreamsTransportAdapter({
@@ -45,7 +47,7 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL) {
         return access.token;
       },
       baseUrl: gatewayBaseURL,
-      createStreamIfMissing: false,
+      createStreamIfMissing: createStreams,
       persistence: { mode: 'ephemeral' },
       snapshotCodec,
     });
@@ -202,6 +204,25 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
     await repo.destroy();
   }
 };
+
+async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options) {
+  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL, options);
+  try {
+    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
+    return await work(repo);
+  } finally {
+    await repo.destroy();
+  }
+}
+
+window.kurageNewSessionOptions = (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
+    JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID)));
+
+window.kurageStartSession = (workspaceID, gatewayBaseURL, request) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => startSession(repo, workspaceID, request), { createStreams: true });
 
 window.kurageCancelSession = async (workspaceID, sessionID, gatewayBaseURL) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);

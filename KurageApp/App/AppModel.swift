@@ -94,6 +94,7 @@ final class AppModel {
     var supportsSessionCancellation: Bool { client.supportsSessionCancellation }
     var supportsSessionArchiving: Bool { client.supportsSessionArchiving }
     var supportsPermissionResponses: Bool { client.supportsPermissionResponses }
+    var supportsSessionCreation: Bool { client.supportsSessionCreation }
     var hasCachedSessions: Bool {
         selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
     }
@@ -415,6 +416,59 @@ final class AppModel {
         }
         await refreshSessions(restart: true)
         return sentChoice
+    }
+
+    /// A new session starts from the project's most recent local session.
+    func newSessionTemplate(projectID: String) -> SessionSummary? {
+        guard projectID.hasPrefix("local:") else { return nil }
+        return sessions.first { $0.projectID == projectID }
+    }
+
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String? = nil
+    ) async throws -> NewSessionOptions {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let options = try await client.newSessionOptions(
+            templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
+        )
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        return options
+    }
+
+    func startSession(
+        _ text: String,
+        agentConfigID: String? = nil,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID
+    ) async throws -> SessionSummary.ID {
+        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID,
+              let template = sessions.first(where: { $0.id == templateSessionID && $0.projectID == projectID })
+        else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let sessionID = try await client.startSession(
+            text, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
+            templateSessionID: templateSessionID, workspaceID: workspaceID
+        )
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sessions.contains(where: { $0.id == sessionID }) {
+            sessions.insert(SessionSummary(
+                id: sessionID, title: String(trimmed.prefix(50)), agentName: template.agentName,
+                activity: .idle, preview: trimmed, projectID: projectID, projectName: template.projectName
+            ), at: 0)
+            sessionsByWorkspace[workspaceID] = sessions
+            persistSession()
+        }
+        // Navigation opens the session now; the list catches up in the background.
+        Task { await refreshSessions(restart: true) }
+        return sessionID
     }
 
     func cancelSession(sessionID: SessionSummary.ID) async throws {

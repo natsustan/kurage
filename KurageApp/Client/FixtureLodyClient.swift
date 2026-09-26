@@ -11,6 +11,7 @@ final class FixtureLodyClient: LodyClient {
     let supportsSessionCancellation = true
     let supportsSessionArchiving = true
     let supportsPermissionResponses = true
+    let supportsSessionCreation = true
 
     private var records: [SessionRecord]
     private var archivedSessionIDs: Set<SessionSummary.ID>
@@ -125,6 +126,67 @@ final class FixtureLodyClient: LodyClient {
             records.insert(records.remove(at: index), at: 0)
         }
         return runConfig
+    }
+
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String?,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> NewSessionOptions {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        let template = try record(templateSessionID)
+        guard template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
+        let providers = [
+            SessionRunConfig.Value(value: "claude", label: "Claude Code"),
+            SessionRunConfig.Value(value: "codex", label: "Codex"),
+        ]
+        let chosen = agentConfigID ?? template.summary.agentName
+        guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
+        return NewSessionOptions(machineName: "spike@mac", agentConfigID: chosen, providers: providers,
+                                 runConfig: chosen == "codex" ? .fixture : .fixtureModelOnly)
+    }
+
+    func startSession(
+        _ text: String,
+        agentConfigID: String?,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> SessionSummary.ID {
+        let options = try await newSessionOptions(
+            templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
+        )
+        let template = try record(templateSessionID)
+        guard template.summary.projectID == projectID else { throw LodyClientError.sessionMissing }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        var runConfig = options.runConfig ?? NewSessionRunConfig()
+        for choice in selections {
+            if choice.configOptionID == runConfig.model?.configOptionID {
+                runConfig.selectModel(choice.value)
+            } else {
+                runConfig.selectReasoning(choice.value)
+            }
+        }
+        guard runConfig.selections == selections else { throw LodyClientError.notConnected }
+        let id = "session-new-\(makeTurnID())"
+        records.insert(SessionRecord(
+            summary: SessionSummary(
+                id: id, title: String(trimmed.prefix(50)), agentName: options.agentConfigID,
+                activity: .idle, preview: trimmed,
+                projectID: projectID, projectName: template.summary.projectName
+            ),
+            turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)],
+            permission: nil,
+            runConfig: SessionRunConfig(
+                model: runConfig.selectedModel.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
+                reasoning: runConfig.selectedReasoning,
+                editable: nil
+            )
+        ), at: 0)
+        return id
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {
@@ -290,6 +352,30 @@ extension SessionRunConfig {
             Value(value: "sonnet", label: "Sonnet"),
             Value(value: "opus", label: "Opus"),
         ])
+    )
+}
+
+extension NewSessionRunConfig {
+    static let fixture = NewSessionRunConfig(
+        model: Model(configOptionID: nil, value: "gpt-5.5", options: [
+            ModelOption(value: "gpt-5.5", label: "gpt-5.5", reasoning: [
+                SessionRunConfig.Value(value: "low", label: "Low"),
+                SessionRunConfig.Value(value: "medium", label: "Medium"),
+                SessionRunConfig.Value(value: "high", label: "High"),
+            ]),
+            ModelOption(value: "gpt-5.4-mini", label: "gpt-5.4-mini", reasoning: [
+                SessionRunConfig.Value(value: "low", label: "Low"),
+            ]),
+        ]),
+        reasoning: Reasoning(configOptionID: "reasoning_effort", value: "high", options: [])
+    )
+
+    static let fixtureModelOnly = NewSessionRunConfig(
+        model: Model(configOptionID: nil, value: "sonnet", options: [
+            ModelOption(value: "sonnet", label: "Sonnet", reasoning: []),
+            ModelOption(value: "opus", label: "Opus", reasoning: []),
+        ]),
+        reasoning: nil
     )
 }
 

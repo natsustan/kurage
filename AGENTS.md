@@ -24,7 +24,7 @@
 - Access data through `AppModel` and `LodyClient` from the UI, keeping the live client and fixtures clearly separated.
 - Session operations must explicitly carry a workspace ID to prevent caches or updates from crossing workspace boundaries.
 - Preserve cancellation, subscription cleanup when entering the background, account switching, and isolation from stale updates.
-- The live client supports conversation reading, live updates, and plain-text sending to idle sessions when the signed-in account has a user ID. Sending while a session runs and responding to permission prompts remain fixture-only capabilities. Do not treat fixture capabilities as implemented live-service capabilities.
+- The live client supports conversation reading, live updates, plain-text sending to idle sessions, and starting a session in a local project when the signed-in account has a user ID. Sending while a session runs and responding to permission prompts remain fixture-only capabilities. Do not treat fixture capabilities as implemented live-service capabilities.
 - Continue using the existing secure storage for authentication credentials. Do not persist short-lived Streams tokens in Keychain or write tokens to logs or documentation.
 - Bridge dependencies use pinned versions. Check protocol compatibility and WASM bundling behavior when upgrading.
 
@@ -51,7 +51,8 @@
 
 ## Protocols and Feature Extensions
 
-- Device sign-in, account restoration, sign-out, workspace switching, session lists, project grouping, live conversation updates, and idle-session plain-text sending are currently integrated.
+- Device sign-in, account restoration, sign-out, workspace switching, session lists, project grouping, live conversation updates, idle-session plain-text sending, and new sessions in local projects are currently integrated.
+- A new session copies machine, agent config, and local project from the project's most recent root session and works in the project directory (no worktree or branch). Its first turn is synced before the metadata that carries `latestUserMsgId`; only the short-lived replica that authors it may create streams. Both model and reasoning are editable for its first turn, validated again by the bridge at write time.
 - Per-session model/reasoning selection applies only to the next new turn's `inputConfig`. When the agent's capability exposes a reasoning option, only reasoning is editable (switching models mid-session can invalidate provider context caches); otherwise the model is editable. Without a capability record, values are read-only.
 - Conversation content projects plain text and session images (`image` and `image_group`) from users and agents. Other structured events such as tool records are not fully displayed. Model new content types explicitly instead of converting arbitrary events directly into prose.
 - Before extending live sending to running sessions or implementing permission actions, verify request IDs, retries, deduplication, and permission semantics. Then update the protocol, live implementation, fixtures, and capability flags together; do not merely enable UI buttons. The current text-send retry ID is held only in process memory.

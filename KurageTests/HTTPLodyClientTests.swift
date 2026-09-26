@@ -43,6 +43,34 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test func changedTextCannotAbandonAnUnconfirmedSessionStart() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store,
+                                    baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        #expect(client.supportsSessionCreation)
+        log.install { _ in (503, Data()) }
+
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.startSession("First", agentConfigID: nil, selections: [], projectID: "local:mac:p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        await #expect(throws: LodyClientError.previousSendPending("First")) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        // Another project is independent.
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:q",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        client.signOut()
+        #expect(!client.supportsSessionCreation)
+    }
+
     private static var isolatedCacheURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
