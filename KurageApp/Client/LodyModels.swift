@@ -18,6 +18,7 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var preview: String
     var projectID: String? = nil
     var projectName: String? = nil
+    var machineName: String? = nil
 }
 
 struct ArchivedSessionSummary: Identifiable, Equatable, Sendable {
@@ -181,6 +182,15 @@ struct Conversation: Codable, Equatable, Sendable {
     var sessionID: SessionSummary.ID
     var turns: [ConversationTurn]
     var permission: PermissionPrompt?
+}
+
+/// Latest context usage reported in the session's Lody metadata.
+struct ContextWindowUsage: Codable, Equatable, Sendable {
+    var size: Int
+    var used: Int
+
+    var usedFraction: Double { isValid ? min(Double(used) / Double(size), 1) : 0 }
+    var isValid: Bool { size > 0 && used >= 0 }
 }
 
 enum PermissionDecision: Equatable, Sendable {
@@ -351,6 +361,7 @@ struct ConversationUpdate: Equatable, Sendable {
     var activity: SessionActivity?
     var syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
+    var contextWindowUsage: ContextWindowUsage? = nil
 }
 
 enum ConversationSyncState: String, Decodable, Sendable {
@@ -366,6 +377,7 @@ struct ConversationPatch: Decodable {
     let activity: String
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
+    var contextWindowUsage: ContextWindowUsage? = nil
 
     func applying(to previous: Conversation) throws -> ConversationUpdate {
         guard previous.sessionID == sessionID, Set(order).count == order.count else {
@@ -380,7 +392,7 @@ struct ConversationPatch: Decodable {
         return ConversationUpdate(
             conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
-            runConfig: runConfig
+            runConfig: runConfig, contextWindowUsage: contextWindowUsage
         )
     }
 }

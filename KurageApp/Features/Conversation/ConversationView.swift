@@ -26,6 +26,7 @@ private struct ConversationContent: View {
     let workspaceGeneration: Int
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
+    private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var observedWorkspaceID: String?
@@ -39,9 +40,12 @@ private struct ConversationContent: View {
     @State private var isLoading = true
     @State private var banner: String?
     @State private var connectionStatus: String?
+    @State private var showsConnectionIndicator = false
+    @State private var showsConnectionMessage = false
     @State private var previousPendingText: String?
     @State private var previousPendingWorkspaceID: String?
     @State private var runConfigState = ConversationRunConfigState()
+    @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
 
     private var displayedConversation: Conversation? {
@@ -69,11 +73,13 @@ private struct ConversationContent: View {
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
+                connectionMessage: showsConnectionMessage ? connectionStatus : nil,
                 supportsTextSending: model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
                 supportsSessionCancellation: model.supportsSessionCancellation,
                 supportsPermissionResponses: model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
+                contextWindowUsage: contextWindowUsage,
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
@@ -95,7 +101,11 @@ private struct ConversationContent: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ConversationNavigationTitle(title: title, connectionStatus: connectionStatus)
+                ConversationNavigationTitle(
+                    title: title, projectName: session?.projectName,
+                    machineName: session?.machineName,
+                    connectionStatus: showsConnectionIndicator ? connectionStatus : nil
+                )
             }
             if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -109,6 +119,9 @@ private struct ConversationContent: View {
                                  active: scenePhase == .active, refreshID: refreshID)) {
             guard scenePhase == .active else { return }
             await observe()
+        }
+        .task(id: scenePhase == .active ? connectionStatus : nil) {
+            await updateConnectionVisibility()
         }
     }
 
@@ -138,6 +151,7 @@ private struct ConversationContent: View {
                     guard isCurrentWorkspace else { return }
                     conversation = update.conversation
                     runConfigState.receive(update.runConfig)
+                    contextWindowUsage = update.contextWindowUsage
                     isLoading = false
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
                     if update.syncState == .live { retryDelay = 1 }
@@ -154,6 +168,23 @@ private struct ConversationContent: View {
                 retryDelay = min(retryDelay * 2, 30)
             }
         }
+    }
+
+    private func updateConnectionVisibility() async {
+        guard scenePhase == .active, connectionStatus != nil else {
+            showsConnectionIndicator = false
+            showsConnectionMessage = false
+            return
+        }
+        if !showsConnectionIndicator {
+            do { try await Task.sleep(for: .seconds(1)) }
+            catch { return }
+            showsConnectionIndicator = true
+        }
+        guard !showsConnectionMessage else { return }
+        do { try await Task.sleep(for: .seconds(4)) }
+        catch { return }
+        showsConnectionMessage = true
     }
 
     private func sendDraft() {
@@ -272,21 +303,60 @@ private struct ConversationContent: View {
 
 private struct ConversationNavigationTitle: View {
     let title: String
+    let projectName: String?
+    let machineName: String?
     let connectionStatus: String?
+
+    private var hasSubtitle: Bool {
+        projectName?.isEmpty == false || machineName?.isEmpty == false
+    }
 
     var body: some View {
         VStack(spacing: 1) {
-            Text(title)
-                .font(.headline)
-                .lineLimit(1)
-            Text(connectionStatus ?? " ")
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                if !hasSubtitle {
+                    connectionIndicator
+                }
+            }
+            if hasSubtitle {
+                HStack(spacing: 4) {
+                    if let projectName, !projectName.isEmpty {
+                        Text(projectName)
+                            .accessibilityIdentifier("conversation-project-name")
+                    }
+                    if projectName?.isEmpty == false && machineName?.isEmpty == false {
+                        Text("·")
+                            .accessibilityHidden(true)
+                    }
+                    if let machineName, !machineName.isEmpty {
+                        Text(machineName)
+                            .accessibilityIdentifier("conversation-machine-name")
+                    }
+                    connectionIndicator
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .opacity(connectionStatus == nil ? 0 : 1)
-                .accessibilityHidden(connectionStatus == nil)
-                .accessibilityIdentifier("conversation-connection-status")
+            }
         }
+    }
+
+    private var connectionIndicator: some View {
+        Group {
+            if let connectionStatus {
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityLabel(connectionStatus)
+                    .accessibilityIdentifier("conversation-connection-status")
+            } else {
+                Color.clear
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(width: 14, height: 14)
     }
 }
 
@@ -382,11 +452,13 @@ private struct ConversationFooter: View {
     let isCancelling: Bool
     let isSessionRunning: Bool
     let banner: String?
+    let connectionMessage: String?
     let supportsTextSending: Bool
     let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
+    let contextWindowUsage: ContextWindowUsage?
     let onSend: () -> Void
     let onCancel: () -> Void
     let onChooseRunConfig: (String) -> Void
@@ -406,6 +478,12 @@ private struct ConversationFooter: View {
                     .font(.footnote)
                     .foregroundStyle(.red)
             }
+            if let connectionMessage {
+                Text(connectionMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("conversation-connection-message")
+            }
             if canRetryPrevious {
                 Button("Retry earlier message", action: onRetryPrevious)
                     .font(.footnote)
@@ -421,6 +499,7 @@ private struct ConversationFooter: View {
                                 supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                 supportsSessionCancellation: supportsSessionCancellation,
                                 runConfig: runConfig?.menu,
+                                contextWindowUsage: contextWindowUsage,
                                 onSend: onSend, onCancel: onCancel,
                                 onChooseRunConfig: { _, value in onChooseRunConfig(value) })
             } else {

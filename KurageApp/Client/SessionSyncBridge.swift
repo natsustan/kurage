@@ -60,7 +60,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 activity: metadata.activity == "running" ? .running : .idle,
                 preview: metadata.preview,
                 projectID: metadata.projectID,
-                projectName: metadata.projectName
+                projectName: metadata.projectName,
+                machineName: metadata.machineName
             )
         }
     }
@@ -382,6 +383,7 @@ private struct SessionMetadata: Decodable {
     let preview: String
     let projectID: String?
     let projectName: String?
+    let machineName: String?
 }
 
 private struct SessionSnapshot: Decodable {

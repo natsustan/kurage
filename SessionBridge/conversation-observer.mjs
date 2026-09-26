@@ -79,6 +79,10 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         historyChanged = false;
         const update = conversationPatch(previous, next);
         update.activity = projectSessionActivity(meta.meta.status);
+        const usage = meta.meta.contextWindowUsage;
+        update.contextWindowUsage = usage && Number.isSafeInteger(usage.size) && usage.size > 0 &&
+          Number.isSafeInteger(usage.used) && usage.used >= 0
+          ? { size: usage.size, used: usage.used } : null;
         update.runConfig = projectRunConfig({
           cliType: meta.meta.cliType, agentType: meta.meta.agentType,
           capability: capability?.(), turn: latestTurn,
