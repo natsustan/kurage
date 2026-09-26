@@ -62,12 +62,27 @@ struct HTTPLodyClientTests {
             try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:p",
                                           templateSessionID: "t", workspaceID: "work")
         }
+        let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+        #expect(pending.text == "First")
+        #expect(pending.templateSessionID == "t")
+        #expect(client.pendingSessionStarts(workspaceID: "other").isEmpty)
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "other")
+        }
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+        }
+        #expect(client.pendingSessionStarts(workspaceID: "work").first == pending)
         // Another project is independent.
         await #expect(throws: LodyClientError.unreachable) {
             try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:q",
                                           templateSessionID: "t", workspaceID: "work")
         }
         client.signOut()
+        #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+        }
         #expect(!client.supportsSessionCreation)
     }
 
@@ -136,7 +151,15 @@ struct HTTPLodyClientTests {
             starter.finish(0, result: "unconfirmed")
             await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
             await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await second.value }
-            let retry = Task { try await start(template: "newest-template") }
+            let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+            let changedTemplateRetry = Task { try await start(template: "newest-template") }
+            _ = await calls.next()
+            let changedIndex = starter.requests.count - 1
+            #expect(starter.requests[changedIndex].sessionID == pending.id)
+            #expect(starter.requests[changedIndex].templateSessionID == "t")
+            starter.finish(changedIndex, result: "unconfirmed")
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await changedTemplateRetry.value }
+            let retry = Task { try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work") }
             _ = await calls.next()
             let index = starter.requests.count - 1
             #expect(starter.requests[index].sessionID == starter.requests[0].sessionID)
@@ -144,6 +167,10 @@ struct HTTPLodyClientTests {
             #expect(starter.requests[index].templateSessionID == "t")
             starter.finish(index, result: "sent")
             #expect(try await retry.value == starter.requests[0].sessionID)
+            #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+            await #expect(throws: LodyClientError.sessionMissing) {
+                try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+            }
         } else {
             if outcome == "cancel" {
                 first.cancel()

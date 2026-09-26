@@ -16,6 +16,11 @@ final class AppModel {
     private let client: any LodyClient
     private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
     private var isRestoringAccount = false
+    private var pendingStartsByWorkspace: [WorkspaceSummary.ID: [PendingSessionStart]] = [:]
+    var pendingSessionStarts: [PendingSessionStart] {
+        guard let workspaceID = selectedWorkspaceID else { return [] }
+        return pendingStartsByWorkspace[workspaceID] ?? []
+    }
 
     private(set) var account: Account?
     private(set) var workspaces: [WorkspaceSummary] = []
@@ -177,6 +182,7 @@ final class AppModel {
         authenticationGeneration += 1
         cancelSessionRefresh()
         client.signOut()
+        pendingStartsByWorkspace = [:]
         archiveOperations = [:]
         activeArchiveOperations = [:]
         account = nil
@@ -450,6 +456,7 @@ final class AppModel {
               let template = sessions.first(where: { $0.id == templateSessionID && $0.projectID == projectID })
         else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
+        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
         let sessionID = try await client.startSession(
             text, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
             templateSessionID: templateSessionID, workspaceID: workspaceID
@@ -467,6 +474,29 @@ final class AppModel {
             persistSession()
         }
         // Navigation opens the session now; the list catches up in the background.
+        Task { await refreshSessions(restart: true) }
+        return sessionID
+    }
+
+    private func refreshPendingStarts(workspaceID: WorkspaceSummary.ID, generation: Int) {
+        guard isCurrentAuthentication(generation) else { return }
+        pendingStartsByWorkspace[workspaceID] = client.pendingSessionStarts(workspaceID: workspaceID)
+    }
+
+    func retrySessionStart(_ pending: PendingSessionStart) async throws -> SessionSummary.ID {
+        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID else {
+            throw LodyClientError.notConnected
+        }
+        let generation = authenticationGeneration
+        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
+        guard client.pendingSessionStarts(workspaceID: workspaceID).contains(pending) else {
+            throw LodyClientError.sessionMissing
+        }
+        // Recovery uses the client's original request, independent of active templates or options.
+        let sessionID = try await client.retrySessionStart(sessionID: pending.id, workspaceID: workspaceID)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
         Task { await refreshSessions(restart: true) }
         return sessionID
     }

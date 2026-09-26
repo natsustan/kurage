@@ -58,6 +58,11 @@ struct NewSessionView: View {
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
 
+    private var pendingStart: PendingSessionStart? {
+        guard isCurrentWorkspace else { return nil }
+        return model.pendingSessionStarts.first { $0.projectID == route.projectID }
+    }
+
     private var options: NewSessionOptions? { configuration.options }
     private var runConfig: NewSessionRunConfig? { configuration.runConfig }
     private var isLoading: Bool { configuration.isLoading }
@@ -84,20 +89,22 @@ struct NewSessionView: View {
         .defaultScrollAnchor(.bottom)
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
-            SessionComposer(
-                draft: $draft, isSending: isStarting, isCancelling: false, isSessionRunning: false,
-                supportsTextSending: true, supportsTextSendingWhileRunning: false,
-                supportsSessionCancellation: false,
-                runConfig: configuration.menu,
-                placeholder: "Describe a task",
-                identifiers: .init(container: "new-session-composer", field: "new-session-field",
-                                   send: "new-session-send"),
-                canSubmit: isCurrentWorkspace && options != nil && !isLoading && !loadFailed,
-                focusesOnAppear: true,
-                onSend: start, onCancel: {}, onChooseRunConfig: choose
-            )
-            .padding(.horizontal, 18)
-            .padding(.bottom, 8)
+            if pendingStart == nil {
+                SessionComposer(
+                    draft: $draft, isSending: isStarting, isCancelling: false, isSessionRunning: false,
+                    supportsTextSending: true, supportsTextSendingWhileRunning: false,
+                    supportsSessionCancellation: false,
+                    runConfig: configuration.menu,
+                    placeholder: "Describe a task",
+                    identifiers: .init(container: "new-session-composer", field: "new-session-field",
+                                       send: "new-session-send"),
+                    canSubmit: isCurrentWorkspace && pendingStart == nil && options != nil && !isLoading && !loadFailed,
+                    focusesOnAppear: true,
+                    onSend: start, onCancel: {}, onChooseRunConfig: choose
+                )
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
+            }
         }
         .navigationTitle("New Session")
         .navigationBarTitleDisplayMode(.inline)
@@ -116,6 +123,16 @@ struct NewSessionView: View {
                 detailRow(options.machineName, systemImage: "laptopcomputer")
             }
             detailRow(route.projectName, systemImage: "folder")
+            if let pendingStart {
+                Text(pendingStart.text)
+                    .lineLimit(4)
+                    .foregroundStyle(.primary)
+                Button("Retry earlier start", systemImage: "arrow.clockwise") {
+                    performStart { try await model.retrySessionStart(pendingStart) }
+                }
+                .disabled(!isCurrentWorkspace || isStarting)
+                .accessibilityIdentifier("new-session-retry-start")
+            }
             if isLoading {
                 ProgressView()
                     .accessibilityLabel("Loading agent")
@@ -165,20 +182,27 @@ struct NewSessionView: View {
     }
 
     private func start() {
-        guard isCurrentWorkspace, let options, !isLoading, !loadFailed, !isStarting,
+        guard isCurrentWorkspace, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let text = draft
         let selections = runConfig?.selections ?? []
+        performStart {
+            try await model.startSession(
+                text, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+                selections: selections, projectID: route.projectID,
+                templateSessionID: route.templateSessionID
+            )
+        }
+    }
+
+    private func performStart(_ operation: @escaping @MainActor () async throws -> SessionSummary.ID) {
+        guard isCurrentWorkspace, !isStarting else { return }
         isStarting = true
         banner = nil
         Task {
             defer { isStarting = false }
             do {
-                let sessionID = try await model.startSession(
-                    text, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
-                    selections: selections, projectID: route.projectID,
-                    templateSessionID: route.templateSessionID
-                )
+                let sessionID = try await operation()
                 guard isCurrentWorkspace else { return }
                 onStarted(sessionID)
             } catch LodyClientError.sessionCreationRejected {
@@ -189,11 +213,14 @@ struct NewSessionView: View {
                 banner = "The session was not created. Review the refreshed agent settings and try again."
             } catch LodyClientError.previousSendPending(let previousText) {
                 draft = previousText
-                banner = "An earlier start is unconfirmed. Send it again to resume it."
+                banner = "An earlier start is unconfirmed. Use Retry earlier start to resume it."
             } catch is CancellationError {
                 return
             } catch {
-                banner = "Could not confirm the new session. Send again to resume it."
+                guard isCurrentWorkspace else { return }
+                banner = pendingStart != nil
+                    ? "The start is unconfirmed. Retry the original task above."
+                    : "Could not confirm the new session. Try again."
             }
         }
     }

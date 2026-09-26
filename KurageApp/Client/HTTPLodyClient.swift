@@ -560,6 +560,25 @@ final class HTTPLodyClient: LodyClient {
         return options
     }
 
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart] {
+        pendingStarts.compactMap { key, pending in
+            guard key.userID == account?.id, key.workspaceID == workspaceID else { return nil }
+            return PendingSessionStart(id: pending.sessionID, projectID: key.projectID,
+                                       templateSessionID: pending.templateSessionID, text: pending.text)
+        }.sorted { $0.id < $1.id }
+    }
+
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        guard let userID = account?.id else { throw LodyClientError.signedOut }
+        guard let (key, pending) = pendingStarts.first(where: {
+            $0.key.userID == userID && $0.key.workspaceID == workspaceID && $0.value.sessionID == sessionID
+        }) else { throw LodyClientError.sessionMissing }
+        // A stale retry must never fall through to allocating a new session.
+        return try await startSession(pending.text, agentConfigID: pending.agentConfigID,
+                                      selections: pending.selections, projectID: key.projectID,
+                                      templateSessionID: pending.templateSessionID, workspaceID: workspaceID)
+    }
+
     func startSession(
         _ text: String,
         agentConfigID: String?,

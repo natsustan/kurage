@@ -72,6 +72,25 @@ struct SessionListView: View {
                 }
             }
             .toolbar {
+                if !model.pendingSessionStarts.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            ForEach(model.pendingSessionStarts) { pending in
+                                Button(String(pending.text.prefix(50))) {
+                                    navigation.path.append(.newSession(NewSessionRoute(
+                                        projectID: pending.projectID,
+                                        projectName: model.sessions.first { $0.projectID == pending.projectID }?.projectName ?? "Project",
+                                        templateSessionID: pending.templateSessionID,
+                                        workspaceGeneration: model.workspaceGeneration
+                                    )))
+                                }
+                            }
+                        } label: {
+                            Label("Unconfirmed starts", systemImage: "arrow.clockwise.circle")
+                        }
+                        .accessibilityIdentifier("pending-session-starts")
+                    }
+                }
                 if model.workspaces.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         Menu {

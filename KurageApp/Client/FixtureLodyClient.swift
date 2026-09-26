@@ -20,15 +20,19 @@ final class FixtureLodyClient: LodyClient {
         "archived-older": Date(timeIntervalSince1970: 1_600_000_000),
     ]
     private var nextTurnNumber = 0
+    private var failStartAndArchiveProjectOnce: Bool
+    private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
 
     init(
         startsSignedIn: Bool = false,
         records: [SessionRecord] = SessionRecord.samples,
         archivedIDs: Set<SessionSummary.ID>? = nil,
-        failingConversationIDsOnce: Set<String> = []
+        failingConversationIDsOnce: Set<String> = [],
+        failStartAndArchiveProjectOnce: Bool = false
     ) {
         self.records = records
+        self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
@@ -62,6 +66,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func signOut() {
+        pendingStarts = [:]
         account = nil
     }
 
@@ -136,7 +141,7 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         let template = try record(templateSessionID)
-        guard template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
+        guard !archivedSessionIDs.contains(templateSessionID), template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
         let providers = [
             SessionRunConfig.Value(value: "claude", label: "Claude Code"),
             SessionRunConfig.Value(value: "codex", label: "Codex"),
@@ -155,6 +160,14 @@ final class FixtureLodyClient: LodyClient {
         templateSessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        if let pending = pendingSessionStarts(workspaceID: workspaceID).first(where: { $0.projectID == projectID }) {
+            guard pending.text == text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                throw LodyClientError.previousSendPending(pending.text)
+            }
+            return try await retrySessionStart(sessionID: pending.id, workspaceID: workspaceID)
+        }
         let options = try await newSessionOptions(
             templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
         )
@@ -172,7 +185,7 @@ final class FixtureLodyClient: LodyClient {
         }
         guard runConfig.selections == selections else { throw LodyClientError.notConnected }
         let id = "session-new-\(makeTurnID())"
-        records.insert(SessionRecord(
+        let created = SessionRecord(
             summary: SessionSummary(
                 id: id, title: String(trimmed.prefix(50)), agentName: options.agentConfigID,
                 activity: .idle, preview: trimmed,
@@ -185,8 +198,29 @@ final class FixtureLodyClient: LodyClient {
                 reasoning: runConfig.selectedReasoning,
                 editable: nil
             )
-        ), at: 0)
+        )
+        if failStartAndArchiveProjectOnce {
+            failStartAndArchiveProjectOnce = false
+            pendingStarts[id] = (PendingSessionStart(id: id, projectID: projectID,
+                templateSessionID: templateSessionID, text: trimmed), created)
+            archivedSessionIDs.formUnion(records.filter { $0.summary.projectID == projectID }.map(\.summary.id))
+            throw LodyClientError.deliveryUnconfirmed
+        }
+        records.insert(created, at: 0)
         return id
+    }
+
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart] {
+        guard account != nil, workspaceID == "ws-demo" else { return [] }
+        return pendingStarts.values.map(\.pending).sorted { $0.id < $1.id }
+    }
+
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        guard let pending = pendingStarts.removeValue(forKey: sessionID) else { throw LodyClientError.sessionMissing }
+        records.insert(pending.record, at: 0)
+        return sessionID
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

@@ -1,5 +1,13 @@
 import Foundation
 
+/// A process-local creation that must resume its existing session and first turn.
+struct PendingSessionStart: Identifiable, Equatable {
+    let id: SessionSummary.ID
+    let projectID: String
+    let templateSessionID: SessionSummary.ID
+    let text: String
+}
+
 /// App-facing seam for one Lody account.
 ///
 /// The fixture implements this in memory. The HTTP client uses Lody's device
@@ -47,6 +55,8 @@ protocol LodyClient: AnyObject {
         agentConfigID: String?,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID
     /// Returns the new session's ID. An unconfirmed start is retried with the
     /// same session and turn IDs until it is confirmed.
     func startSession(
@@ -109,6 +119,12 @@ extension LodyClient {
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected
+    }
+
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart] { [] }
+
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        throw LodyClientError.sessionMissing
     }
 
     func startSession(

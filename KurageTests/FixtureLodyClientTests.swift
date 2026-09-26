@@ -144,6 +144,48 @@ struct FixtureLodyClientTests {
         }
     }
 
+    @Test func pendingCreationSurvivesArchivedTemplateAndFailedOptions() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let projectID = "local:machine-1:prism"
+        let template = try #require(model.newSessionTemplate(projectID: projectID))
+        let options = try await model.newSessionOptions(templateSessionID: template.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSession("Recover original task", selections: options.runConfig?.selections ?? [], projectID: projectID,
+                                         templateSessionID: template.id)
+        }
+        let pending = try #require(model.pendingSessionStarts.first)
+        await model.refreshSessions()
+        #expect(model.newSessionTemplate(projectID: projectID) == nil)
+        let configuration = NewSessionConfiguration()
+        await configuration.load(providerID: nil) { provider in
+            try await model.newSessionOptions(templateSessionID: template.id, agentConfigID: provider)
+        }
+        #expect(configuration.loadFailed)
+        #expect(try await model.retrySessionStart(pending) == pending.id)
+        #expect(model.pendingSessionStarts.isEmpty)
+        let conversation = try await client.conversation(sessionID: pending.id, workspaceID: "ws-demo")
+        #expect(conversation.turns.filter { $0.author == .user }.map(\.text) == ["Recover original task"])
+        await #expect(throws: LodyClientError.sessionMissing) { try await model.retrySessionStart(pending) }
+    }
+
+    @Test func signingOutClearsPendingCreationRecovery() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let template = try #require(model.newSessionTemplate(projectID: "local:machine-1:prism"))
+        let options = try await model.newSessionOptions(templateSessionID: template.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSession("Pending", selections: options.runConfig?.selections ?? [], projectID: "local:machine-1:prism",
+                                         templateSessionID: template.id)
+        }
+        #expect(model.pendingSessionStarts.count == 1)
+        model.signOut()
+        #expect(model.pendingSessionStarts.isEmpty)
+        #expect(client.pendingSessionStarts(workspaceID: "ws-demo").isEmpty)
+    }
+
     @Test func newSessionReasoningFollowsTheChosenModel() throws {
         let json = """
         {"machineName":"mac","agentConfigID":"cfg",

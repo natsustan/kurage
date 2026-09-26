@@ -351,6 +351,49 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnconfirmedStartCanRetryAfterBackgroundAndTemplateArchival() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-start-unconfirmed"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Recover original task")
+        tap(app.buttons["new-session-send"])
+        let retry = app.buttons["new-session-retry-start"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["new-session-retry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(retry.isEnabled)
+        attachScreen(app, name: "pending-start-options-failed")
+        app.navigationBars.buttons.firstMatch.tap()
+        let pending = app.buttons["pending-session-starts"]
+        XCTAssertTrue(pending.waitForExistence(timeout: 5))
+        let list = app.tables.firstMatch
+        let pullStart = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1))
+        let pullEnd = list.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        pullStart.press(forDuration: 0.1, thenDragTo: pullEnd)
+        // A refreshed list has no active template, but retains the recovery entry.
+        XCTAssertTrue(app.buttons["new-session-local:machine-1:prism"].waitForNonExistence(timeout: 5))
+        tap(pending)
+        tap(app.buttons["Recover original task"])
+        XCTAssertTrue(app.buttons["new-session-retry"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "pending-start-reopened")
+        tap(retry)
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Recover original task"].exists)
+        attachScreen(app, name: "pending-start-recovered")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertFalse(pending.exists)
+    }
+
+    @MainActor
     func testIncompleteSearchCanRetry() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-search-failure"]
