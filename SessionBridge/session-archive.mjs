@@ -119,7 +119,7 @@ function rethrowAbort(error) {
   if (error?.name === 'AbortError') throw error;
 }
 
-export async function readLocalProjectState(repo, workspaceID, machineID, signal) {
+export async function readLocalProjectState(repo, workspaceID, machineID, signal, syncedFlock) {
   const projects = new Set();
   const pending = new Set();
   const names = new Map();
@@ -129,8 +129,8 @@ export async function readLocalProjectState(repo, workspaceID, machineID, signal
   const flockID = `${workspaceID}:mf:${machineID}`;
   let known = false;
   try {
-    const document = await repo.openFlockDoc(flockID);
-    const sync = await repo.sync({
+    const document = syncedFlock ? { flock: syncedFlock } : await repo.openFlockDoc(flockID);
+    const sync = syncedFlock ? { ok: true } : await repo.sync({
       scope: 'doc', flockDocIds: [flockID], requireTransports: ['cloud'], signal,
     });
     if (sync?.ok || sync?.outcome === 'synced') {

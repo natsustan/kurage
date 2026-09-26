@@ -37,6 +37,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private struct PendingStart {
+        let templateSessionID: String
         let text: String
         let sessionID: String
         let turnID: String
@@ -580,7 +581,7 @@ final class HTTPLodyClient: LodyClient {
         try Task.checkCancellation()
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
-            text: trimmed, sessionID: UUID().uuidString.lowercased(),
+            templateSessionID: templateSessionID, text: trimmed, sessionID: UUID().uuidString.lowercased(),
             turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
         )
         pendingStarts[key] = pending
@@ -600,7 +601,7 @@ final class HTTPLodyClient: LodyClient {
                     let result: Result<String, Error>
                     do {
                         result = .success(try await performSessionStart(
-                            pending, templateSessionID: templateSessionID, key: key, generation: generation
+                            pending, key: key, generation: generation
                         ))
                     } catch { result = .failure(error) }
                     guard activeStarts[key]?.id == operationID,
@@ -622,7 +623,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private func performSessionStart(
-        _ pending: PendingStart, templateSessionID: String, key: StartKey, generation: Int
+        _ pending: PendingStart, key: StartKey, generation: Int
     ) async throws -> String {
         let workspaceID = key.workspaceID
         let access = try await streamsAccess(workspaceID: workspaceID)
@@ -639,7 +640,7 @@ final class HTTPLodyClient: LodyClient {
         let result = try await bridge.startSession(
             pending.text, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
             agentConfigID: pending.agentConfigID, selections: pending.selections,
-            templateSessionID: templateSessionID,
+            templateSessionID: pending.templateSessionID,
             workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }

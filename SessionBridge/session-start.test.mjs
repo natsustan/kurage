@@ -42,6 +42,7 @@ function fixture() {
   }));
   docs.set('session-claude-elsewhere', history('c1', { modeId: 'acceptEdits', modelId: 'opus' }));
   const flock = new Map([
+    ['localProject/proj', { name: 'Project' }],
     ['acpCapability/cfg', capability],
     ['agentConfig/cfg', { name: 'Codex', machineId: 'mac', cliType: 'builtin', agentType: 'codex' }],
     ['acpCapability/claude', { cliType: 'builtin', agentType: 'claude', models: [], configOptions: [
@@ -68,7 +69,7 @@ function fixture() {
     sync: async options => { calls.push(options); return { ok: true, outcome: 'synced' }; },
     upsertDocMeta: async (id, patch) => { rows.set(id, { ...rows.get(id), ...patch }); },
   };
-  return { repo, rows, docs, calls };
+  return { repo, rows, docs, calls, flock };
 }
 
 const start = (repo, overrides = {}) => startSession(repo, 'ws', {
@@ -305,3 +306,41 @@ for (const templateID of [undefined, 'removed-config', 'cfg']) {
     assert.equal(rows.get('session-new').agentConfigId, templateID);
   });
 }
+
+for (const state of ['missing', 'deleting', 'legacy-deleting']) {
+  test(`new sessions reject a ${state} project at options and write time`, async () => {
+    const { repo, rows, docs, flock } = fixture();
+    await newSessionOptions(repo, 'ws', 'template');
+    if (state !== 'deleting') flock.delete('localProject/proj');
+    if (state === 'legacy-deleting') rows.get('machine-mac').localProjects = { proj: { name: 'Legacy' } };
+    if (state !== 'missing') flock.set('cmd/deleteLocalProject/proj', {});
+    await assert.rejects(newSessionOptions(repo, 'ws', 'template'), /Project is unavailable/);
+    assert.equal(await start(repo), 'rejected');
+    assert.equal(rows.has('session-new'), false);
+    assert.equal(docs.get('session-new').getList('history').length, 0);
+  });
+}
+
+for (const state of ['legacy', 'unknown']) {
+  test(`new sessions preserve ${state} project compatibility`, async () => {
+    const { repo, rows, flock } = fixture();
+    flock.delete('localProject/proj');
+    if (state === 'legacy') rows.get('machine-mac').localProjects = { proj: { name: 'Legacy' } };
+    else repo.openFlockDoc = async () => { throw new Error('Offline'); };
+    await newSessionOptions(repo, 'ws', 'template');
+    assert.equal(await start(repo), 'sent');
+    assert.equal(rows.get('session-new').project.localProjectId, 'proj');
+  });
+}
+
+test('project deletion after an authored turn preserves the unconfirmed start', async () => {
+  const { repo, rows, docs, flock } = fixture();
+  const upsert = repo.upsertDocMeta;
+  repo.upsertDocMeta = async () => { throw new Error('Metadata unavailable'); };
+  await assert.rejects(start(repo), /Metadata unavailable/);
+  repo.upsertDocMeta = upsert;
+  flock.delete('localProject/proj');
+  await assert.rejects(start(repo), /Project is unavailable/);
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+  assert.equal(rows.has('session-new'), false);
+});

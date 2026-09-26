@@ -86,9 +86,9 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
                                     cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
         _ = try #require(await client.restoreSession())
-        func start(project: String = "p", workspace: String = "work") async throws -> String {
+        func start(project: String = "p", workspace: String = "work", template: String = "t") async throws -> String {
             try await client.startSession("First", agentConfigID: nil, selections: [], projectID: project,
-                                          templateSessionID: "t", workspaceID: workspace)
+                                          templateSessionID: template, workspaceID: workspace)
         }
         var calls = starter.started.makeAsyncIterator()
         let first = Task { try await start() }
@@ -136,11 +136,12 @@ struct HTTPLodyClientTests {
             starter.finish(0, result: "unconfirmed")
             await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
             await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await second.value }
-            let retry = Task { try await start() }
+            let retry = Task { try await start(template: "newest-template") }
             _ = await calls.next()
             let index = starter.requests.count - 1
             #expect(starter.requests[index].sessionID == starter.requests[0].sessionID)
             #expect(starter.requests[index].turnID == starter.requests[0].turnID)
+            #expect(starter.requests[index].templateSessionID == "t")
             starter.finish(index, result: "sent")
             #expect(try await retry.value == starter.requests[0].sessionID)
         } else {
@@ -1078,6 +1079,7 @@ private final class DeferredSessionStarter: SessionStarting {
     struct Request {
         let sessionID: String
         let turnID: String
+        let templateSessionID: String
         let continuation: CheckedContinuation<String, Error>
     }
     let started: AsyncStream<Void>
@@ -1090,7 +1092,7 @@ private final class DeferredSessionStarter: SessionStarting {
                       agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
                       workspaceID: String, access: StreamsAccess) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            requests.append(Request(sessionID: sessionID, turnID: turnID, continuation: continuation))
+            requests.append(Request(sessionID: sessionID, turnID: turnID, templateSessionID: templateSessionID, continuation: continuation))
             signal.yield(())
         }
     }

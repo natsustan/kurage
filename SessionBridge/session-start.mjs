@@ -1,3 +1,4 @@
+import { canRestoreArchivedSession, readLocalProjectState } from './session-archive.mjs';
 import { appendUserTurn, assertSameTurn, sendText, synced } from './conversation-send.mjs';
 import {
   applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig,
@@ -84,6 +85,11 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     // Without the machine document only the template's agent is offered, at its inherited values.
   }
   signal?.throwIfAborted();
+  // Reuse the known machine snapshot and the restore rules, including legacy projects.
+  if (flock) {
+    const state = await readLocalProjectState(repo, workspaceID, meta.machineId, signal, flock);
+    if (!canRestoreArchivedSession(meta, state)) throw new Error('Project is unavailable for a new session');
+  }
   let providers = flock ? readProviders(flock, meta.machineId) : [];
   // The inherited agent remains selectable even while viewing another provider.
   if (!providers.some(provider => provider.id === meta.agentConfigId)) {
