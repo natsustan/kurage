@@ -90,6 +90,29 @@ test('cancelling while initial sync is pending releases both rooms without stale
   assert.deepEqual(h.updates, []);
 });
 
+test('context window usage follows metadata updates and clears when unavailable', async () => {
+  const meta = { status: { type: 'idle' }, contextWindowUsage: { size: 258_000, used: 217_000 } };
+  const h = harness({ meta });
+  await h.start();
+  assert.deepEqual(h.updates[0].contextWindowUsage, { size: 258_000, used: 217_000 });
+
+  meta.contextWindowUsage = { size: 258_000, used: 218_000 };
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).contextWindowUsage, { size: 258_000, used: 218_000 });
+
+  delete meta.contextWindowUsage;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).contextWindowUsage, null);
+
+  meta.contextWindowUsage = { size: 258_000, used: 12.5 };
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).contextWindowUsage, null);
+  h.controller.abort();
+});
+
 test('run config follows capabilities that arrive after the transcript', async () => {
   const rows = new Map();
   let flockListener;

@@ -26,6 +26,7 @@ private struct ConversationContent: View {
     let workspaceGeneration: Int
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
+    private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var observedWorkspaceID: String?
@@ -42,6 +43,7 @@ private struct ConversationContent: View {
     @State private var previousPendingText: String?
     @State private var previousPendingWorkspaceID: String?
     @State private var runConfigState = ConversationRunConfigState()
+    @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
 
     private var displayedConversation: Conversation? {
@@ -74,6 +76,7 @@ private struct ConversationContent: View {
                 supportsSessionCancellation: model.supportsSessionCancellation,
                 supportsPermissionResponses: model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
+                contextWindowUsage: contextWindowUsage,
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
@@ -95,7 +98,10 @@ private struct ConversationContent: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ConversationNavigationTitle(title: title, connectionStatus: connectionStatus)
+                ConversationNavigationTitle(
+                    title: title, projectName: session?.projectName,
+                    machineName: session?.machineName, connectionStatus: connectionStatus
+                )
             }
             if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -138,6 +144,7 @@ private struct ConversationContent: View {
                     guard isCurrentWorkspace else { return }
                     conversation = update.conversation
                     runConfigState.receive(update.runConfig)
+                    contextWindowUsage = update.contextWindowUsage
                     isLoading = false
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
                     if update.syncState == .live { retryDelay = 1 }
@@ -272,6 +279,8 @@ private struct ConversationContent: View {
 
 private struct ConversationNavigationTitle: View {
     let title: String
+    let projectName: String?
+    let machineName: String?
     let connectionStatus: String?
 
     var body: some View {
@@ -279,13 +288,32 @@ private struct ConversationNavigationTitle: View {
             Text(title)
                 .font(.headline)
                 .lineLimit(1)
-            Text(connectionStatus ?? " ")
+            if projectName?.isEmpty == false || machineName?.isEmpty == false {
+                HStack(spacing: 4) {
+                    if let projectName, !projectName.isEmpty {
+                        Text(projectName)
+                            .accessibilityIdentifier("conversation-project-name")
+                    }
+                    if projectName?.isEmpty == false && machineName?.isEmpty == false {
+                        Text("·")
+                            .accessibilityHidden(true)
+                    }
+                    if let machineName, !machineName.isEmpty {
+                        Text(machineName)
+                            .accessibilityIdentifier("conversation-machine-name")
+                    }
+                }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-                .opacity(connectionStatus == nil ? 0 : 1)
-                .accessibilityHidden(connectionStatus == nil)
-                .accessibilityIdentifier("conversation-connection-status")
+            }
+            if let connectionStatus {
+                Text(connectionStatus)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("conversation-connection-status")
+            }
         }
     }
 }
@@ -387,6 +415,7 @@ private struct ConversationFooter: View {
     let supportsSessionCancellation: Bool
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
+    let contextWindowUsage: ContextWindowUsage?
     let onSend: () -> Void
     let onCancel: () -> Void
     let onChooseRunConfig: (String) -> Void
@@ -421,6 +450,7 @@ private struct ConversationFooter: View {
                                 supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                 supportsSessionCancellation: supportsSessionCancellation,
                                 runConfig: runConfig?.menu,
+                                contextWindowUsage: contextWindowUsage,
                                 onSend: onSend, onCancel: onCancel,
                                 onChooseRunConfig: { _, value in onChooseRunConfig(value) })
             } else {

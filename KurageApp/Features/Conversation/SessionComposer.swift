@@ -131,6 +131,7 @@ struct SessionComposer: View {
     let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
     let runConfig: RunConfigMenu?
+    var contextWindowUsage: ContextWindowUsage? = nil
     var placeholder: LocalizedStringKey = "Send a follow-up"
     var identifiers: Identifiers = .followUp
     /// Blocks sending while prerequisites load, without blocking typing.
@@ -226,6 +227,9 @@ struct SessionComposer: View {
     private var actionRow: some View {
         HStack(spacing: 6) {
             Spacer(minLength: 0)
+            if let contextWindowUsage, contextWindowUsage.isValid {
+                ContextWindowButton(usage: contextWindowUsage)
+            }
             if let runConfig {
                 Button {
                     showsRunConfig = true
@@ -268,6 +272,56 @@ struct SessionComposer: View {
             .frame(width: 36, height: 36)
             .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
             .frame(width: 44, height: 44)
+    }
+}
+
+private struct ContextWindowButton: View {
+    let usage: ContextWindowUsage
+    @State private var showsDetails = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        Button {
+            showsDetails = true
+        } label: {
+            ZStack {
+                Circle().stroke(Color.secondary.opacity(0.35), lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: usage.usedFraction)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 25, height: 25)
+            .frame(width: 44, height: 44)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Context window")
+        .accessibilityValue("\(compactTokens(usage.used)) used of \(compactTokens(usage.size))")
+        .accessibilityHint("Show context window usage")
+        .accessibilityIdentifier("context-window-usage")
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Context window")
+                    .font(.subheadline.weight(.semibold))
+                Text("\(compactTokens(usage.used)) used / \(compactTokens(usage.size))")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("context-window-detail")
+            }
+            .padding(14)
+            .presentationCompactAdaptation(.popover)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { showsDetails = false }
+        }
+    }
+
+    private func compactTokens(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if value >= 1_000 { return "\(Int((Double(value) / 1_000).rounded()))K" }
+        return "\(value)"
     }
 }
 

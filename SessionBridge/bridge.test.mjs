@@ -275,6 +275,17 @@ test('optional machine sync failure still returns sessions with a fallback proje
   assert.equal(result.sessions[0].projectName, 'Local Project');
 });
 
+test('session list includes the machine name from workspace metadata', async () => {
+  const rows = [
+    localSession,
+    { docId: 'machine-machine', meta: { name: 'spike@mac' } },
+  ];
+  const { window } = makeBridge(async () => ({ ok: true }), rows);
+
+  const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
+  assert.equal(result.sessions[0].machineName, 'spike@mac');
+});
+
 test('cancelling a transcript read releases the queued conversation observation', async () => {
   const started = Promise.withResolvers();
   let aborted = false;

@@ -468,7 +468,8 @@ final class AppModel {
         if !sessions.contains(where: { $0.id == sessionID }) {
             sessions.insert(SessionSummary(
                 id: sessionID, title: String(trimmed.prefix(50)), agentName: template.agentName,
-                activity: .idle, preview: trimmed, projectID: projectID, projectName: template.projectName
+                activity: .idle, preview: trimmed, projectID: projectID,
+                projectName: template.projectName, machineName: template.machineName
             ), at: 0)
             sessionsByWorkspace[workspaceID] = sessions
             persistSession()

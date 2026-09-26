@@ -89,6 +89,10 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "sessions")
         tap(session)
 
+        XCTAssertTrue(app.staticTexts["conversation-project-name"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["conversation-project-name"].label, "kurage")
+        XCTAssertEqual(app.staticTexts["conversation-machine-name"].label, "spike@mac")
+
         let review = app.buttons["permission-review"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Allow npm test?"].exists)
@@ -185,6 +189,15 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         let menu = app.buttons["run-config-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        let context = app.buttons["context-window-usage"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        XCTAssertLessThan(context.frame.maxX, menu.frame.minX)
+        XCTAssertEqual(context.label, "Context window")
+        XCTAssertEqual(context.value as? String, "217K used of 258K")
+        tap(context)
+        XCTAssertEqual(app.staticTexts["context-window-detail"].label, "217K used / 258K")
+        app.tables["conversation-transcript"].tap()
+        XCTAssertTrue(app.staticTexts["context-window-detail"].wait(for: \.exists, toEqual: false, timeout: 5))
         tap(field)
         XCTAssertGreaterThan(menu.frame.minY, field.frame.minY)
         XCTAssertGreaterThan(app.buttons["send-follow-up"].frame.minY, field.frame.minY)

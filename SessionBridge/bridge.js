@@ -101,6 +101,10 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
     const visibleSessions = rows.filter((row) => row.docId.startsWith('session-') &&
       !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta.isArchived &&
       !row.meta.parentSessionId);
+    const machineNames = new Map(rows
+      .filter(row => row.docId.startsWith('machine-') && !row.deleted &&
+        typeof row.meta?.name === 'string' && row.meta.name.length > 0)
+      .map(row => [row.docId.slice('machine-'.length), row.meta.name]));
     const localProjectNames = new Map();
     const machineIDs = new Set(visibleSessions
       .filter((row) => row.meta.project?.kind === 'local')
@@ -159,6 +163,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         preview: row.meta.repoFullName ?? '',
         projectID,
         projectName,
+        machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
           ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
       };

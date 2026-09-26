@@ -98,7 +98,8 @@ final class FixtureLodyClient: LodyClient {
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
         let update = ConversationUpdate(conversation: snapshot, activity: nil, syncState: .live,
-                                        runConfig: try record(sessionID).runConfig)
+                                        runConfig: try record(sessionID).runConfig,
+                                        contextWindowUsage: try record(sessionID).contextWindowUsage)
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
             continuation.finish()
@@ -189,7 +190,8 @@ final class FixtureLodyClient: LodyClient {
             summary: SessionSummary(
                 id: id, title: String(trimmed.prefix(50)), agentName: options.agentConfigID,
                 activity: .idle, preview: trimmed,
-                projectID: projectID, projectName: template.summary.projectName
+                projectID: projectID, projectName: template.summary.projectName,
+                machineName: template.summary.machineName
             ),
             turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)],
             permission: nil,
@@ -365,6 +367,7 @@ struct SessionRecord: Equatable, Sendable {
     var turns: [ConversationTurn]
     var permission: PermissionPrompt?
     var runConfig: SessionRunConfig? = nil
+    var contextWindowUsage: ContextWindowUsage? = nil
     var canRestore: Bool = true
 }
 
@@ -428,7 +431,8 @@ extension SessionRecord {
                 activity: .running,
                 preview: "Running npm test",
                 projectID: "local:machine-1:kurage",
-                projectName: "kurage"
+                projectName: "kurage",
+                machineName: "spike@mac"
             ),
             turns: [
                 ConversationTurn(id: "tests-user", author: .user, text: "Run the tests again"),
@@ -449,7 +453,8 @@ extension SessionRecord {
                 activity: .idle,
                 preview: "Latest reply in long conversation",
                 projectID: "local:machine-1:kurage",
-                projectName: "kurage"
+                projectName: "kurage",
+                machineName: "spike@mac"
             ),
             turns: (1...20).flatMap { number in
                 [
@@ -462,7 +467,8 @@ extension SessionRecord {
                 ]
             },
             permission: nil,
-            runConfig: .fixtureReasoning
+            runConfig: .fixtureReasoning,
+            contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000)
         ),
         SessionRecord(
             summary: SessionSummary(
@@ -472,7 +478,8 @@ extension SessionRecord {
                 activity: .idle,
                 preview: "Waiting for you",
                 projectID: "local:machine-1:prism",
-                projectName: "prism"
+                projectName: "prism",
+                machineName: "spike@mac"
             ),
             turns: [
                 ConversationTurn(
