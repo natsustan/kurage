@@ -286,3 +286,22 @@ test('a legacy template inherits its own effective configuration without an agen
   assert.equal(config.resume, undefined);
   assert.equal(rows.get('session-new').agentConfigId, undefined);
 });
+
+for (const templateID of [undefined, 'removed-config', 'cfg']) {
+  test(`provider round trips preserve the template agent (${templateID ?? 'legacy'})`, async () => {
+    const { repo, rows, docs } = fixture();
+    rows.get('session-template').agentConfigId = templateID;
+    const initial = await newSessionOptions(repo, 'ws', 'template');
+    const switched = await newSessionOptions(repo, 'ws', 'template', 'claude');
+    assert.equal(switched.agentConfigID, 'claude');
+    assert.deepEqual(switched.providers, initial.providers);
+    const templateValue = templateID ?? '';
+    assert.equal(switched.providers.filter(provider => provider.value === templateValue).length, 1);
+    const restored = await newSessionOptions(repo, 'ws', 'template', templateValue);
+    assert.deepEqual(restored, initial);
+    await assert.rejects(newSessionOptions(repo, 'ws', 'template', 'unknown'), /Provider is unavailable/);
+    assert.equal(await start(repo, { agentConfigID: templateValue }), 'sent');
+    assert.equal(docs.get('session-new').getList('history').toJSON()[0].inputConfig.modeId, 'bypass');
+    assert.equal(rows.get('session-new').agentConfigId, templateID);
+  });
+}

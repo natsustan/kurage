@@ -85,15 +85,14 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   }
   signal?.throwIfAborted();
   let providers = flock ? readProviders(flock, meta.machineId) : [];
-  const chosenID = text(agentConfigID) ?? meta.agentConfigId;
-  let agent = providers.find(provider => provider.id === chosenID);
-  if (!agent) {
-    if (text(agentConfigID) && agentConfigID !== meta.agentConfigId) {
-      throw new Error('Provider is unavailable for a new session');
-    }
-    agent = { id: meta.agentConfigId, name: meta.agentType, cliType: meta.cliType, agentType: meta.agentType };
-    providers = [agent, ...providers];
+  // The inherited agent remains selectable even while viewing another provider.
+  if (!providers.some(provider => provider.id === meta.agentConfigId)) {
+    providers = [{ id: meta.agentConfigId, name: meta.agentType,
+      cliType: meta.cliType, agentType: meta.agentType }, ...providers];
   }
+  const chosenID = text(agentConfigID) ?? meta.agentConfigId;
+  const agent = providers.find(provider => provider.id === chosenID);
+  if (!agent) throw new Error('Provider is unavailable for a new session');
   const baseline = text(agent.id)
     ? await readBaseline(repo, rows, meta, agent.id, signal)
     : await readDocumentBaseline(repo, templateDocID, signal);
