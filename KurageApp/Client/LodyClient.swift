@@ -43,6 +43,7 @@ protocol LodyClient: AnyObject {
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice?
@@ -99,7 +100,15 @@ extension LodyClient {
 
     @discardableResult
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
-        try await send(text, runConfig: nil, sessionID: sessionID, workspaceID: workspaceID)
+        try await send(text, runConfig: nil, turnID: UUID().uuidString.lowercased(),
+                       sessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    @discardableResult
+    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: SessionSummary.ID,
+              workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
+        try await send(text, runConfig: runConfig, turnID: UUID().uuidString.lowercased(),
+                       sessionID: sessionID, workspaceID: workspaceID)
     }
 
     var cachedSession: SessionCache? { nil }

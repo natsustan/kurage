@@ -2,6 +2,34 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testSendShowsBubbleBeforeDeliveryAndKeepsOneTurn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-slow-send"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Instant bubble")
+        tap(app.buttons["send-follow-up"])
+
+        let message = app.staticTexts["Instant bubble"]
+        XCTAssertTrue(message.waitForExistence(timeout: 2))
+        XCTAssertFalse(app.descendants(matching: .any)["sending-turn"].exists)
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        XCTAssertFalse(app.staticTexts["Sending…"].exists)
+        attachScreen(app, name: "optimistic-send")
+        // The fixture takes three seconds to confirm delivery; the bubble is already visible.
+        Thread.sleep(forTimeInterval: 4)
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Instant bubble").count, 1)
+    }
+
+    @MainActor
     func testSessionListModesAndMoreMenu() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

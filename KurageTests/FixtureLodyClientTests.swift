@@ -56,9 +56,11 @@ struct FixtureLodyClientTests {
 
     @Test func sendAppendsTrimmedUserTurn() async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
-        try await client.send("  look again  ", sessionID: "session-pr", workspaceID: "ws-demo")
+        try await client.send("  look again  ", runConfig: nil, turnID: "local-turn",
+                              sessionID: "session-pr", workspaceID: "ws-demo")
 
         let conversation = try await client.conversation(sessionID: "session-pr", workspaceID: "ws-demo")
+        #expect(conversation.turns.last?.id == "local-turn")
         #expect(conversation.turns.last?.author == .user)
         #expect(conversation.turns.last?.text == "look again")
 
@@ -463,6 +465,7 @@ private final class DeferredSessionClient: LodyClient {
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {

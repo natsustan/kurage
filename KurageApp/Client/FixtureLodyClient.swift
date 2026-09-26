@@ -23,17 +23,20 @@ final class FixtureLodyClient: LodyClient {
     private var failStartAndArchiveProjectOnce: Bool
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
+    private let sendDelay: Duration?
 
     init(
         startsSignedIn: Bool = false,
         records: [SessionRecord] = SessionRecord.samples,
         archivedIDs: Set<SessionSummary.ID>? = nil,
         failingConversationIDsOnce: Set<String> = [],
-        failStartAndArchiveProjectOnce: Bool = false
+        failStartAndArchiveProjectOnce: Bool = false,
+        sendDelay: Duration? = nil
     ) {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
+        self.sendDelay = sendDelay
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -110,6 +113,7 @@ final class FixtureLodyClient: LodyClient {
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {
@@ -117,6 +121,7 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        if let sendDelay { try await Task.sleep(for: sendDelay) }
 
         try update(sessionID) { record in
             if let runConfig {
@@ -124,7 +129,7 @@ final class FixtureLodyClient: LodyClient {
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
             }
-            let turn = ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)
+            let turn = ConversationTurn(id: turnID, author: .user, text: trimmed)
             record.turns.append(turn)
             record.summary.preview = trimmed
         }

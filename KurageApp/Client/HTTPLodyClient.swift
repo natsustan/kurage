@@ -501,6 +501,7 @@ final class HTTPLodyClient: LodyClient {
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {
@@ -514,7 +515,7 @@ final class HTTPLodyClient: LodyClient {
         }
         // A retry resumes the original turn, including the configuration it was authored with.
         let pending = pendingSends[key] ?? PendingSend(
-            text: trimmed, turnID: UUID().uuidString.lowercased(), runConfig: runConfig
+            text: trimmed, turnID: turnID, runConfig: runConfig
         )
         let turnID = pending.turnID
         pendingSends[key] = pending

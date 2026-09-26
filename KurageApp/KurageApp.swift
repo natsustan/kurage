@@ -8,7 +8,8 @@ struct KurageApp: App {
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
             ? FixtureLodyClient(failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
-                failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"))
+                failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"),
+                sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil)
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

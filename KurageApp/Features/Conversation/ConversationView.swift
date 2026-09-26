@@ -35,6 +35,7 @@ private struct ConversationContent: View {
     @State private var conversation: Conversation?
     @State private var draft = ""
     @State private var isSending = false
+    @State private var pendingTurns: [ConversationTurn] = []
     @State private var isCancelling = false
     @State private var scrollRequestID = 0
     @State private var isLoading = true
@@ -43,6 +44,7 @@ private struct ConversationContent: View {
     @State private var showsConnectionIndicator = false
     @State private var showsConnectionMessage = false
     @State private var previousPendingText: String?
+    @State private var previousPendingTurnID: ConversationTurn.ID?
     @State private var previousPendingWorkspaceID: String?
     @State private var runConfigState = ConversationRunConfigState()
     @State private var contextWindowUsage: ContextWindowUsage?
@@ -55,9 +57,16 @@ private struct ConversationContent: View {
         return model.cachedConversation(sessionID: sessionID)
     }
 
+    private var displayedTurns: [ConversationTurn] {
+        let turns = displayedConversation?.turns ?? []
+        guard !pendingTurns.isEmpty else { return turns }
+        let receivedIDs = Set(turns.map(\.id))
+        return turns + pendingTurns.filter { !receivedIDs.contains($0.id) }
+    }
+
     var body: some View {
         ConversationLayout(
-            turns: displayedConversation?.turns ?? [],
+            turns: displayedTurns,
             isLoading: isLoading,
             scrollRequestID: scrollRequestID,
             loadImage: { image, variant in
@@ -149,7 +158,7 @@ private struct ConversationContent: View {
             do {
                 try await model.observeConversation(sessionID: sessionID) { update in
                     guard isCurrentWorkspace else { return }
-                    conversation = update.conversation
+                    receiveConversation(update.conversation)
                     runConfigState.receive(update.runConfig)
                     contextWindowUsage = update.contextWindowUsage
                     isLoading = false
@@ -187,49 +196,88 @@ private struct ConversationContent: View {
         showsConnectionMessage = true
     }
 
+    private func receiveConversation(_ latest: Conversation) {
+        conversation = latest
+        guard !pendingTurns.isEmpty else { return }
+        let receivedIDs = Set(latest.turns.map(\.id))
+        pendingTurns.removeAll { receivedIDs.contains($0.id) }
+    }
+
     private func sendDraft() {
         guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let turnID: String
+        if previousPendingText == trimmed, previousPendingWorkspaceID == model.selectedWorkspaceID,
+           let previousPendingTurnID {
+            turnID = previousPendingTurnID
+        } else {
+            turnID = UUID().uuidString.lowercased()
+        }
         let choice = runConfigState.choice
         draft = ""
         scrollRequestID += 1
         banner = nil
         isSending = true
+        if !displayedTurns.contains(where: { $0.id == turnID }) {
+            pendingTurns.append(ConversationTurn(id: turnID, author: .user, text: trimmed))
+        }
         Task {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, runConfig: choice, sessionID: sessionID)
+                let sentChoice = try await model.send(text, runConfig: choice, turnID: turnID,
+                                                       sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
                 previousPendingText = nil
+                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 runConfigState.didSend(sentChoice)
                 if let latest = try? await model.conversation(sessionID: sessionID) {
-                    conversation = latest
+                    receiveConversation(latest)
                 }
             } catch LodyClientError.deliveryUnconfirmed {
+                guard isCurrentWorkspace else { return }
+                pendingTurns.removeAll { $0.id == turnID }
                 draft = text
+                previousPendingText = trimmed
+                previousPendingTurnID = turnID
+                previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Send could not be confirmed. Retry to resume the same message."
             } catch LodyClientError.previousSendPending(let previousText) {
+                guard isCurrentWorkspace else { return }
+                pendingTurns.removeAll { $0.id == turnID }
                 draft = text
                 previousPendingText = previousText
+                if previousText != trimmed { previousPendingTurnID = nil }
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "An earlier send is unconfirmed. Retry it before sending different text."
             } catch LodyClientError.sendSuperseded {
+                guard isCurrentWorkspace else { return }
+                pendingTurns.removeAll { $0.id == turnID }
                 draft = text
                 previousPendingText = nil
+                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
+                guard isCurrentWorkspace else { return }
+                pendingTurns.removeAll { $0.id == turnID }
                 draft = text
                 banner = "Wait for the current reply before sending."
             } catch is CancellationError {
+                pendingTurns.removeAll { $0.id == turnID }
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
+                pendingTurns.removeAll { $0.id == turnID }
                 draft = text
+                previousPendingText = trimmed
+                previousPendingTurnID = turnID
+                previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Could not confirm send. Retry to resume the same message."
             }
         }
@@ -261,28 +309,40 @@ private struct ConversationContent: View {
     private func retryPreviousSend() {
         guard isCurrentWorkspace, !isSending, let text = previousPendingText,
               previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
+        let turnID = previousPendingTurnID
         isSending = true
+        if let turnID, !displayedTurns.contains(where: { $0.id == turnID }) {
+            pendingTurns.append(ConversationTurn(id: turnID, author: .user, text: text))
+        }
         banner = nil
         Task {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, sessionID: sessionID)
+                let sentChoice = try await model.send(text,
+                    turnID: turnID ?? UUID().uuidString.lowercased(), sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
+                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message confirmed. Review your draft before sending."
                 if let latest = try? await model.conversation(sessionID: sessionID) {
-                    conversation = latest
+                    receiveConversation(latest)
                 }
             } catch LodyClientError.sendSuperseded {
+                guard isCurrentWorkspace else { return }
+                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
                 previousPendingText = nil
+                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message was replaced. You can send your draft as a new message."
             } catch is CancellationError {
+                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
+                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
                 banner = "Earlier send is still unconfirmed. Retry it before sending different text."
             }
         }
@@ -468,11 +528,6 @@ private struct ConversationFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if isSending {
-                Text("Sending…")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
             if let banner {
                 Text(banner)
                     .font(.footnote)
