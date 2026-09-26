@@ -71,6 +71,57 @@ struct HTTPLodyClientTests {
         #expect(!client.supportsSessionCreation)
     }
 
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func sessionStartsExcludeConcurrentRetriesAndReleaseAfterFailure(cancel: Bool) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let (requests, signal) = AsyncStream<PendingAuthRequest>.makeStream()
+        DeferredAuthURLProtocol.onStart = { request in
+            if request.request.url?.path == "/api/auth/get-session" {
+                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            } else {
+                let pending = PendingAuthRequest()
+                pending.capture(request)
+                signal.yield(pending)
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil; signal.finish() }
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store,
+                                    cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        func start(project: String = "p", workspace: String = "work") async throws -> String {
+            try await client.startSession("First", agentConfigID: nil, selections: [], projectID: project,
+                                          templateSessionID: "t", workspaceID: workspace)
+        }
+        var iterator = requests.makeAsyncIterator()
+        let first = Task { try await start() }
+        let request = try #require(await iterator.next())
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await start() }
+        // Other projects and workspaces do not share the in-flight lock.
+        for (project, workspace) in [("q", "work"), ("p", "other")] {
+            let independent = Task { try await start(project: project, workspace: workspace) }
+            let independentRequest = try #require(await iterator.next())
+            independentRequest.respond(status: 503, data: Data())
+            await #expect(throws: LodyClientError.unreachable) { try await independent.value }
+        }
+        if cancel {
+            first.cancel()
+            await #expect(throws: CancellationError.self) { try await first.value }
+        } else {
+            request.respond(status: 503, data: Data())
+            await #expect(throws: LodyClientError.unreachable) { try await first.value }
+        }
+        // The lock is released, while the unconfirmed text remains protected.
+        await #expect(throws: LodyClientError.previousSendPending("First")) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        let retry = Task { try await start() }
+        let retryRequest = try #require(await iterator.next())
+        retryRequest.respond(status: 503, data: Data())
+        await #expect(throws: LodyClientError.unreachable) { try await retry.value }
+    }
+
     private static var isolatedCacheURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }

@@ -38,8 +38,12 @@ async function readBaseline(repo, rows, meta, agentConfigID, signal) {
     });
   const source = candidates[0];
   if (!source) return {};
-  const handle = await repo.openPersistedDoc(source.docId);
-  if (!synced(await repo.sync({ scope: 'doc', docIds: [source.docId], requireTransports: ['cloud'], signal }))) {
+  return readDocumentBaseline(repo, source.docId, signal);
+}
+
+async function readDocumentBaseline(repo, docID, signal) {
+  const handle = await repo.openPersistedDoc(docID);
+  if (!synced(await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal }))) {
     throw new Error('Session history sync failed');
   }
   const inherited = effectiveRunConfig(
@@ -91,7 +95,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     providers = [agent, ...providers];
   }
   const baseline = text(agent.id)
-    ? await readBaseline(repo, rows, meta, agent.id, signal) : {};
+    ? await readBaseline(repo, rows, meta, agent.id, signal)
+    : await readDocumentBaseline(repo, templateDocID, signal);
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   return {

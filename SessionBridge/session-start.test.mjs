@@ -260,3 +260,29 @@ for (const stage of ['machine', 'history']) {
     await assert.rejects(pending, { name: 'AbortError' });
   });
 }
+
+test('a legacy template inherits its own effective configuration without an agent config ID', async () => {
+  const { repo, rows, docs } = fixture();
+  delete rows.get('session-template').agentConfigId;
+  // Another legacy agent must not become the baseline merely because both IDs are absent.
+  delete rows.get('session-claude-elsewhere').agentConfigId;
+  rows.get('session-claude-elsewhere').project.localProjectId = 'proj';
+  const doc = docs.get('session-template');
+  const history = doc.getList('history');
+  const turn = history.toJSON()[0];
+  history.delete(0, 1);
+  history.push({ ...turn, inputConfig: { ...turn.inputConfig, mcpServerIds: ['tools'], resume: true } });
+  doc.commit();
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.agentConfigID, '');
+  assert.equal(options.runConfig, null);
+  assert.equal(await start(repo), 'sent');
+  const config = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(config.modeId, 'bypass');
+  assert.equal(config.modelId, 'gpt-5.5');
+  assert.deepEqual(config.configOptionValues, { reasoning_effort: 'high' });
+  assert.deepEqual(config.mcpServerIds, ['tools']);
+  assert.equal(config.agentRoleId, undefined);
+  assert.equal(config.resume, undefined);
+  assert.equal(rows.get('session-new').agentConfigId, undefined);
+});

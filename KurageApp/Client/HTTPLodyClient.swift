@@ -65,6 +65,7 @@ final class HTTPLodyClient: LodyClient {
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
     private var pendingSends: [SendKey: PendingSend] = [:]
     private var pendingStarts: [StartKey: PendingStart] = [:]
+    private var activeStarts: [StartKey: UUID] = [:]
     private var sessionImageCache: [SessionImageCacheKey: Data] = [:]
     private var sessionImageOrder: [SessionImageCacheKey] = []
     private var sessionImageLoads: [SessionImageCacheKey: SessionImageLoad] = [:]
@@ -216,6 +217,7 @@ final class HTTPLodyClient: LodyClient {
         streamsAccessCache = [:]
         pendingSends = [:]
         pendingStarts = [:]
+        activeStarts = [:]
         for load in sessionImageLoads.values {
             load.task.cancel()
             for waiter in load.waiters.values { waiter.resume(throwing: LodyClientError.signedOut) }
@@ -562,6 +564,15 @@ final class HTTPLodyClient: LodyClient {
         if let pending = pendingStarts[key], pending.text != trimmed {
             throw LodyClientError.previousSendPending(pending.text)
         }
+        try Task.checkCancellation()
+        // A second replica can append the same business ID before either write
+        // syncs. Keep this lock through bridge teardown, even across page changes.
+        guard activeStarts[key] == nil else { throw LodyClientError.deliveryUnconfirmed }
+        let operationID = UUID()
+        activeStarts[key] = operationID
+        defer {
+            if activeStarts[key] == operationID { activeStarts.removeValue(forKey: key) }
+        }
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
             text: trimmed, sessionID: UUID().uuidString.lowercased(),
@@ -570,6 +581,7 @@ final class HTTPLodyClient: LodyClient {
         pendingStarts[key] = pending
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
         let result = try await bridge.startSession(
