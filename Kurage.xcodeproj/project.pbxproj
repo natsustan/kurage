@@ -13,6 +13,7 @@
 		256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */; };
 		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
 		4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DECA865E619085D6495AE9 /* SignInView.swift */; };
+		4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD05638D968AB68EF4E23886 /* NewSessionView.swift */; };
 		660F47FDE5A3FADAFAB499B6 /* ConversationImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38FAFEC4E8C04B28773FAECF /* ConversationImageView.swift */; };
 		67CAF1EE62C5732FD3B6C298 /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = E19E548C83F201B3073B5E62 /* MarkdownView */; };
 		731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */; };
@@ -33,6 +34,7 @@
 		CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */; };
 		D846FE6BE213A32414FCFCAE /* SessionSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F74E4465617B7E007D2D8DC /* SessionSearch.swift */; };
 		DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */ = {isa = PBXBuildFile; fileRef = AF6B057A72F618ECD2D1FA99 /* session-bridge.html */; };
+		E2FAA4C9BB027013F9DEE334 /* SessionComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD450BD8575DF0264928B18 /* SessionComposer.swift */; };
 		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
 		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
 		EA004FC38EE7E82876F98010 /* ConversationLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B366CEB77792BB4C07117803 /* ConversationLayout.swift */; };
@@ -80,6 +82,7 @@
 		8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyEndpoints.swift; sourceTree = "<group>"; };
 		8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
 		91DECA865E619085D6495AE9 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		9FD450BD8575DF0264928B18 /* SessionComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionComposer.swift; sourceTree = "<group>"; };
 		A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroupTests.swift; sourceTree = "<group>"; };
 		AF6B057A72F618ECD2D1FA99 /* session-bridge.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "session-bridge.html"; sourceTree = "<group>"; };
 		B366CEB77792BB4C07117803 /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
@@ -87,6 +90,7 @@
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
 		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
+		DD05638D968AB68EF4E23886 /* NewSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionView.swift; sourceTree = "<group>"; };
 		EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationImageTests.swift; sourceTree = "<group>"; };
 		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -109,6 +113,7 @@
 				38FAFEC4E8C04B28773FAECF /* ConversationImageView.swift */,
 				B366CEB77792BB4C07117803 /* ConversationLayout.swift */,
 				153B4F2F19120EAF70238123 /* ConversationView.swift */,
+				9FD450BD8575DF0264928B18 /* SessionComposer.swift */,
 			);
 			path = Conversation;
 			sourceTree = "<group>";
@@ -135,6 +140,7 @@
 			isa = PBXGroup;
 			children = (
 				B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */,
+				DD05638D968AB68EF4E23886 /* NewSessionView.swift */,
 				8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */,
 				DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */,
 				1F74E4465617B7E007D2D8DC /* SessionSearch.swift */,
@@ -368,7 +374,9 @@
 				C35151C7EE8619D3E22458FB /* LodyClient.swift in Sources */,
 				B6F2FE2DDB58D20C08631D68 /* LodyEndpoints.swift in Sources */,
 				91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */,
+				4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */,
 				E610F04E9116BF949CD86F67 /* RootView.swift in Sources */,
+				E2FAA4C9BB027013F9DEE334 /* SessionComposer.swift in Sources */,
 				9C7475A61636EE410F2D2EEA /* SessionImageTransport.swift in Sources */,
 				C614E10AF67B279394205AED /* SessionListView.swift in Sources */,
 				7FB5A3A2867FFA5EF3E091CD /* SessionProjectGroup.swift in Sources */,

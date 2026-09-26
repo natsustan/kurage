@@ -208,6 +208,7 @@ enum LodyClientError: Error, Equatable {
     case archivedProjectUnavailable
     case permissionMissing
     case emptyMessage
+    case sessionCreationRejected
     case deliveryUnconfirmed
     case previousSendPending(String)
     case sendSuperseded
@@ -265,6 +266,84 @@ struct SessionRunConfig: Codable, Equatable, Sendable {
 struct RunConfigChoice: Equatable, Sendable {
     var configOptionID: String?
     var value: String
+}
+
+/// Model and reasoning for a new session's first turn. Both are editable:
+/// a new session has no provider context that switching models could discard.
+struct NewSessionRunConfig: Codable, Equatable, Sendable {
+    struct ModelOption: Codable, Equatable, Sendable, Identifiable {
+        var value: String
+        var label: String
+        /// Reasoning choices this model accepts.
+        var reasoning: [SessionRunConfig.Value]
+        var id: String { value }
+    }
+
+    struct Model: Codable, Equatable, Sendable {
+        /// `nil` writes the turn's `modelId`; otherwise a config option value.
+        var configOptionID: String?
+        var value: String
+        var options: [ModelOption]
+    }
+
+    struct Reasoning: Codable, Equatable, Sendable {
+        var configOptionID: String
+        var value: String?
+        /// Used when the agent has no model list to carry per-model choices.
+        var options: [SessionRunConfig.Value]
+    }
+
+    var model: Model?
+    var reasoning: Reasoning?
+
+    var selectedModel: ModelOption? {
+        model.flatMap { model in model.options.first { $0.value == model.value } }
+    }
+
+    var reasoningOptions: [SessionRunConfig.Value] {
+        guard let reasoning else { return [] }
+        return model == nil ? reasoning.options : selectedModel?.reasoning ?? []
+    }
+
+    /// The stored reasoning is kept across model changes and applies only while offered.
+    var selectedReasoning: SessionRunConfig.Value? {
+        reasoningOptions.first { $0.value == reasoning?.value }
+    }
+
+    mutating func selectModel(_ value: String) {
+        guard model?.options.contains(where: { $0.value == value }) == true else { return }
+        model?.value = value
+    }
+
+    mutating func selectReasoning(_ value: String) {
+        guard reasoningOptions.contains(where: { $0.value == value }) else { return }
+        reasoning?.value = value
+    }
+
+
+    /// Model first, so the bridge checks reasoning against the chosen model.
+    var selections: [RunConfigChoice] {
+        var choices: [RunConfigChoice] = []
+        if let model { choices.append(RunConfigChoice(configOptionID: model.configOptionID, value: model.value)) }
+        if let reasoning, let selectedReasoning {
+            choices.append(RunConfigChoice(configOptionID: reasoning.configOptionID, value: selectedReasoning.value))
+        }
+        return choices
+    }
+}
+
+/// A new session runs on its project's machine with one of that machine's agents.
+struct NewSessionOptions: Codable, Equatable, Sendable {
+    var machineName: String
+    /// The chosen agent config. Empty only for a legacy session without one.
+    var agentConfigID: String
+    /// Agent configs on the machine, labelled by name.
+    var providers: [SessionRunConfig.Value]
+    var runConfig: NewSessionRunConfig?
+
+    var provider: SessionRunConfig.Value? {
+        providers.first { $0.value == agentConfigID }
+    }
 }
 
 struct ConversationUpdate: Equatable, Sendable {

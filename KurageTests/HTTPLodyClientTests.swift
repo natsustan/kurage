@@ -43,6 +43,147 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test func changedTextCannotAbandonAnUnconfirmedSessionStart() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store,
+                                    baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        #expect(client.supportsSessionCreation)
+        log.install { _ in (503, Data()) }
+
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.startSession("First", agentConfigID: nil, selections: [], projectID: "local:mac:p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        await #expect(throws: LodyClientError.previousSendPending("First")) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+        #expect(pending.text == "First")
+        #expect(pending.templateSessionID == "t")
+        #expect(client.pendingSessionStarts(workspaceID: "other").isEmpty)
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "other")
+        }
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+        }
+        #expect(client.pendingSessionStarts(workspaceID: "work").first == pending)
+        // Another project is independent.
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "local:mac:q",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        client.signOut()
+        #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+        }
+        #expect(!client.supportsSessionCreation)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ["sent", "unconfirmed", "cancel", "cancel-before-join", "signout"])
+    func concurrentSessionStartsShareResults(outcome: String) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            }
+            return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
+        }
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
+        _ = try #require(await client.restoreSession())
+        func start(project: String = "p", workspace: String = "work", template: String = "t") async throws -> String {
+            try await client.startSession("First", agentConfigID: nil, selections: [], projectID: project,
+                                          templateSessionID: template, workspaceID: workspace)
+        }
+        var calls = starter.started.makeAsyncIterator()
+        let first = Task { try await start() }
+        _ = await calls.next()
+        if outcome == "cancel-before-join" {
+            first.cancel()
+            await #expect(throws: CancellationError.self) { try await first.value }
+        }
+        let (joined, signal) = AsyncStream<Void>.makeStream()
+        let second = Task {
+            signal.yield(())
+            return try await start()
+        }
+        var joinedIterator = joined.makeAsyncIterator()
+        _ = await joinedIterator.next()
+        // Both calls execute on the main actor; the second registers before yielding.
+        #expect(starter.requests.count == 1)
+        await #expect(throws: LodyClientError.previousSendPending("First")) {
+            try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "p",
+                                          templateSessionID: "t", workspaceID: "work")
+        }
+        for (project, workspace) in [("q", "work"), ("p", "other")] {
+            let independent = Task { try await start(project: project, workspace: workspace) }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            starter.finish(index, result: "sent")
+            #expect(try await independent.value == starter.requests[index].sessionID)
+        }
+        if outcome == "signout" {
+            client.signOut()
+            await #expect(throws: LodyClientError.signedOut) { try await first.value }
+            await #expect(throws: LodyClientError.signedOut) { try await second.value }
+            _ = store.write("new-account-token")
+            _ = try #require(await client.restoreSession())
+            let replacement = Task { try await start() }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            starter.finish(0, result: "sent")
+            // Allow the old operation to finish before checking the new one.
+            await Task.yield()
+            starter.finish(index, result: "sent")
+            #expect(try await replacement.value == starter.requests[index].sessionID)
+            #expect(starter.requests[index].sessionID != starter.requests[0].sessionID)
+        } else if outcome == "unconfirmed" {
+            starter.finish(0, result: "unconfirmed")
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await second.value }
+            let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+            let changedTemplateRetry = Task { try await start(template: "newest-template") }
+            _ = await calls.next()
+            let changedIndex = starter.requests.count - 1
+            #expect(starter.requests[changedIndex].sessionID == pending.id)
+            #expect(starter.requests[changedIndex].templateSessionID == "t")
+            starter.finish(changedIndex, result: "unconfirmed")
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await changedTemplateRetry.value }
+            let retry = Task { try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work") }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            #expect(starter.requests[index].sessionID == starter.requests[0].sessionID)
+            #expect(starter.requests[index].turnID == starter.requests[0].turnID)
+            #expect(starter.requests[index].templateSessionID == "t")
+            starter.finish(index, result: "sent")
+            #expect(try await retry.value == starter.requests[0].sessionID)
+            #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+            await #expect(throws: LodyClientError.sessionMissing) {
+                try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work")
+            }
+        } else {
+            if outcome == "cancel" {
+                first.cancel()
+                await #expect(throws: CancellationError.self) { try await first.value }
+            }
+            starter.finish(0, result: "sent")
+            let sessionID = try await second.value
+            #expect(sessionID == starter.requests[0].sessionID)
+            if outcome == "sent" { #expect(try await first.value == sessionID) }
+            #expect(starter.requests.count == 3)
+        }
+    }
+
     private static var isolatedCacheURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
@@ -762,6 +903,37 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
+    @Test(.timeLimit(.minutes(1))) func cancellingNewSessionOptionsStopsTheNativeBridgeRequest() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
+        let requestBox = StreamingRequestBox()
+        StreamingTestURLProtocol.onStart = { requestBox.capture($0); startedSignal.yield(()) }
+        StreamingTestURLProtocol.onStop = { stoppedSignal.yield(()) }
+        defer {
+            StreamingTestURLProtocol.onStart = nil
+            StreamingTestURLProtocol.onStop = nil
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let access = StreamsAccess(token: "test-token", expiresIn: 300,
+                                   gatewayBaseURL: URL(string: "https://example.test"), shardHostSuffix: nil)
+        let bridge = SessionSyncBridge(session: session) { _, _ in access }
+        defer { bridge.close() }
+        let task = Task {
+            try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
+                                               workspaceID: "workspace", access: access)
+        }
+        var requests = started.makeAsyncIterator()
+        _ = await requests.next()
+        #expect(requestBox.authorization() == "Bearer test-token")
+        task.cancel()
+        var cancellations = stopped.makeAsyncIterator()
+        _ = await cancellations.next()
+        if case .success = await task.result { Issue.record("Cancelled options unexpectedly completed") }
+    }
+
     @Test(.timeLimit(.minutes(1))) func forwardsPOSTBodyThroughNativeProxy() async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let requestBox = StreamingRequestBox()
@@ -906,6 +1078,9 @@ private final class StreamingRequestBox: @unchecked Sendable {
     }
     func sendHeaders() { lock.withLock { request?.sendHeaders() } }
     func sendChunk(_ data: Data) { lock.withLock { request?.sendChunk(data) } }
+    func authorization() -> String? {
+        lock.withLock { request?.request.value(forHTTPHeaderField: "Authorization") }
+    }
     func methodAndBody() -> (String?, Data?) {
         lock.withLock {
             guard let request = request?.request else { return (nil, nil) }
@@ -923,5 +1098,33 @@ private final class StreamingRequestBox: @unchecked Sendable {
             }
             return (request.httpMethod, body)
         }
+    }
+}
+
+@MainActor
+private final class DeferredSessionStarter: SessionStarting {
+    struct Request {
+        let sessionID: String
+        let turnID: String
+        let templateSessionID: String
+        let continuation: CheckedContinuation<String, Error>
+    }
+    let started: AsyncStream<Void>
+    private let signal: AsyncStream<Void>.Continuation
+    private(set) var requests: [Request] = []
+
+    init() { (started, signal) = AsyncStream.makeStream() }
+
+    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
+                      workspaceID: String, access: StreamsAccess) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            requests.append(Request(sessionID: sessionID, turnID: turnID, templateSessionID: templateSessionID, continuation: continuation))
+            signal.yield(())
+        }
+    }
+
+    func finish(_ index: Int, result: String) {
+        requests[index].continuation.resume(returning: result)
     }
 }

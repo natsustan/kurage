@@ -57,32 +57,43 @@ export function effectiveRunConfig(turn, runtimeConfig) {
   };
 }
 
-export function projectRunConfig({ cliType, agentType, capability, turn, runtimeConfig }) {
+function capabilityOptions({ cliType, agentType, capability }) {
   const usable = record(capability) && capability.cliType === cliType &&
     capability.agentType === agentType ? capability : undefined;
   const options = usable ? selectOptions(usable) : [];
-  // Registry and custom agents carry the model as a config option value.
-  const probed = cliType === 'registry' || cliType === 'custom';
+  return {
+    usable,
+    // Registry and custom agents carry the model as a config option value.
+    probed: cliType === 'registry' || cliType === 'custom',
+    modelOption: options.find(option => option.category === 'model'),
+    reasoningOption: options.find(option =>
+      option.id === REASONING_EFFORT_CONFIG_ID || option.category === THOUGHT_LEVEL_CATEGORY),
+  };
+}
+
+// An explicitly empty per-model list means the model has no reasoning choice.
+function reasoningChoicesFor(usable, reasoningOption, modelValue) {
+  const efforts = modelValue && Array.isArray(usable?.modelReasoningEfforts?.[modelValue])
+    ? usable.modelReasoningEfforts[modelValue].filter(text) : undefined;
+  if (efforts === undefined) return reasoningOption ? choices(reasoningOption) : [];
+  return efforts.map(value => ({
+    value,
+    label: (reasoningOption ? choices(reasoningOption) : [])
+      .find(choice => choice.value === value)?.label ?? effortLabel(value),
+  }));
+}
+
+export function projectRunConfig({ cliType, agentType, capability, turn, runtimeConfig }) {
+  const { usable, probed, modelOption, reasoningOption } =
+    capabilityOptions({ cliType, agentType, capability });
   const input = effectiveRunConfig(turn, runtimeConfig);
   const runtime = matchingRuntime(turn, runtimeConfig);
   const values = record(input.configOptionValues) ?? {};
 
-  const modelOption = options.find(option => option.category === 'model');
-  const reasoningOption = options.find(option =>
-    option.id === REASONING_EFFORT_CONFIG_ID || option.category === THOUGHT_LEVEL_CATEGORY);
   const modelValue = (probed && modelOption ? text(values[modelOption.id]) : undefined) ??
     text(runtime?.modelId) ?? text(input.modelId) ?? text(modelOption?.currentValue);
   const modelChoices = modelOption ? choices(modelOption) : [];
-
-  const efforts = modelValue && Array.isArray(usable?.modelReasoningEfforts?.[modelValue])
-    ? usable.modelReasoningEfforts[modelValue].filter(text) : undefined;
-  const reasoningChoices = efforts !== undefined
-    ? efforts.map(value => ({
-      value,
-      label: (reasoningOption ? choices(reasoningOption) : [])
-        .find(choice => choice.value === value)?.label ?? effortLabel(value),
-    }))
-    : reasoningOption ? choices(reasoningOption) : [];
+  const reasoningChoices = reasoningChoicesFor(usable, reasoningOption, modelValue);
   const reasoningID = reasoningOption?.id ??
     KNOWN_REASONING_CONFIG_IDS.find(id => text(values[id]));
   const reasoningValue = reasoningID
@@ -108,6 +119,73 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
   }
   if (!model && !reasoning && !editable) return null;
   return { model, reasoning, editable };
+}
+
+const pick = (options, ...candidates) =>
+  candidates.map(text).find(value => value && options.some(option => option.value === value)) ??
+    options[0]?.value;
+
+// A new session has no provider context to preserve, so both the model and
+// its reasoning are editable. `baseline` is the config the first turn inherits.
+export function projectNewSessionRunConfig({ cliType, agentType, capability, baseline }) {
+  const { usable, probed, modelOption, reasoningOption } =
+    capabilityOptions({ cliType, agentType, capability });
+  const values = record(baseline?.configOptionValues) ?? {};
+  const modelChoices = modelOption ? choices(modelOption) : [];
+  const model = modelChoices.length > 0 ? {
+    configOptionID: probed ? modelOption.id : null,
+    value: pick(modelChoices, probed ? values[modelOption.id] : baseline?.modelId,
+      modelOption.currentValue),
+    options: modelChoices.map(choice => ({
+      ...choice, reasoning: reasoningChoicesFor(usable, reasoningOption, choice.value),
+    })),
+  } : null;
+  const reasoning = reasoningOption ? {
+    configOptionID: reasoningOption.id,
+    value: text(values[reasoningOption.id]) ?? text(reasoningOption.currentValue) ?? null,
+    // Used when there is no model list to carry per-model choices.
+    options: reasoningChoicesFor(usable, reasoningOption, model?.value),
+  } : null;
+  if (!model && !reasoning?.options.length) return null;
+  return { model, reasoning };
+}
+
+// Only values the projection offers may reach a new session's first turn.
+// Selections come model first, so reasoning is checked against the chosen model.
+export function applyNewSessionChoices(config, projection, selections) {
+  const model = projection?.model;
+  const reasoning = projection?.reasoning;
+  let modelValue = model?.value;
+  let result = config;
+  for (const choice of selections ?? []) {
+    const id = choice?.configOptionID ?? null;
+    const offers = options => options.some(option => option.value === choice?.value);
+    if (model && id === model.configOptionID && offers(model.options)) {
+      modelValue = choice.value;
+    } else {
+      const options = model
+        ? model.options.find(option => option.value === modelValue)?.reasoning ?? []
+        : reasoning?.options ?? [];
+      if (!reasoning || id !== reasoning.configOptionID || !offers(options)) {
+        throw new Error('Invalid run configuration');
+      }
+    }
+    result = applyRunConfigChoice(result, choice);
+  }
+  // Omitting an unsupported reasoning selection means use the agent default,
+  // not the template's reasoning for a different model.
+  if (reasoning) {
+    const options = model
+      ? model.options.find(option => option.value === modelValue)?.reasoning ?? []
+      : reasoning.options;
+    const inherited = result.configOptionValues?.[reasoning.configOptionID];
+    if (inherited !== undefined && !options.some(option => option.value === inherited)) {
+      const values = { ...result.configOptionValues };
+      delete values[reasoning.configOptionID];
+      result = { ...result, configOptionValues: values };
+    }
+  }
+  return result;
 }
 
 export function applyRunConfigChoice(config, choice) {

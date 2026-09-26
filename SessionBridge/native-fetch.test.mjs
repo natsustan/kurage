@@ -86,3 +86,24 @@ test('POST body reaches the native proxy with exact UTF-8 bytes', async () => {
   await bridge.receive({ id: command.id, type: 'end' });
   assert.equal((await pending).status, 200);
 });
+
+
+test('a scoped reader aborts its native requests without cancelling another reader', async () => {
+  const bridge = harness();
+  const scope = new AbortController();
+  bridge.bindSignal('reader-alias', scope.signal);
+  const cancelled = bridge.fetch('https://example.test/ds/lody/s', {
+    headers: { authorization: 'Bearer reader-alias' },
+  });
+  const continuing = bridge.fetch('https://example.test/ds/lody/s', {
+    headers: { authorization: 'Bearer other-alias' },
+  });
+  await nextCommand(bridge);
+  const [first, second] = bridge.commands.filter(command => command.command === 'start');
+  scope.abort();
+  await assert.rejects(cancelled, { name: 'AbortError' });
+  assert.deepEqual(bridge.commands.filter(command => command.command === 'cancel').map(command => command.id), [first.id]);
+  await bridge.receive({ id: second.id, type: 'headers', status: 200, headers: {} });
+  await bridge.receive({ id: second.id, type: 'end' });
+  assert.equal(await (await continuing).text(), '');
+});

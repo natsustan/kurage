@@ -1,5 +1,13 @@
 import Foundation
 
+/// A process-local creation that must resume its existing session and first turn.
+struct PendingSessionStart: Identifiable, Equatable {
+    let id: SessionSummary.ID
+    let projectID: String
+    let templateSessionID: SessionSummary.ID
+    let text: String
+}
+
 /// App-facing seam for one Lody account.
 ///
 /// The fixture implements this in memory. The HTTP client uses Lody's device
@@ -17,6 +25,8 @@ protocol LodyClient: AnyObject {
     var supportsSessionCancellation: Bool { get }
     var supportsSessionArchiving: Bool { get }
     var supportsPermissionResponses: Bool { get }
+    /// Whether a local project can start a session from its most recent one.
+    var supportsSessionCreation: Bool { get }
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
@@ -37,6 +47,26 @@ protocol LodyClient: AnyObject {
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice?
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
+    /// `templateSessionID` is the project's most recent root session. The new
+    /// session reuses its machine and project and works in the project directory.
+    /// `agentConfigID` picks another agent on that machine; `nil` keeps the template's.
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String?,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> NewSessionOptions
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID
+    /// Returns the new session's ID. An unconfirmed start is retried with the
+    /// same session and turn IDs until it is confirmed.
+    func startSession(
+        _ text: String,
+        agentConfigID: String?,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> SessionSummary.ID
     /// Returns every confirmed archived document session ID, including lifecycle descendants.
     @discardableResult
     func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID]
@@ -81,6 +111,32 @@ extension LodyClient {
     var supportsSessionCancellation: Bool { false }
     var supportsSessionArchiving: Bool { false }
     var supportsPermissionResponses: Bool { false }
+    var supportsSessionCreation: Bool { false }
+
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String?,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> NewSessionOptions {
+        throw LodyClientError.notConnected
+    }
+
+    func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart] { [] }
+
+    func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        throw LodyClientError.sessionMissing
+    }
+
+    func startSession(
+        _ text: String,
+        agentConfigID: String?,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID,
+        workspaceID: WorkspaceSummary.ID
+    ) async throws -> SessionSummary.ID {
+        throw LodyClientError.notConnected
+    }
 
     @discardableResult
     func archiveSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary.ID] {

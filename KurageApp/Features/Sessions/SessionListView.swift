@@ -1,19 +1,33 @@
 import SwiftUI
 
+struct SessionNavigation {
+    enum Route: Hashable {
+        case conversation(SessionSummary.ID)
+        case newSession(NewSessionRoute)
+    }
+
+    var path: [Route] = []
+
+    mutating func completeStart(_ sessionID: SessionSummary.ID, from route: NewSessionRoute) {
+        guard path.last == .newSession(route) else { return }
+        path[path.count - 1] = .conversation(sessionID)
+    }
+}
+
 struct SessionListView: View {
     let model: AppModel
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var archiveFailed = false
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
-    @State private var path = NavigationPath()
+    @State private var navigation = SessionNavigation()
 
     private var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $navigation.path) {
             SessionList(
                 sessions: model.sessions,
                 mode: listMode,
@@ -28,7 +42,9 @@ struct SessionListView: View {
                 searchQuery: $searchQuery,
                 query: searchQuery,
                 searchBody: { model.sessionSearchBody(sessionID: $0) },
-                onOpen: { path.append($0) },
+                canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
+                onOpen: { navigation.path.append(.conversation($0)) },
+                onNewSession: startNewSession,
                 onArchive: { session in Task { await archive(session) } }
             )
             .task(id: isSearchActive) {
@@ -41,14 +57,40 @@ struct SessionListView: View {
             .navigationTitle("Kurage")
             .navigationSubtitle(model.workspaceLabel)
             .refreshable { await model.refreshContent() }
-            .navigationDestination(for: SessionSummary.ID.self) { sessionID in
-                ConversationView(
-                    sessionID: sessionID,
-                    title: model.sessions.first { $0.id == sessionID }?.title ?? "Session",
-                    model: model
-                )
+            .navigationDestination(for: SessionNavigation.Route.self) { destination in
+                switch destination {
+                case .conversation(let sessionID):
+                    ConversationView(
+                        sessionID: sessionID,
+                        title: model.sessions.first { $0.id == sessionID }?.title ?? "Session",
+                        model: model
+                    )
+                case .newSession(let route):
+                    NewSessionView(route: route, model: model) { sessionID in
+                        navigation.completeStart(sessionID, from: route)
+                    }
+                }
             }
             .toolbar {
+                if !model.pendingSessionStarts.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            ForEach(model.pendingSessionStarts) { pending in
+                                Button(String(pending.text.prefix(50))) {
+                                    navigation.path.append(.newSession(NewSessionRoute(
+                                        projectID: pending.projectID,
+                                        projectName: model.sessions.first { $0.projectID == pending.projectID }?.projectName ?? "Project",
+                                        templateSessionID: pending.templateSessionID,
+                                        workspaceGeneration: model.workspaceGeneration
+                                    )))
+                                }
+                            }
+                        } label: {
+                            Label("Unconfirmed starts", systemImage: "arrow.clockwise.circle")
+                        }
+                        .accessibilityIdentifier("pending-session-starts")
+                    }
+                }
                 if model.workspaces.count > 1 {
                     ToolbarItem(placement: .topBarLeading) {
                         Menu {
@@ -108,6 +150,16 @@ struct SessionListView: View {
         }
     }
 
+    private func startNewSession(projectID: String) {
+        guard let template = model.newSessionTemplate(projectID: projectID) else { return }
+        navigation.path.append(.newSession(NewSessionRoute(
+            projectID: projectID,
+            projectName: template.projectName ?? "Project",
+            templateSessionID: template.id,
+            workspaceGeneration: model.workspaceGeneration
+        )))
+    }
+
     private func archive(_ session: SessionSummary) async {
         let generation = model.workspaceGeneration
         do {
@@ -140,7 +192,9 @@ private struct SessionList: View {
     @Binding var searchQuery: String
     let query: String
     let searchBody: (SessionSummary.ID) -> String
+    let canCreateSession: (String) -> Bool
     let onOpen: (SessionSummary.ID) -> Void
+    let onNewSession: (String) -> Void
     let onArchive: (SessionSummary) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
 
@@ -181,6 +235,7 @@ private struct SessionList: View {
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
                     onOpen: onOpen,
                     onToggleProject: toggleProject,
+                    onNewSession: onNewSession,
                     onArchive: onArchive
                 )
                 .ignoresSafeArea(.container, edges: .bottom)
@@ -229,7 +284,8 @@ private struct SessionList: View {
                     id: group.id,
                     name: group.name,
                     collapsed: collapsed,
-                    unassigned: group.id == SessionProjectGroup.unassignedID
+                    unassigned: group.id == SessionProjectGroup.unassignedID,
+                    canCreate: canCreateSession(group.id)
                 ))
                 if !collapsed {
                     rows.append(contentsOf: sessionRows(group.sessions))
@@ -283,7 +339,7 @@ private enum SessionBrowserRow: Hashable {
     case note(text: String, failure: Bool)
     case banner(String)
     case title(String)
-    case project(id: String, name: String, collapsed: Bool, unassigned: Bool)
+    case project(id: String, name: String, collapsed: Bool, unassigned: Bool, canCreate: Bool)
     case session(SessionSummary, snippet: String?, dimmed: Bool)
 
     var id: String {
@@ -291,7 +347,7 @@ private enum SessionBrowserRow: Hashable {
         case .note: "note"
         case .banner: "banner"
         case .title: "title"
-        case let .project(id, _, _, _): "project-\(id)"
+        case let .project(id, _, _, _, _): "project-\(id)"
         case let .session(session, _, _): "session-\(session.id)"
         }
     }
@@ -304,6 +360,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
     var bottomContentInset: CGFloat
     var onOpen: (SessionSummary.ID) -> Void
     var onToggleProject: (String) -> Void
+    var onNewSession: (String) -> Void
     var onArchive: (SessionSummary) -> Void
 
     func makeUIViewController(context: Context) -> SessionBrowserController {
@@ -314,6 +371,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.loadViewIfNeeded()
         controller.onOpen = onOpen
         controller.onToggleProject = onToggleProject
+        controller.onNewSession = onNewSession
         controller.onArchive = onArchive
         controller.bottomContentInset = bottomContentInset
         controller.refreshAction = context.environment.refresh
@@ -333,6 +391,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     private var refreshTask: Task<Void, Never>?
     var onOpen: ((SessionSummary.ID) -> Void)?
     var onToggleProject: ((String) -> Void)?
+    var onNewSession: ((String) -> Void)?
     var onArchive: ((SessionSummary) -> Void)?
     private var canArchive = false
     private var opensSessions = false
@@ -362,6 +421,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         dataSource = UITableViewDiffableDataSource(tableView: tableView) { [weak self] tableView, indexPath, itemID in
             let cell = tableView.dequeueReusableCell(withIdentifier: "row", for: indexPath) as! SessionBrowserCell
             cell.configure(self?.rows[itemID])
+            cell.onNewSession = { [weak self] projectID in self?.onNewSession?(projectID) }
             return cell
         }
         dataSource.defaultRowAnimation = .fade
@@ -424,7 +484,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         switch row {
         case let .session(session, _, _):
             if opensSessions { onOpen?(session.id) }
-        case let .project(id, _, _, _):
+        case let .project(id, _, _, _, _):
             onToggleProject?(id)
         default:
             break
@@ -472,6 +532,19 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     }
 }
 
+/// Keeps the new-session glyph with the title. Taps still cover the full row
+/// height in this column; that target is not part of the button bounds, so it
+/// cannot increase the project row height.
+private final class ProjectNewSessionButton: UIButton {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard let row = superview else { return super.point(inside: point, with: event) }
+        let rowPoint = convert(point, to: row)
+        guard row.bounds.contains(rowPoint) else { return false }
+        let column = convert(bounds, to: row)
+        return (column.minX...column.maxX).contains(rowPoint.x)
+    }
+}
+
 private final class SessionBrowserCell: UITableViewCell {
     private let icon = UIImageView()
     private let leadingSlot = UIView()
@@ -480,9 +553,25 @@ private final class SessionBrowserCell: UITableViewCell {
     private let snippetLabel = UILabel()
     private let textStack = UIStackView()
     private let rowStack = UIStackView()
+    private let newSessionButton = ProjectNewSessionButton(configuration: .plain())
+    private var projectID: String?
+    var onNewSession: ((String) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
+        var buttonConfiguration = UIButton.Configuration.plain()
+        buttonConfiguration.image = UIImage(named: "add")?.withRenderingMode(.alwaysTemplate)
+        buttonConfiguration.baseForegroundColor = .label
+        buttonConfiguration.contentInsets = .zero
+        newSessionButton.configuration = buttonConfiguration
+        newSessionButton.setContentHuggingPriority(.required, for: .horizontal)
+        newSessionButton.setContentHuggingPriority(.defaultLow, for: .vertical)
+        newSessionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        newSessionButton.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        newSessionButton.addAction(UIAction { [weak self] _ in
+            guard let self, let projectID else { return }
+            onNewSession?(projectID)
+        }, for: .primaryActionTriggered)
         backgroundColor = .clear
         selectionStyle = .none
         icon.contentMode = .scaleAspectFit
@@ -499,6 +588,8 @@ private final class SessionBrowserCell: UITableViewCell {
         snippetLabel.numberOfLines = 1
         textStack.axis = .vertical
         textStack.spacing = 2
+        textStack.setContentHuggingPriority(.required, for: .vertical)
+        textStack.setContentCompressionResistancePriority(.required, for: .vertical)
         textStack.addArrangedSubview(titleLabel)
         textStack.addArrangedSubview(snippetLabel)
         rowStack.axis = .horizontal
@@ -508,6 +599,7 @@ private final class SessionBrowserCell: UITableViewCell {
         rowStack.addArrangedSubview(leadingSlot)
         rowStack.addArrangedSubview(icon)
         rowStack.addArrangedSubview(textStack)
+        rowStack.addArrangedSubview(newSessionButton)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
             leadingSlot.widthAnchor.constraint(equalToConstant: 20),
@@ -516,6 +608,8 @@ private final class SessionBrowserCell: UITableViewCell {
             spinner.centerYAnchor.constraint(equalTo: leadingSlot.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 24),
             icon.heightAnchor.constraint(equalToConstant: 18),
+            newSessionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            newSessionButton.heightAnchor.constraint(equalTo: textStack.heightAnchor),
             rowStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             rowStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             rowStack.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -533,6 +627,8 @@ private final class SessionBrowserCell: UITableViewCell {
         spinner.stopAnimating()
         leadingSlot.isHidden = true
         icon.isHidden = true
+        newSessionButton.isHidden = true
+        projectID = nil
         snippetLabel.isHidden = true
         titleLabel.textColor = .label
         titleLabel.font = .preferredFont(forTextStyle: .body)
@@ -562,8 +658,12 @@ private final class SessionBrowserCell: UITableViewCell {
             rowStack.directionalLayoutMargins.top = 20
             rowStack.directionalLayoutMargins.bottom = 18
             accessibilityLabel = text
-        case let .project(id, name, collapsed, unassigned):
+        case let .project(id, name, collapsed, unassigned, canCreate):
             titleLabel.text = name
+            projectID = id
+            newSessionButton.isHidden = !canCreate
+            newSessionButton.accessibilityLabel = "New session in \(name)"
+            newSessionButton.accessibilityIdentifier = "new-session-\(id)"
             titleLabel.font = .preferredFont(forTextStyle: .headline)
             icon.isHidden = false
             if unassigned {

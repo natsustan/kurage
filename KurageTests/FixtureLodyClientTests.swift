@@ -107,6 +107,127 @@ struct FixtureLodyClientTests {
         #expect(update.runConfig?.choosing("flash") == RunConfigChoice(configOptionID: "model", value: "flash"))
     }
 
+    @Test func newSessionStartsInTheTemplateProjectWithChosenConfig() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        #expect(model.newSessionTemplate(projectID: SessionProjectGroup.unassignedID) == nil)
+        #expect(model.newSessionTemplate(projectID: "github:a/b") == nil)
+        let template = try #require(model.newSessionTemplate(projectID: "local:machine-1:prism"))
+        #expect(template.id == "session-pr")
+
+        let inherited = try await model.newSessionOptions(templateSessionID: template.id)
+        #expect(inherited.agentConfigID == "claude")
+        #expect(inherited.providers.map(\.value) == ["claude", "codex"])
+        #expect(inherited.runConfig?.reasoning == nil)
+
+        let codex = try await model.newSessionOptions(templateSessionID: template.id, agentConfigID: "codex")
+        var runConfig = try #require(codex.runConfig)
+        runConfig.selectModel("gpt-5.4-mini")
+        runConfig.selectReasoning("low")
+        let sessionID = try await model.startSession(
+            "  Add a settings screen  ", agentConfigID: "codex", selections: runConfig.selections,
+            projectID: "local:machine-1:prism", templateSessionID: template.id
+        )
+
+        #expect(model.sessions.first?.id == sessionID)
+        #expect(model.sessions.first?.title == "Add a settings screen")
+        #expect(SessionProjectGroup.make(from: model.sessions).first?.id == "local:machine-1:prism")
+        let conversation = try await model.conversation(sessionID: sessionID)
+        #expect(conversation.turns.map(\.text) == ["Add a settings screen"])
+        let config = try #require(await latestRunConfig(model, sessionID: sessionID))
+        #expect(config.model?.value == "gpt-5.4-mini")
+        #expect(config.reasoning?.value == "low")
+
+        await #expect(throws: LodyClientError.notConnected) {
+            try await model.startSession("Wrong project", selections: [],
+                                         projectID: "local:machine-1:kurage", templateSessionID: template.id)
+        }
+    }
+
+    @Test func pendingCreationSurvivesArchivedTemplateAndFailedOptions() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let projectID = "local:machine-1:prism"
+        let template = try #require(model.newSessionTemplate(projectID: projectID))
+        let options = try await model.newSessionOptions(templateSessionID: template.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSession("Recover original task", selections: options.runConfig?.selections ?? [], projectID: projectID,
+                                         templateSessionID: template.id)
+        }
+        let pending = try #require(model.pendingSessionStarts.first)
+        await model.refreshSessions()
+        #expect(model.newSessionTemplate(projectID: projectID) == nil)
+        let configuration = NewSessionConfiguration()
+        await configuration.load(providerID: nil) { provider in
+            try await model.newSessionOptions(templateSessionID: template.id, agentConfigID: provider)
+        }
+        #expect(configuration.loadFailed)
+        #expect(try await model.retrySessionStart(pending) == pending.id)
+        #expect(model.pendingSessionStarts.isEmpty)
+        let conversation = try await client.conversation(sessionID: pending.id, workspaceID: "ws-demo")
+        #expect(conversation.turns.filter { $0.author == .user }.map(\.text) == ["Recover original task"])
+        await #expect(throws: LodyClientError.sessionMissing) { try await model.retrySessionStart(pending) }
+    }
+
+    @Test func signingOutClearsPendingCreationRecovery() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let template = try #require(model.newSessionTemplate(projectID: "local:machine-1:prism"))
+        let options = try await model.newSessionOptions(templateSessionID: template.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSession("Pending", selections: options.runConfig?.selections ?? [], projectID: "local:machine-1:prism",
+                                         templateSessionID: template.id)
+        }
+        #expect(model.pendingSessionStarts.count == 1)
+        model.signOut()
+        #expect(model.pendingSessionStarts.isEmpty)
+        #expect(client.pendingSessionStarts(workspaceID: "ws-demo").isEmpty)
+    }
+
+    @Test func newSessionReasoningFollowsTheChosenModel() throws {
+        let json = """
+        {"machineName":"mac","agentConfigID":"cfg",
+         "providers":[{"value":"claude","label":"Claude Code"},{"value":"cfg","label":"Codex"}],
+         "runConfig":{
+          "model":{"configOptionID":null,"value":"big","options":[
+            {"value":"big","label":"Big","reasoning":[{"value":"low","label":"Low"},{"value":"high","label":"High"}]},
+            {"value":"mini","label":"Mini","reasoning":[{"value":"low","label":"Low"}]}]},
+          "reasoning":{"configOptionID":"reasoning_effort","value":"high","options":[]}}}
+        """
+        let options = try JSONDecoder().decode(NewSessionOptions.self, from: Data(json.utf8))
+        var config = try #require(options.runConfig)
+        #expect(config.selections == [
+            RunConfigChoice(configOptionID: nil, value: "big"),
+            RunConfigChoice(configOptionID: "reasoning_effort", value: "high"),
+        ])
+        let menu = options.menu(config)
+        #expect(menu.sections.map(\.kind) == [.provider, .model, .reasoning])
+        #expect(menu.sections.map(\.selection) == ["cfg", "big", "high"])
+        #expect(menu.providerLabel == "Codex")
+        #expect(menu.modelLabel == "Big")
+        #expect(menu.reasoningLabel == "High")
+        #expect(menu.accessibilitySummary == "Provider Codex, model Big, reasoning High")
+
+        config.selectModel("mini")
+        // High is not offered for Mini, so the agent's default applies.
+        #expect(config.selectedReasoning == nil)
+        #expect(config.selections == [RunConfigChoice(configOptionID: nil, value: "mini")])
+        #expect(options.menu(config).sections.map(\.kind) == [.provider, .model, .reasoning])
+        #expect(options.menu(config).modelLabel == "Mini")
+        #expect(options.menu(config).reasoningLabel == nil)
+        var single = options
+        single.providers = [SessionRunConfig.Value(value: "cfg", label: "Codex")]
+        #expect(single.menu(config).sections.map(\.kind) == [.model, .reasoning])
+        config.selectReasoning("unknown")
+        #expect(config.selectedReasoning == nil)
+        config.selectModel("big")
+        #expect(config.selectedReasoning?.value == "high")
+        config.selectModel("unknown")
+        #expect(config.model?.value == "big")
+    }
+
     private func latestRunConfig(_ model: AppModel, sessionID: String) async -> SessionRunConfig? {
         var latest: SessionRunConfig?
         try? await model.observeConversation(sessionID: sessionID) { latest = $0.runConfig }
@@ -503,5 +624,190 @@ struct ConversationRunConfigStateTests {
         state.didSend(state.choice)
         #expect(state.config?.reasoning?.value == "medium")
         #expect(state.choice == nil)
+    }
+}
+
+@MainActor
+struct NewSessionConfigurationTests {
+    private func options(_ id: String) -> NewSessionOptions {
+        NewSessionOptions(machineName: "mac", agentConfigID: id, providers: [
+            .init(value: "claude", label: "Claude Code"), .init(value: "codex", label: "Codex"),
+        ], runConfig: id == "codex" ? .fixture : .fixtureModelOnly)
+    }
+
+    @Test func prefetchedProvidersSwitchLocallyAndRetainSelections() async {
+        let configuration = NewSessionConfiguration()
+        var requests: [String] = []
+        await configuration.load(providerID: nil) { id in
+            requests.append(id ?? "default")
+            return options(id ?? "claude")
+        }
+        #expect(requests == ["default", "codex"])
+        #expect(configuration.selectProvider("codex"))
+        #expect(!configuration.isLoading)
+        #expect(configuration.runConfig?.selectedReasoning?.value == "high")
+        configuration.selectReasoning("low")
+        #expect(configuration.selectProvider("claude"))
+        #expect(configuration.selectProvider("codex"))
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
+        await configuration.load(providerID: "codex") { _ in
+            Issue.record("A cached provider must not make another request")
+            return options("codex")
+        }
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
+    }
+
+    @Test func failedPrefetchShowsPendingProviderWithoutOldModelsAndCanRetry() async {
+        let configuration = NewSessionConfiguration()
+        await configuration.load(providerID: nil) { id in
+            if id == "codex" { throw LodyClientError.notConnected }
+            return options("claude")
+        }
+        #expect(!configuration.loadFailed)
+        #expect(configuration.selectProvider("codex"))
+        #expect(configuration.menu?.providerLabel == "Codex")
+        #expect(configuration.menu?.modelLabel == nil)
+        #expect(configuration.isLoading)
+        configuration.selectModel("opus")
+        #expect(configuration.runConfig == nil)
+        await configuration.load(providerID: "codex") { _ in throw LodyClientError.notConnected }
+        #expect(configuration.loadFailed)
+        #expect(configuration.selectProvider("codex"))
+        await configuration.load(providerID: "codex") { _ in options("codex") }
+        #expect(!configuration.isLoading)
+        #expect(!configuration.loadFailed)
+    }
+
+    @Test func selectingAProviderReusesItsPendingPrefetch() async {
+        let configuration = NewSessionConfiguration()
+        let (events, eventsContinuation) = AsyncStream<Void>.makeStream()
+        var pending: CheckedContinuation<NewSessionOptions, Never>?
+        let preload = Task {
+            await configuration.load(providerID: nil) { id in
+                guard id == "codex" else { return options("claude") }
+                return await withCheckedContinuation { continuation in
+                    pending = continuation
+                    eventsContinuation.yield(())
+                }
+            }
+        }
+        var iterator = events.makeAsyncIterator()
+        await iterator.next()
+        configuration.selectProvider("codex")
+        preload.cancel()
+        Task { pending?.resume(returning: options("codex")) }
+        await configuration.load(providerID: "codex") { _ in
+            Issue.record("Selecting a pending provider must reuse its prefetch")
+            return options("codex")
+        }
+        await preload.value
+        #expect(configuration.options?.agentConfigID == "codex")
+        #expect(!configuration.isLoading)
+        eventsContinuation.finish()
+    }
+
+    @Test func lateProviderResponseCannotReplaceNewerSelection() async {
+        let configuration = NewSessionConfiguration()
+        await configuration.load(providerID: nil) { id in
+            if id == "codex" { throw LodyClientError.notConnected }
+            return options("claude")
+        }
+        configuration.selectProvider("codex")
+        let (events, eventsContinuation) = AsyncStream<Void>.makeStream()
+        var pending: CheckedContinuation<NewSessionOptions, Never>?
+        let load = Task {
+            await configuration.load(providerID: "codex") { _ in
+                await withCheckedContinuation { continuation in
+                    pending = continuation
+                    eventsContinuation.yield(())
+                }
+            }
+        }
+        var iterator = events.makeAsyncIterator()
+        await iterator.next()
+        configuration.selectProvider("claude")
+        pending?.resume(returning: options("codex"))
+        await load.value
+        #expect(configuration.options?.agentConfigID == "claude")
+        #expect(configuration.runConfig?.selectedModel?.label == "Sonnet")
+        #expect(!configuration.isLoading)
+        eventsContinuation.finish()
+    }
+}
+
+@MainActor
+struct ReasoningPresentationTests {
+    @Test func unorderedProviderEffortsIncreaseFromLeftToRight() {
+        let values = ["medium", "high", "xhigh", "low"]
+        let section = RunConfigMenu.Section(kind: .reasoning,
+            options: values.map { .init(value: $0, label: $0.capitalized) }, selection: "low")
+        #expect(section.options.map(\.value) == ["low", "medium", "high", "xhigh"])
+        var menu = RunConfigMenu(accessibilitySummary: "Grok", sections: [section])
+        #expect(menu.reasoningProgress == 1.0 / 4.0)
+        menu.sections[0].selection = "high"
+        #expect(menu.reasoningProgress == 3.0 / 4.0)
+        menu.sections[0].selection = "xhigh"
+        #expect(menu.reasoningProgress == 1)
+    }
+
+    @Test(arguments: ["none", "off", "disabled"])
+    func actualOffOptionOccupiesZeroWithoutAnExtraTick(off: String) {
+        let section = RunConfigMenu.Section(kind: .reasoning,
+            options: [off, "low", "high"].map { .init(value: $0, label: $0) }, selection: off)
+        #expect(section.reasoningZeroOffset == 0)
+        #expect(section.reasoningTickCount == 3)
+        var menu = RunConfigMenu(accessibilitySummary: "Reasoning", sections: [section])
+        #expect(menu.reasoningProgress == 0)
+        menu.sections[0].selection = "low"
+        #expect(menu.reasoningProgress == 0.5)
+    }
+
+    @Test func missingOrUnavailableReasoningDisplaysFullGauge() {
+        #expect(RunConfigMenu(accessibilitySummary: "Model", sections: []).reasoningProgress == 1)
+        let section = RunConfigMenu.Section(kind: .reasoning,
+            options: [.init(value: "high", label: "High")], selection: "high")
+        #expect(RunConfigMenu(accessibilitySummary: "Model", sections: [section]).reasoningProgress == 1)
+    }
+
+    @Test func aliasesAndOpaqueValuesRetainProtocolValues() {
+        let section = RunConfigMenu.Section(kind: .reasoning, options: [
+            .init(value: "custom", label: "Automatic"),
+            .init(value: "opaque-high", label: "Extra High"),
+            .init(value: "low", label: "Low"),
+            .init(value: "max", label: "Max")
+        ], selection: "opaque-high")
+        #expect(section.options.map(\.value) == ["custom", "low", "opaque-high", "max"])
+        #expect(section.selection == "opaque-high")
+        let models = RunConfigMenu.Section(kind: .model, options: section.options.reversed(), selection: "low")
+        #expect(models.options.map(\.value) == ["max", "opaque-high", "low", "custom"])
+    }
+}
+
+
+@MainActor
+struct SessionNavigationTests {
+    private func route() -> NewSessionRoute {
+        NewSessionRoute(projectID: "local:mac:project", projectName: "Project",
+                        templateSessionID: "template", workspaceGeneration: 1)
+    }
+
+    @Test func lateStartDoesNotReopenAPoppedPageOrReplaceAnotherDestination() {
+        let original = route()
+        var navigation = SessionNavigation()
+        navigation.path = [.newSession(original)]
+        navigation.path.removeLast()
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path.isEmpty)
+
+        navigation.path = [.conversation("another")]
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path == [.conversation("another")])
+
+        let reopened = route()
+        navigation.path = [.newSession(reopened)]
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path == [.newSession(reopened)])
+        navigation.completeStart("created", from: reopened)
+        #expect(navigation.path == [.conversation("created")])
     }
 }

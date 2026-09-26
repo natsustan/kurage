@@ -16,6 +16,11 @@ final class AppModel {
     private let client: any LodyClient
     private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
     private var isRestoringAccount = false
+    private var pendingStartsByWorkspace: [WorkspaceSummary.ID: [PendingSessionStart]] = [:]
+    var pendingSessionStarts: [PendingSessionStart] {
+        guard let workspaceID = selectedWorkspaceID else { return [] }
+        return pendingStartsByWorkspace[workspaceID] ?? []
+    }
 
     private(set) var account: Account?
     private(set) var workspaces: [WorkspaceSummary] = []
@@ -94,6 +99,7 @@ final class AppModel {
     var supportsSessionCancellation: Bool { client.supportsSessionCancellation }
     var supportsSessionArchiving: Bool { client.supportsSessionArchiving }
     var supportsPermissionResponses: Bool { client.supportsPermissionResponses }
+    var supportsSessionCreation: Bool { client.supportsSessionCreation }
     var hasCachedSessions: Bool {
         selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
     }
@@ -176,6 +182,7 @@ final class AppModel {
         authenticationGeneration += 1
         cancelSessionRefresh()
         client.signOut()
+        pendingStartsByWorkspace = [:]
         archiveOperations = [:]
         activeArchiveOperations = [:]
         account = nil
@@ -415,6 +422,83 @@ final class AppModel {
         }
         await refreshSessions(restart: true)
         return sentChoice
+    }
+
+    /// A new session starts from the project's most recent local session.
+    func newSessionTemplate(projectID: String) -> SessionSummary? {
+        guard projectID.hasPrefix("local:") else { return nil }
+        return sessions.first { $0.projectID == projectID }
+    }
+
+    func newSessionOptions(
+        templateSessionID: SessionSummary.ID,
+        agentConfigID: String? = nil
+    ) async throws -> NewSessionOptions {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let options = try await client.newSessionOptions(
+            templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
+        )
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        return options
+    }
+
+    func startSession(
+        _ text: String,
+        agentConfigID: String? = nil,
+        selections: [RunConfigChoice],
+        projectID: String,
+        templateSessionID: SessionSummary.ID
+    ) async throws -> SessionSummary.ID {
+        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID,
+              let template = sessions.first(where: { $0.id == templateSessionID && $0.projectID == projectID })
+        else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
+        let sessionID = try await client.startSession(
+            text, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
+            templateSessionID: templateSessionID, workspaceID: workspaceID
+        )
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !sessions.contains(where: { $0.id == sessionID }) {
+            sessions.insert(SessionSummary(
+                id: sessionID, title: String(trimmed.prefix(50)), agentName: template.agentName,
+                activity: .idle, preview: trimmed, projectID: projectID, projectName: template.projectName
+            ), at: 0)
+            sessionsByWorkspace[workspaceID] = sessions
+            persistSession()
+        }
+        // Navigation opens the session now; the list catches up in the background.
+        Task { await refreshSessions(restart: true) }
+        return sessionID
+    }
+
+    private func refreshPendingStarts(workspaceID: WorkspaceSummary.ID, generation: Int) {
+        guard isCurrentAuthentication(generation) else { return }
+        pendingStartsByWorkspace[workspaceID] = client.pendingSessionStarts(workspaceID: workspaceID)
+    }
+
+    func retrySessionStart(_ pending: PendingSessionStart) async throws -> SessionSummary.ID {
+        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID else {
+            throw LodyClientError.notConnected
+        }
+        let generation = authenticationGeneration
+        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
+        guard client.pendingSessionStarts(workspaceID: workspaceID).contains(pending) else {
+            throw LodyClientError.sessionMissing
+        }
+        // Recovery uses the client's original request, independent of active templates or options.
+        let sessionID = try await client.retrySessionStart(sessionID: pending.id, workspaceID: workspaceID)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        Task { await refreshSessions(restart: true) }
+        return sessionID
     }
 
     func cancelSession(sessionID: SessionSummary.ID) async throws {
