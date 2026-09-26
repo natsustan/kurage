@@ -31,7 +31,7 @@ let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
 
 // Only a replica that authors a new session may create its document stream.
-async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false } = {}) {
+async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false, operationID, signal } = {}) {
   const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
   try {
     const transport = new StreamsTransportAdapter({
@@ -42,8 +42,9 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams 
       flockDocStreamId: (flockDocID) => flockDocID,
       auth: async context => {
         const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-          command: 'auth', workspaceID, refresh: context?.reason === 'unauthorized',
+          command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
         });
+        if (signal) nativeFetch.bindSignal(access.token, signal);
         return access.token;
       },
       baseUrl: gatewayBaseURL,
@@ -205,10 +206,13 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
   }
 };
 
-async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options) {
+async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
+  signal?.throwIfAborted();
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL, options);
   try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+    signal?.throwIfAborted();
+    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+    signal?.throwIfAborted();
     if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
     return await work(repo);
   } finally {
@@ -216,9 +220,18 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options) {
   }
 }
 
-window.kurageNewSessionOptions = (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
-    JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID)));
+window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
+      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal)),
+    { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 window.kurageStartSession = (workspaceID, gatewayBaseURL, request) =>
   withSyncedWriteRepo(workspaceID, gatewayBaseURL,

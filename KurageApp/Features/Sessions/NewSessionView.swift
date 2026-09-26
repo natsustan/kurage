@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct NewSessionRoute: Hashable {
+    let id = UUID()
     let projectID: String
     let projectName: String
     /// The project's most recent session; the new session reuses its machine and, by default, its agent.
@@ -180,6 +181,12 @@ struct NewSessionView: View {
                 )
                 guard isCurrentWorkspace else { return }
                 onStarted(sessionID)
+            } catch LodyClientError.sessionCreationRejected {
+                guard isCurrentWorkspace else { return }
+                configuration.cancelLoads()
+                configuration = NewSessionConfiguration()
+                request = LoadRequest(attempt: request.attempt + 1)
+                banner = "The session was not created. Review the refreshed agent settings and try again."
             } catch LodyClientError.previousSendPending(let previousText) {
                 draft = previousText
                 banner = "An earlier start is unconfirmed. Send it again to resume it."

@@ -50,6 +50,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
     cancelSession: cancel,
+    newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
@@ -361,4 +362,40 @@ test('cancelling an unobserved search read unloads its document', async () => {
   window.kurageCancel('search');
   await outcome;
   assert.equal(repos[0].loaded.size, 0);
+});
+
+
+test('new-session options cancel metadata sync and destroy the temporary reader', async () => {
+  let entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  let observedSignal;
+  const { window, repos } = makeBridge(async ({ signal }) => {
+    observedSignal = signal;
+    entered();
+    await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  });
+  const pending = window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-1');
+  await ready;
+  window.kurageCancel('options-1');
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(observedSignal.aborted, true);
+  assert.equal(repos[0].destroyed, true);
+});
+
+test('new-session options forward cancellation after metadata sync and release their reader', async () => {
+  let entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  const { window, repos } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
+    newSessionOptions: async (repo, workspace, template, agent, signal) => {
+      assert.equal(workspace, 'ws');
+      assert.equal(template, 'template');
+      entered();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  const pending = window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2');
+  await ready;
+  window.kurageCancel('options-2');
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(repos[0].destroyed, true);
 });

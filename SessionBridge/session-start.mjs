@@ -28,7 +28,7 @@ function readProviders(flock, machineID) {
 
 // The most recent session with this agent, preferring the same project, gives
 // the first turn's permission mode, model, options and MCP selection.
-async function readBaseline(repo, rows, meta, agentConfigID) {
+async function readBaseline(repo, rows, meta, agentConfigID, signal) {
   const candidates = rows
     .filter(row => isRootSession(row) && row.meta.machineId === meta.machineId &&
       row.meta.agentConfigId === agentConfigID)
@@ -39,7 +39,7 @@ async function readBaseline(repo, rows, meta, agentConfigID) {
   const source = candidates[0];
   if (!source) return {};
   const handle = await repo.openPersistedDoc(source.docId);
-  if (!synced(await repo.sync({ scope: 'doc', docIds: [source.docId], requireTransports: ['cloud'] }))) {
+  if (!synced(await repo.sync({ scope: 'doc', docIds: [source.docId], requireTransports: ['cloud'], signal }))) {
     throw new Error('Session history sync failed');
   }
   const inherited = effectiveRunConfig(
@@ -56,7 +56,8 @@ async function readBaseline(repo, rows, meta, agentConfigID) {
 // A new session reuses the machine and local project of a recent root session
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.
-async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID) {
+async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal) {
+  signal?.throwIfAborted();
   const rows = await repo.listDoc();
   const templateDocID = `session-${templateSessionID}`;
   const row = rows.find(entry => entry.docId === templateDocID);
@@ -72,11 +73,13 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID)
   const flockDocID = `${workspaceID}:mf:${meta.machineId}`;
   try {
     const machine = await repo.openFlockDoc(flockDocID);
-    const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'] });
+    const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'], signal });
     if (report.ok) flock = machine.flock;
   } catch {
+    signal?.throwIfAborted();
     // Without the machine document only the template's agent is offered, at its inherited values.
   }
+  signal?.throwIfAborted();
   let providers = flock ? readProviders(flock, meta.machineId) : [];
   const chosenID = text(agentConfigID) ?? meta.agentConfigId;
   let agent = providers.find(provider => provider.id === chosenID);
@@ -88,7 +91,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID)
     providers = [agent, ...providers];
   }
   const baseline = text(agent.id)
-    ? await readBaseline(repo, rows, meta, agent.id) : {};
+    ? await readBaseline(repo, rows, meta, agent.id, signal) : {};
+  signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   return {
     meta,
@@ -104,8 +108,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID)
   };
 }
 
-export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID) {
-  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID);
+export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, signal) {
+  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal);
   return {
     machineName: template.machineName,
     agentConfigID: template.agent.id ?? '',
@@ -132,8 +136,6 @@ export async function startSession(repo, workspaceID, {
     return sendText(repo, sessionID, turnID, userID, prompt, timestamp);
   }
 
-  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID);
-  const { meta: source, agent } = template;
   const handle = await repo.openPersistedDoc(docID);
   if (!synced(await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'] }))) {
     return 'unconfirmed';
@@ -141,14 +143,25 @@ export async function startSession(repo, workspaceID, {
   const history = handle.doc.getList('history');
   const entries = history.toJSON();
   const existing = entries.find(entry => entry?.id === turnID);
-  if (existing) {
-    assertSameTurn(existing, userID, prompt);
-  } else {
-    if (entries.length > 0) throw new Error('Session ID belongs to another session');
-    const config = applyNewSessionChoices({
+  if (existing) assertSameTurn(existing, userID, prompt);
+  else if (entries.length > 0) throw new Error('Session ID belongs to another session');
+
+  let template;
+  let config;
+  try {
+    template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID);
+    if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }],
-      cliType: agent.cliType, agentType: agent.agentType, ...template.baseline,
+      cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,
     }, template.runConfig, selections);
+  } catch (error) {
+    // A synced empty document proves there is no first turn to preserve.
+    // Once authored, any error must retain the original retry IDs/configuration.
+    if (!existing) return 'rejected';
+    throw error;
+  }
+  const { meta: source, agent } = template;
+  if (!existing) {
     appendUserTurn(history, { turnID, userID, text: prompt, timestamp, config });
     handle.doc.commit();
     if (!synced(await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'] }))) {

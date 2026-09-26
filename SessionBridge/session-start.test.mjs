@@ -147,15 +147,15 @@ test('an unsynced first turn never publishes the session', async () => {
 
 test('only offered choices and local root templates can start a session', async () => {
   const { repo, rows } = fixture();
-  await assert.rejects(start(repo, { selections: [
+  assert.equal(await start(repo, { selections: [
     { configOptionID: null, value: 'gpt-5.4-mini' },
     { configOptionID: 'reasoning_effort', value: 'high' },
-  ] }), /Invalid run configuration/);
+  ] }), 'rejected');
   rows.get('session-template').isArchived = true;
-  await assert.rejects(start(repo), /unavailable/);
+  assert.equal(await start(repo), 'rejected');
   rows.get('session-template').isArchived = false;
   rows.get('session-template').project = { kind: 'github', repoFullName: 'a/b', branch: 'main' };
-  await assert.rejects(start(repo), /unavailable/);
+  assert.equal(await start(repo), 'rejected');
   assert.equal(rows.has('session-new'), false);
 });
 
@@ -200,3 +200,63 @@ test('a registry agent without reasoning edits the model through its config opti
   );
   assert.equal(projectNewSessionRunConfig({ cliType: 'registry', agentType: 'gemini' }), null);
 });
+
+
+test('a model-only change removes unsupported inherited reasoning and preserves other options', async () => {
+  const { repo, docs } = fixture();
+  assert.equal(await start(repo, { selections: [{ configOptionID: null, value: 'gpt-5.4-mini' }] }), 'sent');
+  const config = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(config.modelId, 'gpt-5.4-mini');
+  assert.equal(config.configOptionValues.reasoning_effort, undefined);
+  const projection = projectNewSessionRunConfig({ cliType: 'builtin', agentType: 'codex', capability,
+    baseline: { modelId: 'gpt-5.5', configOptionValues: { reasoning_effort: 'high', other: 'keep' } } });
+  const baseline = { configOptionValues: { reasoning_effort: 'high', other: 'keep' } };
+  const changed = applyNewSessionChoices(baseline, projection, [{ configOptionID: null, value: 'gpt-5.4-mini' }]);
+  assert.deepEqual(changed.configOptionValues, { other: 'keep' });
+  assert.equal(baseline.configOptionValues.reasoning_effort, 'high');
+  assert.equal(applyNewSessionChoices(baseline, projection, []).configOptionValues.reasoning_effort, 'high');
+});
+
+test('a rejected configuration has no authored turn and accepts corrected selections', async () => {
+  const { repo, rows, docs } = fixture();
+  assert.equal(await start(repo, { selections: [{ configOptionID: null, value: 'removed-model' }] }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
+  assert.equal(docs.get('session-new').getList('history').length, 0);
+  assert.equal(await start(repo, { selections: [{ configOptionID: null, value: 'gpt-5.5' }] }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+});
+
+test('an authored first turn cannot be released as a rejected configuration on retry', async () => {
+  const { repo, rows } = fixture();
+  const sync = repo.sync;
+  let newDocSyncs = 0;
+  repo.sync = async options => options.docIds?.includes('session-new') && ++newDocSyncs === 2
+    ? { outcome: 'failed', ok: false } : sync(options);
+  assert.equal(await start(repo), 'unconfirmed');
+  rows.get('session-template').isArchived = true;
+  await assert.rejects(start(repo), /unavailable/);
+  assert.equal(rows.has('session-new'), false);
+});
+
+for (const stage of ['machine', 'history']) {
+  test(`option cancellation reaches the ${stage} sync without falling back`, async () => {
+    const { repo } = fixture();
+    const controller = new AbortController();
+    const sync = repo.sync;
+    let entered;
+    const ready = new Promise(resolve => { entered = resolve; });
+    repo.sync = async options => {
+      const target = stage === 'machine' ? options.flockDocIds : options.docIds;
+      if (!target) return sync(options);
+      assert.equal(options.signal, controller.signal);
+      entered();
+      await new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+      });
+    };
+    const pending = newSessionOptions(repo, 'ws', 'template', undefined, controller.signal);
+    await ready;
+    controller.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+  });
+}

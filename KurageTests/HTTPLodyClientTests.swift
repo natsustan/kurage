@@ -790,6 +790,37 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
+    @Test(.timeLimit(.minutes(1))) func cancellingNewSessionOptionsStopsTheNativeBridgeRequest() async throws {
+        let (started, startedSignal) = AsyncStream<Void>.makeStream()
+        let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
+        let requestBox = StreamingRequestBox()
+        StreamingTestURLProtocol.onStart = { requestBox.capture($0); startedSignal.yield(()) }
+        StreamingTestURLProtocol.onStop = { stoppedSignal.yield(()) }
+        defer {
+            StreamingTestURLProtocol.onStart = nil
+            StreamingTestURLProtocol.onStop = nil
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StreamingTestURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let access = StreamsAccess(token: "test-token", expiresIn: 300,
+                                   gatewayBaseURL: URL(string: "https://example.test"), shardHostSuffix: nil)
+        let bridge = SessionSyncBridge(session: session) { _, _ in access }
+        defer { bridge.close() }
+        let task = Task {
+            try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
+                                               workspaceID: "workspace", access: access)
+        }
+        var requests = started.makeAsyncIterator()
+        _ = await requests.next()
+        #expect(requestBox.authorization() == "Bearer test-token")
+        task.cancel()
+        var cancellations = stopped.makeAsyncIterator()
+        _ = await cancellations.next()
+        if case .success = await task.result { Issue.record("Cancelled options unexpectedly completed") }
+    }
+
     @Test(.timeLimit(.minutes(1))) func forwardsPOSTBodyThroughNativeProxy() async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let requestBox = StreamingRequestBox()
@@ -934,6 +965,9 @@ private final class StreamingRequestBox: @unchecked Sendable {
     }
     func sendHeaders() { lock.withLock { request?.sendHeaders() } }
     func sendChunk(_ data: Data) { lock.withLock { request?.sendChunk(data) } }
+    func authorization() -> String? {
+        lock.withLock { request?.request.value(forHTTPHeaderField: "Authorization") }
+    }
     func methodAndBody() -> (String?, Data?) {
         lock.withLock {
             guard let request = request?.request else { return (nil, nil) }

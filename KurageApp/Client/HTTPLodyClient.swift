@@ -579,6 +579,10 @@ final class HTTPLodyClient: LodyClient {
             workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        if result == "rejected" {
+            if pendingStarts[key]?.sessionID == pending.sessionID { pendingStarts.removeValue(forKey: key) }
+            throw LodyClientError.sessionCreationRejected
+        }
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
         if pendingStarts[key]?.sessionID == pending.sessionID { pendingStarts.removeValue(forKey: key) }
         return pending.sessionID

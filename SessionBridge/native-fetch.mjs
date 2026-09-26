@@ -2,6 +2,13 @@
 // body chunks retain byte boundaries (including split UTF-8 and SSE frames).
 export function createNativeFetch(send, fallback) {
   const requests = new Map();
+  const scopedSignals = new Map();
+  function bindSignal(token, signal) {
+    if (scopedSignals.has(token)) return;
+    signal.throwIfAborted();
+    scopedSignals.set(token, signal);
+    signal.addEventListener('abort', () => scopedSignals.delete(token), { once: true });
+  }
   async function receive(event) {
     const entry = requests.get(event.id);
     if (!entry) return;
@@ -26,7 +33,10 @@ export function createNativeFetch(send, fallback) {
     }
   }
   function fetch(input, init) {
-    const request = new Request(input, init);
+    let request = new Request(input, init);
+    const token = request.headers.get('authorization')?.replace(/^Bearer /, '');
+    const scope = scopedSignals.get(token);
+    if (scope) request = new Request(request, { signal: AbortSignal.any([request.signal, scope]) });
     if (!request.url.startsWith('https://')) return fallback(input, init);
     if (request.signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
     const id = crypto.randomUUID();
@@ -68,5 +78,5 @@ export function createNativeFetch(send, fallback) {
       })().catch(abort);
     });
   }
-  return { fetch, receive };
+  return { fetch, receive, bindSignal };
 }

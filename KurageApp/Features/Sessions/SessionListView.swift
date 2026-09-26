@@ -1,19 +1,33 @@
 import SwiftUI
 
+struct SessionNavigation {
+    enum Route: Hashable {
+        case conversation(SessionSummary.ID)
+        case newSession(NewSessionRoute)
+    }
+
+    var path: [Route] = []
+
+    mutating func completeStart(_ sessionID: SessionSummary.ID, from route: NewSessionRoute) {
+        guard path.last == .newSession(route) else { return }
+        path[path.count - 1] = .conversation(sessionID)
+    }
+}
+
 struct SessionListView: View {
     let model: AppModel
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var archiveFailed = false
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
-    @State private var path = NavigationPath()
+    @State private var navigation = SessionNavigation()
 
     private var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $navigation.path) {
             SessionList(
                 sessions: model.sessions,
                 mode: listMode,
@@ -29,7 +43,7 @@ struct SessionListView: View {
                 query: searchQuery,
                 searchBody: { model.sessionSearchBody(sessionID: $0) },
                 canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
-                onOpen: { path.append($0) },
+                onOpen: { navigation.path.append(.conversation($0)) },
                 onNewSession: startNewSession,
                 onArchive: { session in Task { await archive(session) } }
             )
@@ -43,18 +57,18 @@ struct SessionListView: View {
             .navigationTitle("Kurage")
             .navigationSubtitle(model.workspaceLabel)
             .refreshable { await model.refreshContent() }
-            .navigationDestination(for: SessionSummary.ID.self) { sessionID in
-                ConversationView(
-                    sessionID: sessionID,
-                    title: model.sessions.first { $0.id == sessionID }?.title ?? "Session",
-                    model: model
-                )
-            }
-            .navigationDestination(for: NewSessionRoute.self) { route in
-                NewSessionView(route: route, model: model) { sessionID in
-                    // Replace the draft page so Back returns to the list.
-                    path.removeLast()
-                    path.append(sessionID)
+            .navigationDestination(for: SessionNavigation.Route.self) { destination in
+                switch destination {
+                case .conversation(let sessionID):
+                    ConversationView(
+                        sessionID: sessionID,
+                        title: model.sessions.first { $0.id == sessionID }?.title ?? "Session",
+                        model: model
+                    )
+                case .newSession(let route):
+                    NewSessionView(route: route, model: model) { sessionID in
+                        navigation.completeStart(sessionID, from: route)
+                    }
                 }
             }
             .toolbar {
@@ -119,12 +133,12 @@ struct SessionListView: View {
 
     private func startNewSession(projectID: String) {
         guard let template = model.newSessionTemplate(projectID: projectID) else { return }
-        path.append(NewSessionRoute(
+        navigation.path.append(.newSession(NewSessionRoute(
             projectID: projectID,
             projectName: template.projectName ?? "Project",
             templateSessionID: template.id,
             workspaceGeneration: model.workspaceGeneration
-        ))
+        )))
     }
 
     private func archive(_ session: SessionSummary) async {

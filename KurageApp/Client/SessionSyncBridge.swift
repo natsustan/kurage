@@ -15,8 +15,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     private var isLoaded = false
     private var loadGeneration = 0
 
-    init(accessProvider: @escaping @MainActor (String, Bool) async throws -> StreamsAccess) {
-        fetchHandler = StreamFetchHandler(accessProvider: accessProvider)
+    init(session: URLSession = URLSession(configuration: .ephemeral), accessProvider: @escaping @MainActor (String, Bool) async throws -> StreamsAccess) {
+        fetchHandler = StreamFetchHandler(session: session, accessProvider: accessProvider)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController.addScriptMessageHandler(
@@ -96,12 +96,20 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
 
     func newSessionOptions(templateSessionID: String, agentConfigID: String?, workspaceID: String,
                            access: StreamsAccess) async throws -> NewSessionOptions {
-        let json = try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL))",
-            workspaceID: workspaceID,
-            access: access,
-            arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull()]
-        )
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
+                            "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
         return try JSONDecoder().decode(NewSessionOptions.self, from: Data(json.utf8))
     }
 
@@ -246,6 +254,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate {
     }
 
     private func cancelSessionRefresh(_ operationID: String) async {
+        fetchHandler.endOperation(operationID)
         guard isLoaded else { return }
         _ = try? await webView.callAsyncJavaScript(
             "window.kurageCancel(operationID)", arguments: ["operationID": operationID],
@@ -431,6 +440,7 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
     private let accessProvider: @MainActor (String, Bool) async throws -> StreamsAccess
     private var accessByToken: [String: StreamsAccess] = [:]
     private var requests: [String: Task<Void, Never>] = [:]
+    private var operationTokens: [String: Set<String>] = [:]
     weak var webView: WKWebView?
     var onUpdate: ((String, [String: Any]) -> Void)?
 
@@ -440,7 +450,17 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         self.accessProvider = accessProvider
     }
 
+    func beginOperation(_ id: String) {
+        operationTokens[id] = []
+    }
+
+    func endOperation(_ id: String) {
+        guard let tokens = operationTokens.removeValue(forKey: id) else { return }
+        for token in tokens { accessByToken.removeValue(forKey: token) }
+    }
+
     func cancelAll() {
+        operationTokens = [:]
         for task in requests.values { task.cancel() }
         requests = [:]
         accessByToken = [:]
@@ -456,8 +476,18 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         if command == "auth", let workspaceID = input["workspaceID"] as? String {
             do {
                 let access = try await accessProvider(workspaceID, input["refresh"] as? Bool ?? false)
-                accessByToken[access.token] = access
-                return (["token": access.token], nil)
+                // A scoped alias identifies this reader even when several replicas
+                // share a Streams token. Only the real token reaches the network.
+                let operationID = input["operationID"] as? String
+                if let operationID, operationTokens[operationID] == nil {
+                    return (nil, "Streams operation cancelled")
+                }
+                let token = operationID == nil ? access.token : UUID().uuidString
+                accessByToken[token] = access
+                if let operationID {
+                    operationTokens[operationID]?.insert(token)
+                }
+                return (["token": token], nil)
             }
             catch { return (nil, "Streams authorization failed") }
         }

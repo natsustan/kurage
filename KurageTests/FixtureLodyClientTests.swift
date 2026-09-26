@@ -740,3 +740,32 @@ struct ReasoningPresentationTests {
         #expect(models.options.map(\.value) == ["max", "opaque-high", "low", "custom"])
     }
 }
+
+
+@MainActor
+struct SessionNavigationTests {
+    private func route() -> NewSessionRoute {
+        NewSessionRoute(projectID: "local:mac:project", projectName: "Project",
+                        templateSessionID: "template", workspaceGeneration: 1)
+    }
+
+    @Test func lateStartDoesNotReopenAPoppedPageOrReplaceAnotherDestination() {
+        let original = route()
+        var navigation = SessionNavigation()
+        navigation.path = [.newSession(original)]
+        navigation.path.removeLast()
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path.isEmpty)
+
+        navigation.path = [.conversation("another")]
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path == [.conversation("another")])
+
+        let reopened = route()
+        navigation.path = [.newSession(reopened)]
+        navigation.completeStart("created", from: original)
+        #expect(navigation.path == [.newSession(reopened)])
+        navigation.completeStart("created", from: reopened)
+        #expect(navigation.path == [.conversation("created")])
+    }
+}

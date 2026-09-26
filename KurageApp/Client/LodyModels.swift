@@ -208,6 +208,7 @@ enum LodyClientError: Error, Equatable {
     case archivedProjectUnavailable
     case permissionMissing
     case emptyMessage
+    case sessionCreationRejected
     case deliveryUnconfirmed
     case previousSendPending(String)
     case sendSuperseded

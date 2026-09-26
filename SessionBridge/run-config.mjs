@@ -172,6 +172,19 @@ export function applyNewSessionChoices(config, projection, selections) {
     }
     result = applyRunConfigChoice(result, choice);
   }
+  // Omitting an unsupported reasoning selection means use the agent default,
+  // not the template's reasoning for a different model.
+  if (reasoning) {
+    const options = model
+      ? model.options.find(option => option.value === modelValue)?.reasoning ?? []
+      : reasoning.options;
+    const inherited = result.configOptionValues?.[reasoning.configOptionID];
+    if (inherited !== undefined && !options.some(option => option.value === inherited)) {
+      const values = { ...result.configOptionValues };
+      delete values[reasoning.configOptionID];
+      result = { ...result, configOptionValues: values };
+    }
+  }
   return result;
 }
 
