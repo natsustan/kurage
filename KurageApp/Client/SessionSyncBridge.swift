@@ -1,10 +1,17 @@
 import Foundation
 import WebKit
 
+@MainActor
+protocol SessionStarting {
+    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
+                      workspaceID: String, access: StreamsAccess) async throws -> String
+}
+
 /// Runs Lody's Flock/Streams client in an isolated bundled WebKit page.
 /// Native URLSession owns network access.
 @MainActor
-final class SessionSyncBridge: NSObject, WKNavigationDelegate {
+final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
     private let fetchHandler: StreamFetchHandler
     private var observers: [String: AsyncThrowingStream<ConversationUpdate, Error>.Continuation] = [:]
     private var snapshots: [String: Conversation] = [:]

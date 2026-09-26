@@ -44,6 +44,12 @@ final class HTTPLodyClient: LodyClient {
         let selections: [RunConfigChoice]
     }
 
+    private struct SessionStartOperation {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<String, Error>]
+    }
+
     private struct SessionImageLoad {
         let id: UUID
         let task: Task<Void, Never>
@@ -65,7 +71,8 @@ final class HTTPLodyClient: LodyClient {
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
     private var pendingSends: [SendKey: PendingSend] = [:]
     private var pendingStarts: [StartKey: PendingStart] = [:]
-    private var activeStarts: [StartKey: UUID] = [:]
+    private var activeStarts: [StartKey: SessionStartOperation] = [:]
+    private let sessionStarter: (any SessionStarting)?
     private var sessionImageCache: [SessionImageCacheKey: Data] = [:]
     private var sessionImageOrder: [SessionImageCacheKey] = []
     private var sessionImageLoads: [SessionImageCacheKey: SessionImageLoad] = [:]
@@ -75,8 +82,10 @@ final class HTTPLodyClient: LodyClient {
         tokenStore: any AuthTokenStore = KeychainAuthTokenStore(),
         baseURL: URL = LodyEndpoints.authBaseURL,
         imageBaseURL: URL = LodyEndpoints.cloudAPIBaseURL,
-        cacheURL: URL? = nil
+        cacheURL: URL? = nil,
+        sessionStarter: (any SessionStarting)? = nil
     ) {
+        self.sessionStarter = sessionStarter
         self.session = session
         self.tokenStore = tokenStore
         self.baseURL = baseURL
@@ -217,6 +226,10 @@ final class HTTPLodyClient: LodyClient {
         streamsAccessCache = [:]
         pendingSends = [:]
         pendingStarts = [:]
+        for operation in activeStarts.values {
+            operation.task.cancel()
+            for waiter in operation.waiters.values { waiter.resume(throwing: LodyClientError.signedOut) }
+        }
         activeStarts = [:]
         for load in sessionImageLoads.values {
             load.task.cancel()
@@ -565,27 +578,66 @@ final class HTTPLodyClient: LodyClient {
             throw LodyClientError.previousSendPending(pending.text)
         }
         try Task.checkCancellation()
-        // A second replica can append the same business ID before either write
-        // syncs. Keep this lock through bridge teardown, even across page changes.
-        guard activeStarts[key] == nil else { throw LodyClientError.deliveryUnconfirmed }
-        let operationID = UUID()
-        activeStarts[key] = operationID
-        defer {
-            if activeStarts[key] == operationID { activeStarts.removeValue(forKey: key) }
-        }
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
             text: trimmed, sessionID: UUID().uuidString.lowercased(),
             turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
         )
         pendingStarts[key] = pending
+        let waiterID = UUID()
+        let sessionID = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if activeStarts[key] != nil {
+                    activeStarts[key]?.waiters[waiterID] = continuation
+                    return
+                }
+                let operationID = UUID()
+                let task = Task {
+                    let result: Result<String, Error>
+                    do {
+                        result = .success(try await performSessionStart(
+                            pending, templateSessionID: templateSessionID, key: key, generation: generation
+                        ))
+                    } catch { result = .failure(error) }
+                    guard activeStarts[key]?.id == operationID,
+                          let operation = activeStarts.removeValue(forKey: key) else { return }
+                    for waiter in operation.waiters.values { waiter.resume(with: result) }
+                }
+                activeStarts[key] = SessionStartOperation(id: operationID, task: task, waiters: [waiterID: continuation])
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                // A disappearing caller must not cancel a write shared by another page.
+                // Keep even an unobserved write registered until its replica finishes.
+                self?.activeStarts[key]?.waiters.removeValue(forKey: waiterID)?.resume(throwing: CancellationError())
+            }
+        }
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return sessionID
+    }
+
+    private func performSessionStart(
+        _ pending: PendingStart, templateSessionID: String, key: StartKey, generation: Int
+    ) async throws -> String {
+        let workspaceID = key.workspaceID
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
-        let bridge = sessionBridge ?? makeSessionBridge()
-        sessionBridge = bridge
+        let bridge: any SessionStarting
+        if let sessionStarter {
+            bridge = sessionStarter
+        } else {
+            let liveBridge = sessionBridge ?? makeSessionBridge()
+            sessionBridge = liveBridge
+            bridge = liveBridge
+        }
         let result = try await bridge.startSession(
-            trimmed, sessionID: pending.sessionID, turnID: pending.turnID, userID: userID,
+            pending.text, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
             agentConfigID: pending.agentConfigID, selections: pending.selections,
             templateSessionID: templateSessionID,
             workspaceID: workspaceID, access: access

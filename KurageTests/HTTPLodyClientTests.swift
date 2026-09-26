@@ -71,55 +71,89 @@ struct HTTPLodyClientTests {
         #expect(!client.supportsSessionCreation)
     }
 
-    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
-    func sessionStartsExcludeConcurrentRetriesAndReleaseAfterFailure(cancel: Bool) async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: ["sent", "unconfirmed", "cancel", "cancel-before-join", "signout"])
+    func concurrentSessionStartsShareResults(outcome: String) async throws {
         let store = MemoryAuthTokenStore()
         _ = store.write("account-token")
-        let (requests, signal) = AsyncStream<PendingAuthRequest>.makeStream()
-        DeferredAuthURLProtocol.onStart = { request in
-            if request.request.url?.path == "/api/auth/get-session" {
-                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
-            } else {
-                let pending = PendingAuthRequest()
-                pending.capture(request)
-                signal.yield(pending)
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
             }
+            return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
         }
-        defer { DeferredAuthURLProtocol.onStart = nil; signal.finish() }
-        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store,
-                                    cacheURL: Self.isolatedCacheURL)
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
         _ = try #require(await client.restoreSession())
         func start(project: String = "p", workspace: String = "work") async throws -> String {
             try await client.startSession("First", agentConfigID: nil, selections: [], projectID: project,
                                           templateSessionID: "t", workspaceID: workspace)
         }
-        var iterator = requests.makeAsyncIterator()
+        var calls = starter.started.makeAsyncIterator()
         let first = Task { try await start() }
-        let request = try #require(await iterator.next())
-        await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await start() }
-        // Other projects and workspaces do not share the in-flight lock.
-        for (project, workspace) in [("q", "work"), ("p", "other")] {
-            let independent = Task { try await start(project: project, workspace: workspace) }
-            let independentRequest = try #require(await iterator.next())
-            independentRequest.respond(status: 503, data: Data())
-            await #expect(throws: LodyClientError.unreachable) { try await independent.value }
-        }
-        if cancel {
+        _ = await calls.next()
+        if outcome == "cancel-before-join" {
             first.cancel()
             await #expect(throws: CancellationError.self) { try await first.value }
-        } else {
-            request.respond(status: 503, data: Data())
-            await #expect(throws: LodyClientError.unreachable) { try await first.value }
         }
-        // The lock is released, while the unconfirmed text remains protected.
+        let (joined, signal) = AsyncStream<Void>.makeStream()
+        let second = Task {
+            signal.yield(())
+            return try await start()
+        }
+        var joinedIterator = joined.makeAsyncIterator()
+        _ = await joinedIterator.next()
+        // Both calls execute on the main actor; the second registers before yielding.
+        #expect(starter.requests.count == 1)
         await #expect(throws: LodyClientError.previousSendPending("First")) {
             try await client.startSession("Edited", agentConfigID: nil, selections: [], projectID: "p",
                                           templateSessionID: "t", workspaceID: "work")
         }
-        let retry = Task { try await start() }
-        let retryRequest = try #require(await iterator.next())
-        retryRequest.respond(status: 503, data: Data())
-        await #expect(throws: LodyClientError.unreachable) { try await retry.value }
+        for (project, workspace) in [("q", "work"), ("p", "other")] {
+            let independent = Task { try await start(project: project, workspace: workspace) }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            starter.finish(index, result: "sent")
+            #expect(try await independent.value == starter.requests[index].sessionID)
+        }
+        if outcome == "signout" {
+            client.signOut()
+            await #expect(throws: LodyClientError.signedOut) { try await first.value }
+            await #expect(throws: LodyClientError.signedOut) { try await second.value }
+            _ = store.write("new-account-token")
+            _ = try #require(await client.restoreSession())
+            let replacement = Task { try await start() }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            starter.finish(0, result: "sent")
+            // Allow the old operation to finish before checking the new one.
+            await Task.yield()
+            starter.finish(index, result: "sent")
+            #expect(try await replacement.value == starter.requests[index].sessionID)
+            #expect(starter.requests[index].sessionID != starter.requests[0].sessionID)
+        } else if outcome == "unconfirmed" {
+            starter.finish(0, result: "unconfirmed")
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
+            await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await second.value }
+            let retry = Task { try await start() }
+            _ = await calls.next()
+            let index = starter.requests.count - 1
+            #expect(starter.requests[index].sessionID == starter.requests[0].sessionID)
+            #expect(starter.requests[index].turnID == starter.requests[0].turnID)
+            starter.finish(index, result: "sent")
+            #expect(try await retry.value == starter.requests[0].sessionID)
+        } else {
+            if outcome == "cancel" {
+                first.cancel()
+                await #expect(throws: CancellationError.self) { try await first.value }
+            }
+            starter.finish(0, result: "sent")
+            let sessionID = try await second.value
+            #expect(sessionID == starter.requests[0].sessionID)
+            if outcome == "sent" { #expect(try await first.value == sessionID) }
+            #expect(starter.requests.count == 3)
+        }
     }
 
     private static var isolatedCacheURL: URL {
@@ -1036,5 +1070,32 @@ private final class StreamingRequestBox: @unchecked Sendable {
             }
             return (request.httpMethod, body)
         }
+    }
+}
+
+@MainActor
+private final class DeferredSessionStarter: SessionStarting {
+    struct Request {
+        let sessionID: String
+        let turnID: String
+        let continuation: CheckedContinuation<String, Error>
+    }
+    let started: AsyncStream<Void>
+    private let signal: AsyncStream<Void>.Continuation
+    private(set) var requests: [Request] = []
+
+    init() { (started, signal) = AsyncStream.makeStream() }
+
+    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
+                      workspaceID: String, access: StreamsAccess) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            requests.append(Request(sessionID: sessionID, turnID: turnID, continuation: continuation))
+            signal.yield(())
+        }
+    }
+
+    func finish(_ index: Int, result: String) {
+        requests[index].continuation.resume(returning: result)
     }
 }
