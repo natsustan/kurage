@@ -9,8 +9,9 @@ const text = value => typeof value === 'string' && value.length > 0 ? value : un
 const INHERITED_CONFIG_KEYS = ['modeId', 'modelId', 'configOptionValues', 'mcpServerIds'];
 const TITLE_LENGTH = 50;
 
-const isRootSession = row => row.docId?.startsWith('session-') && !row.docId.startsWith('session-comment-') &&
-  !row.deleted && !row.meta?.isArchived && !row.meta?.parentSessionId;
+const isRootSession = (row, allowArchived = false) => row.docId?.startsWith('session-') &&
+  !row.docId.startsWith('session-comment-') && !row.deleted &&
+  (allowArchived || !row.meta?.isArchived) && !row.meta?.parentSessionId;
 const activityAt = meta => Number.isFinite(meta?.lastMessageAt)
   ? meta.lastMessageAt : Date.parse(meta?.createdAt ?? '') || 0;
 
@@ -61,14 +62,14 @@ async function readDocumentBaseline(repo, docID, signal) {
 // A new session reuses the machine and local project of a recent root session
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.
-async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal) {
+async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { allowArchived = false } = {}) {
   signal?.throwIfAborted();
   const rows = await repo.listDoc();
   const templateDocID = `session-${templateSessionID}`;
   const row = rows.find(entry => entry.docId === templateDocID);
   const meta = row?.meta;
   const project = meta?.project;
-  if (!row || !isRootSession(row) || project?.kind !== 'local' ||
+  if (!row || !isRootSession(row, allowArchived) || project?.kind !== 'local' ||
       !text(project.localProjectId) || !text(meta.machineId) ||
       !text(meta.cliType) || !text(meta.agentType)) {
     throw new Error('Project is unavailable for a new session');
@@ -159,7 +160,10 @@ export async function startSession(repo, workspaceID, {
   let template;
   let config;
   try {
-    template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID);
+    // Archiving the source must not strand a first turn already authored by this request.
+    // Only a synced, matching turn may resume from an archived template.
+    template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
+      { allowArchived: Boolean(existing) });
     if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }],
       cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,

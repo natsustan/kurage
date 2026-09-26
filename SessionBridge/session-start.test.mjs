@@ -153,6 +153,7 @@ test('only offered choices and local root templates can start a session', async 
     { configOptionID: 'reasoning_effort', value: 'high' },
   ] }), 'rejected');
   rows.get('session-template').isArchived = true;
+  await assert.rejects(newSessionOptions(repo, 'ws', 'template'), /unavailable/);
   assert.equal(await start(repo), 'rejected');
   rows.get('session-template').isArchived = false;
   rows.get('session-template').project = { kind: 'github', repoFullName: 'a/b', branch: 'main' };
@@ -227,17 +228,52 @@ test('a rejected configuration has no authored turn and accepts corrected select
   assert.equal(docs.get('session-new').getList('history').length, 1);
 });
 
-test('an authored first turn cannot be released as a rejected configuration on retry', async () => {
-  const { repo, rows } = fixture();
+test('an authored first turn resumes from an archived template after an unconfirmed sync', async () => {
+  const { repo, rows, docs } = fixture();
   const sync = repo.sync;
   let newDocSyncs = 0;
   repo.sync = async options => options.docIds?.includes('session-new') && ++newDocSyncs === 2
     ? { outcome: 'failed', ok: false } : sync(options);
   assert.equal(await start(repo), 'unconfirmed');
+  const original = docs.get('session-new').getList('history').toJSON();
   rows.get('session-template').isArchived = true;
-  await assert.rejects(start(repo), /unavailable/);
-  assert.equal(rows.has('session-new'), false);
+  assert.equal(await start(repo), 'sent');
+  assert.equal(rows.get('session-new').latestUserMsgId, 'turn-1');
+  assert.deepEqual(docs.get('session-new').getList('history').toJSON(), original);
 });
+
+for (const state of ['archived', 'deleted-template', 'missing-project', 'deleting-project']) {
+  test(`metadata retry after template archival handles ${state} without rewriting the first turn`, async () => {
+    const { repo, rows, docs, flock } = fixture();
+    const upsert = repo.upsertDocMeta;
+    repo.upsertDocMeta = async () => { throw new Error('Metadata unavailable'); };
+    await assert.rejects(start(repo), /Metadata unavailable/);
+    const original = docs.get('session-new').getList('history').toJSON();
+    assert.equal(original.length, 1);
+    repo.upsertDocMeta = upsert;
+    rows.get('session-template').isArchived = true;
+    if (state === 'deleted-template') {
+      const listDoc = repo.listDoc;
+      repo.listDoc = async () => (await listDoc()).map(row =>
+        row.docId === 'session-template' ? { ...row, deleted: true } : row);
+    }
+    if (state === 'missing-project') flock.delete('localProject/proj');
+    if (state === 'deleting-project') flock.set('cmd/deleteLocalProject/proj', {});
+    await assert.rejects(start(repo, { text: 'Different message' }), /another turn/);
+    await assert.rejects(start(repo, { userID: 'another-user' }), /another turn/);
+    if (state === 'archived') {
+      // New selections on a retry cannot replace the durable first-turn configuration.
+      assert.equal(await start(repo, { selections: [{ configOptionID: null, value: 'removed-model' }] }), 'sent');
+      assert.equal(rows.get('session-new').latestUserMsgId, 'turn-1');
+      assert.equal(rows.get('session-new').isArchived, false);
+      assert.equal(rows.get('session-new').agentConfigId, 'cfg');
+    } else {
+      await assert.rejects(start(repo), /unavailable/);
+      assert.equal(rows.has('session-new'), false);
+    }
+    assert.deepEqual(docs.get('session-new').getList('history').toJSON(), original);
+  });
+}
 
 for (const stage of ['machine', 'history']) {
   test(`option cancellation reaches the ${stage} sync without falling back`, async () => {
