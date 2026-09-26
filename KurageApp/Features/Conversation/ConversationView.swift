@@ -40,6 +40,8 @@ private struct ConversationContent: View {
     @State private var isLoading = true
     @State private var banner: String?
     @State private var connectionStatus: String?
+    @State private var showsConnectionIndicator = false
+    @State private var showsConnectionMessage = false
     @State private var previousPendingText: String?
     @State private var previousPendingWorkspaceID: String?
     @State private var runConfigState = ConversationRunConfigState()
@@ -71,6 +73,7 @@ private struct ConversationContent: View {
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
+                connectionMessage: showsConnectionMessage ? connectionStatus : nil,
                 supportsTextSending: model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
                 supportsSessionCancellation: model.supportsSessionCancellation,
@@ -100,7 +103,8 @@ private struct ConversationContent: View {
             ToolbarItem(placement: .principal) {
                 ConversationNavigationTitle(
                     title: title, projectName: session?.projectName,
-                    machineName: session?.machineName, connectionStatus: connectionStatus
+                    machineName: session?.machineName,
+                    connectionStatus: showsConnectionIndicator ? connectionStatus : nil
                 )
             }
             if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
@@ -115,6 +119,9 @@ private struct ConversationContent: View {
                                  active: scenePhase == .active, refreshID: refreshID)) {
             guard scenePhase == .active else { return }
             await observe()
+        }
+        .task(id: scenePhase == .active ? connectionStatus : nil) {
+            await updateConnectionVisibility()
         }
     }
 
@@ -161,6 +168,23 @@ private struct ConversationContent: View {
                 retryDelay = min(retryDelay * 2, 30)
             }
         }
+    }
+
+    private func updateConnectionVisibility() async {
+        guard scenePhase == .active, connectionStatus != nil else {
+            showsConnectionIndicator = false
+            showsConnectionMessage = false
+            return
+        }
+        if !showsConnectionIndicator {
+            do { try await Task.sleep(for: .seconds(1)) }
+            catch { return }
+            showsConnectionIndicator = true
+        }
+        guard !showsConnectionMessage else { return }
+        do { try await Task.sleep(for: .seconds(4)) }
+        catch { return }
+        showsConnectionMessage = true
     }
 
     private func sendDraft() {
@@ -283,12 +307,21 @@ private struct ConversationNavigationTitle: View {
     let machineName: String?
     let connectionStatus: String?
 
+    private var hasSubtitle: Bool {
+        projectName?.isEmpty == false || machineName?.isEmpty == false
+    }
+
     var body: some View {
         VStack(spacing: 1) {
-            Text(title)
-                .font(.headline)
-                .lineLimit(1)
-            if projectName?.isEmpty == false || machineName?.isEmpty == false {
+            HStack(spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                if !hasSubtitle {
+                    connectionIndicator
+                }
+            }
+            if hasSubtitle {
                 HStack(spacing: 4) {
                     if let projectName, !projectName.isEmpty {
                         Text(projectName)
@@ -302,19 +335,28 @@ private struct ConversationNavigationTitle: View {
                         Text(machineName)
                             .accessibilityIdentifier("conversation-machine-name")
                     }
+                    connectionIndicator
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
+        }
+    }
+
+    private var connectionIndicator: some View {
+        Group {
             if let connectionStatus {
-                Text(connectionStatus)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityLabel(connectionStatus)
                     .accessibilityIdentifier("conversation-connection-status")
+            } else {
+                Color.clear
+                    .accessibilityHidden(true)
             }
         }
+        .frame(width: 14, height: 14)
     }
 }
 
@@ -410,6 +452,7 @@ private struct ConversationFooter: View {
     let isCancelling: Bool
     let isSessionRunning: Bool
     let banner: String?
+    let connectionMessage: String?
     let supportsTextSending: Bool
     let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
@@ -434,6 +477,12 @@ private struct ConversationFooter: View {
                 Text(banner)
                     .font(.footnote)
                     .foregroundStyle(.red)
+            }
+            if let connectionMessage {
+                Text(connectionMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("conversation-connection-message")
             }
             if canRetryPrevious {
                 Button("Retry earlier message", action: onRetryPrevious)
