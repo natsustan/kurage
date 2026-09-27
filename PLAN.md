@@ -2,6 +2,8 @@
 
 ## 当前状态
 
+- 已读／未读：列表接入 Lody `lastMessageAt` / `lastReadAt`，未读的空闲会话显示蓝点，运行中保留 spinner，VoiceOver 同时读出运行与阅读状态。详情仅在前台可见、实时同步完成且未被图片／变更／子任务面板遮挡时，以已加载快照的消息时间回写 `lastReadAt`；搜索预加载不写回执。沿用工作区隔离、可取消的 metadata 写入与同步确认，回执失败有限重试，不中断正文；旧回执不覆盖已知的较新已读时间，也不会读取写入时的新消息时间而误清未读。缓存兼容缺少时间戳的旧数据。协议参考 Lody `use-session-actions.ts` 的 `markSessionRead` / `buildSessionActivityPatch` 与 `lib/session-read-receipt.ts`。本轮 128 项 JavaScript 测试、bundle 重建和 126 项 Swift 测试通过；新增桥接时间戳断言后，23 项 fixture 单元测试复跑通过。已读切换 UI 测试在浅色默认字号与深色最大辅助字号通过，截图确认蓝点消除且行文字位置不变。真实账号的跨端同步、断网恢复及后台切换尚未验证。
+
 - 会话管理：列表长按与详情页右上角 ··· 提供 Pin/Unpin、Rename session、Copy Session URL 和红色 Archive。Pinned 单独置顶分组，项目/时间列表不重复显示；项目全部置顶时仍保留本地项目的新建入口。详情页置顶、取消置顶和重命名后留在会话，归档成功后返回。Pin 使用 Lody `isPinned`，重命名写入 `title` 与 `titleSource: user`，独立副本同步并核对 metadata 后更新缓存；复制 `https://lody.ai/{workspaceSlug}/sessions/{sessionID}`，不创建公开分享。旧磁盘缓存缺少置顶字段仍可读取。协议参考 `use-session-actions.ts` 的 `setSessionPinned` / `updateSessionTitle` 与 `loro-app-sidebar.tsx` 的 `copySessionUrl`。本轮 119 项 JavaScript 测试、bundle 重建与 123 项 Swift 测试通过；新增两项 fixture UI 测试在浅色默认字号、深色辅助大字号通过，覆盖两处菜单、项目/时间模式的 Pinned、重命名标题更新、URL 粘贴与归档返回，原有左滑归档回归通过。截图核对菜单红色 Archive 与大字号换行正常。真实账号跨端同步尚未验证。
 
 - 设备码登录、账号恢复、退出登录和工作区列表已经接入 Lody；发送使用当前账号的用户 ID 标记 turn。

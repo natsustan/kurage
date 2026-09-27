@@ -166,12 +166,14 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         projectID,
         projectName,
         isPinned: row.meta.isPinned === true,
+        lastReadAt: Number.isFinite(row.meta.lastReadAt) ? row.meta.lastReadAt : null,
         machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
-          ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
+          ? row.meta.lastMessageAt : null,
+        sortAt: Number.isFinite(row.meta.lastMessageAt) ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
       };
     })
-      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+      .sort((a, b) => b.sortAt - a.sortAt);
     return JSON.stringify({ sessions: projected });
   }, true, controller.signal); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }

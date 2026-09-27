@@ -62,7 +62,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 projectID: metadata.projectID,
                 projectName: metadata.projectName,
                 machineName: metadata.machineName,
-                isPinned: metadata.isPinned
+                isPinned: metadata.isPinned,
+                lastMessageAt: metadata.lastMessageAt, lastReadAt: metadata.lastReadAt
             )
         }
     }
@@ -156,6 +157,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         switch change {
         case .pin(let value): patch = ["isPinned": value]
         case .rename(let title): patch = ["title": title]
+        case .read(let timestamp): patch = ["lastReadAt": timestamp]
         }
         let operationID = UUID().uuidString
         fetchHandler.beginOperation(operationID)
@@ -407,6 +409,8 @@ private struct SessionMetadata: Decodable {
     let projectName: String?
     let machineName: String?
     let isPinned: Bool?
+    let lastMessageAt: Double?
+    let lastReadAt: Double?
 }
 
 private struct SessionSnapshot: Decodable {

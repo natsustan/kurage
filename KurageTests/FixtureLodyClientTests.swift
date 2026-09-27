@@ -138,6 +138,7 @@ struct FixtureLodyClientTests {
         let json = """
         {"sessionID":"s","order":[],"changed":[],"permission":null,"activity":"idle","syncState":"live",
          "contextWindowUsage":{"size":258000,"used":217000},
+         "lastMessageAt":123456,
          "runConfig":{"model":{"value":"flash","label":"Flash"},"reasoning":null,
            "editable":{"kind":"model","configOptionID":"model","options":[{"value":"flash","label":"Flash"}]}}}
         """
@@ -146,6 +147,7 @@ struct FixtureLodyClientTests {
         #expect(update.runConfig?.model?.label == "Flash")
         #expect(update.runConfig?.reasoning == nil)
         #expect(update.runConfig?.choosing("flash") == RunConfigChoice(configOptionID: "model", value: "flash"))
+        #expect(update.lastMessageAt == 123456)
         #expect(update.contextWindowUsage?.used == 217_000)
         #expect(update.contextWindowUsage?.size == 258_000)
         #expect(update.contextWindowUsage?.usedFraction == 217.0 / 258.0)

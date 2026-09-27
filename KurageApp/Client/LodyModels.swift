@@ -20,6 +20,14 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var projectName: String? = nil
     var machineName: String? = nil
     var isPinned: Bool? = nil
+    var lastMessageAt: Double? = nil
+    var lastReadAt: Double? = nil
+
+    var isUnread: Bool {
+        guard let lastMessageAt, lastMessageAt.isFinite else { return false }
+        guard let lastReadAt, lastReadAt.isFinite else { return true }
+        return lastMessageAt > lastReadAt
+    }
 }
 
 struct ArchivedSessionSummary: Identifiable, Equatable, Sendable {
@@ -396,6 +404,7 @@ struct ConversationUpdate: Equatable, Sendable {
     var syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
+    var lastMessageAt: Double? = nil
 }
 
 enum ConversationSyncState: String, Decodable, Sendable {
@@ -417,6 +426,7 @@ struct ConversationPatch: Decodable {
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
+    var lastMessageAt: Double? = nil
 
     func applying(to previous: Conversation) throws -> ConversationUpdate {
         guard previous.sessionID == sessionID, Set(order).count == order.count else {
@@ -434,7 +444,7 @@ struct ConversationPatch: Decodable {
                                        latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
                                        subtasks: replacesSubtasks == true ? subtasks : previous.subtasks),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
-            runConfig: runConfig, contextWindowUsage: contextWindowUsage
+            runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt
         )
     }
 }

@@ -95,6 +95,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
         update.activity = projectSessionActivity(meta.meta.status);
+        update.lastMessageAt = Number.isFinite(meta.meta.lastMessageAt) ? meta.meta.lastMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
         update.contextWindowUsage = usage && Number.isSafeInteger(usage.size) && usage.size > 0 &&
           Number.isSafeInteger(usage.used) && usage.used >= 0

@@ -239,3 +239,16 @@ test('subtask metadata changes appear without parent history edits and stop afte
   assert.equal(h.updates.length, count);
   assert.equal(h.releases(), 2);
 });
+
+test('message timestamps travel with snapshots and metadata-only updates', async () => {
+  const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
+  const h = harness({ meta });
+  await h.start();
+  assert.equal(h.updates[0].lastMessageAt, 100);
+  meta.lastMessageAt = 200;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  assert.deepEqual(h.updates.at(-1).changed, []);
+  h.controller.abort();
+});

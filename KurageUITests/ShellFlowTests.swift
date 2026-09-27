@@ -2,6 +2,26 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testUnreadSessionClearsAfterOpening() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let row = app.descendants(matching: .any)["session-session-long"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        XCTAssertEqual(row.value as? String, "Idle, Unread")
+        attachScreen(app, name: "Unread session")
+        tap(row)
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        tap(app.navigationBars.buttons.element(boundBy: 0))
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let read = NSPredicate(format: "value == %@", "Idle, Read")
+        expectation(for: read, evaluatedWith: row)
+        waitForExpectations(timeout: 5)
+        attachScreen(app, name: "Read session")
+    }
+
+    @MainActor
     func testSubtasksOpenReadOnlyAndReturnToParentDraft() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-subtasks"]

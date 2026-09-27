@@ -374,6 +374,10 @@ final class AppModel {
                sessions[index].activity != activity {
                 sessions[index].activity = activity
             }
+            if let timestamp = update.lastMessageAt,
+               let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+                sessions[index].lastMessageAt = timestamp
+            }
             onUpdate(update)
         }
     }
@@ -544,6 +548,9 @@ final class AppModel {
         let normalized: SessionMetadataChange
         switch change {
         case .pin: normalized = change
+        case .read(let timestamp):
+            guard timestamp.isFinite else { throw LodyClientError.deliveryUnconfirmed }
+            normalized = change
         case .rename(let title):
             let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty, title.utf16.count <= 200 else { throw LodyClientError.deliveryUnconfirmed }
@@ -558,11 +565,21 @@ final class AppModel {
             switch normalized {
             case .pin(let value): sessions[index].isPinned = value
             case .rename(let title): sessions[index].title = title
+            case .read(let timestamp):
+                sessions[index].lastReadAt = max(sessions[index].lastReadAt ?? timestamp, timestamp)
             }
         }
         sessionsByWorkspace[workspaceID] = sessions
         persistSession()
+        if case .read = normalized { return }
         await refreshSessions(restart: true)
+    }
+
+    func markSessionRead(sessionID: String, lastMessageAt: Double, workspaceGeneration: Int) async throws {
+        guard self.workspaceGeneration == workspaceGeneration else { throw CancellationError() }
+        if let session = sessions.first(where: { $0.id == sessionID }),
+           let readAt = session.lastReadAt, readAt >= lastMessageAt { return }
+        try await updateSessionMetadata(.read(lastMessageAt), sessionID: sessionID)
     }
 
     func archiveSession(sessionID: SessionSummary.ID) async throws {

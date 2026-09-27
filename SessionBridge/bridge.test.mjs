@@ -280,7 +280,7 @@ test('optional machine sync failure still returns sessions with a fallback proje
 
 test('session list includes the machine name and pin from workspace metadata', async () => {
   const rows = [
-    { ...localSession, meta: { ...localSession.meta, isPinned: true } },
+    { ...localSession, meta: { ...localSession.meta, isPinned: true, lastMessageAt: 200, lastReadAt: 100 } },
     { docId: 'machine-machine', meta: { name: 'spike@mac' } },
   ];
   const { window } = makeBridge(async () => ({ ok: true }), rows);
@@ -288,6 +288,8 @@ test('session list includes the machine name and pin from workspace metadata', a
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].machineName, 'spike@mac');
   assert.equal(result.sessions[0].isPinned, true);
+  assert.equal(result.sessions[0].lastMessageAt, 200);
+  assert.equal(result.sessions[0].lastReadAt, 100);
 });
 
 test('cancelling a transcript read releases the queued conversation observation', async () => {
