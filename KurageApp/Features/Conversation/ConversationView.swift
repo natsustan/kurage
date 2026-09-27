@@ -172,6 +172,14 @@ private struct ConversationContent: View {
 
     private func observe() async {
         guard isCurrentWorkspace else { return }
+        // Restore only when this scoped view first opens; reconnecting must preserve edits.
+        if observedSessionID == nil, !isReadOnly,
+           let pending = model.pendingTextSend(sessionID: sessionID) {
+            previousPendingText = pending.text
+            previousPendingWorkspaceID = model.selectedWorkspaceID
+            if draft.isEmpty { draft = pending.text }
+            banner = "Send could not be confirmed. Retry to resume the same message."
+        }
         observedWorkspaceID = model.selectedWorkspaceID
         observedSessionID = sessionID
         conversation = model.cachedConversation(sessionID: sessionID)

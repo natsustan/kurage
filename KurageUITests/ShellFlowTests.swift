@@ -138,6 +138,50 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testUnconfirmedSendRestoresAfterReopeningConversation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-send-unconfirmed"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Restore this message")
+        tap(app.buttons["send-follow-up"])
+        let retry = app.buttons["Retry earlier message"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-long"])
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        XCTAssertFalse(retry.exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Restore this message")
+
+        tap(field)
+        field.typeText(" edited")
+        let editedDraft = field.value as? String
+        XCTAssertTrue(editedDraft?.contains(" edited") == true)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, editedDraft)
+        tap(retry)
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, editedDraft)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Restore this message").count, 1)
+
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(retry.exists)
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+    }
+
+    @MainActor
     func testLatestTurnWithoutChangesShowsEmptyScope() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
