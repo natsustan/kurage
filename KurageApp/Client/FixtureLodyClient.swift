@@ -25,7 +25,7 @@ final class FixtureLodyClient: LodyClient {
     private var failingConversationIDsOnce: Set<String>
     private let sendDelay: Duration?
     private var failSendOnce: Bool
-    private var pendingSends: [String: PendingTextSend] = [:]
+    private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
     init(
         startsSignedIn: Bool = false,
@@ -122,7 +122,7 @@ final class FixtureLodyClient: LodyClient {
 
     func pendingTextSend(sessionID: String, workspaceID: String) -> PendingTextSend? {
         guard account != nil, workspaceID == "ws-demo" else { return nil }
-        return pendingSends[sessionID]
+        return pendingSends[sessionID]?.message
     }
 
     @discardableResult
@@ -137,13 +137,15 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
-        if let pending = pendingSends[sessionID], pending.text != trimmed {
-            throw LodyClientError.previousSendPending(pending.text)
+        let pending = pendingSends[sessionID]
+        if let pending, pending.message.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.message.text)
         }
-        let effectiveTurnID = pendingSends[sessionID]?.turnID ?? turnID
+        let effectiveTurnID = pending?.message.turnID ?? turnID
+        let effectiveRunConfig = if let pending { pending.runConfig } else { runConfig }
         if failSendOnce {
             failSendOnce = false
-            pendingSends[sessionID] = PendingTextSend(text: trimmed, turnID: effectiveTurnID)
+            pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID), effectiveRunConfig)
             throw LodyClientError.deliveryUnconfirmed
         }
         if let sendDelay { try await Task.sleep(for: sendDelay) }
@@ -151,7 +153,7 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
 
         try update(sessionID) { record in
-            if let runConfig {
+            if let runConfig = effectiveRunConfig {
                 guard let current = record.runConfig,
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
@@ -164,7 +166,7 @@ final class FixtureLodyClient: LodyClient {
             records.insert(records.remove(at: index), at: 0)
         }
         pendingSends.removeValue(forKey: sessionID)
-        return runConfig
+        return effectiveRunConfig
     }
 
     func newSessionOptions(

@@ -96,6 +96,27 @@ struct FixtureLodyClientTests {
         #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value == "low")
     }
 
+    @Test(arguments: [false, true])
+    func unconfirmedSendRetryKeepsOriginalTurnAndConfiguration(hasChoice: Bool) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failSendOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let initial = try #require(await latestRunConfig(model, sessionID: "session-long"))
+        let firstChoice = hasChoice ? try #require(initial.choosing("low")) : nil
+        let retryChoice = try #require(initial.choosing("high"))
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.send("retry me", runConfig: firstChoice, turnID: "original", sessionID: "session-long")
+        }
+        #expect(model.pendingTextSend(sessionID: "session-long")?.turnID == "original")
+        let sentChoice = try await model.send("retry me", runConfig: retryChoice, turnID: "replacement", sessionID: "session-long")
+        #expect(sentChoice == firstChoice)
+        #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value ==
+                (firstChoice?.value ?? initial.reasoning?.value))
+        let conversation = try await model.conversation(sessionID: "session-long")
+        #expect(conversation.turns.filter { $0.text == "retry me" }.map(\.id) == ["original"])
+        #expect(model.pendingTextSend(sessionID: "session-long") == nil)
+    }
+
     @Test func runConfigPatchDecodesBridgeProjection() throws {
         let json = """
         {"sessionID":"s","order":[],"changed":[],"permission":null,"activity":"idle","syncState":"live",

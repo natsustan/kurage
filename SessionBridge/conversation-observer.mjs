@@ -15,9 +15,11 @@ export function conversationPatch(previous, next) {
     }),
     permission: next.permission,
     latestTurnNumber: next.latestTurnNumber,
-    ...(!previous || JSON.stringify(previous.subtasks ?? []) !== JSON.stringify(next.subtasks ?? [])
+    ...(!previous || (previous.subtasks !== next.subtasks &&
+      JSON.stringify(previous.subtasks ?? []) !== JSON.stringify(next.subtasks ?? []))
       ? { replacesSubtasks: true, subtasks: next.subtasks ?? [] } : {}),
-    ...(!previous || JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null)
+    ...(!previous || (previous.fileChanges !== next.fileChanges &&
+      JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null))
       ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),
   };
 }

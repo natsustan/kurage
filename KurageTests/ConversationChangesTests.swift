@@ -103,6 +103,19 @@ struct ConversationChangesTests {
         #expect(RecordedFileDiff.lines(for: .init(id: "e", oldText: "same", newText: "same")) == [])
     }
 
+    @Test func diffHandlesCRLFAndMixedLineEndings() throws {
+        let edit = ConversationFileEdit(id: "crlf", oldText: "a\r\n旧\r\nz\r\n", newText: "a\r\n新\nextra\r\nz\r\n")
+        let lines = try #require(RecordedFileDiff.lines(for: edit))
+        #expect(lines.filter { $0.kind == .deletion }.map(\.text) == ["旧"])
+        #expect(lines.filter { $0.kind == .addition }.map(\.text) == ["新", "extra"])
+        #expect(lines.first { $0.text == "z" }?.oldNumber == 3)
+        #expect(lines.first { $0.text == "z" }?.newNumber == 4)
+        #expect(lines.last?.text == "")
+        #expect(lines.last?.newNumber == 5)
+        let oversized = ConversationFileEdit(id: "large", oldText: "", newText: String(repeating: "line\r\n", count: 2_001))
+        #expect(RecordedFileDiff.lines(for: oversized) == nil)
+    }
+
     @Test func diffBoundsWorkAndFoldsUnchangedContext() throws {
         let old = (0..<100).map { "line \($0)" }.joined(separator: "\n")
         let edit = ConversationFileEdit(id: "e", oldText: old, newText: old.replacingOccurrences(of: "line 50\n", with: "changed\n"))

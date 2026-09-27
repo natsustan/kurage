@@ -63,12 +63,13 @@ enum RecordedFileDiff {
         guard edit.oldText.utf8.count + edit.newText.utf8.count <= 128 * 1024 else { return nil }
         func split(_ text: String) -> [String] {
             guard !text.isEmpty else { return [] }
-            return text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            return text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }.map(String.init)
         }
         let old = split(edit.oldText)
         let new = split(edit.newText)
         guard old.count + new.count <= 2_000 else { return nil }
         let difference = new.difference(from: old)
+        guard !difference.isEmpty else { return [] }
         var removed = Set<Int>()
         var inserted = Set<Int>()
         for change in difference {
@@ -113,6 +114,6 @@ enum RecordedFileDiff {
                 inGap = true
             }
         }
-        return difference.isEmpty ? [] : result
+        return result
     }
 }
