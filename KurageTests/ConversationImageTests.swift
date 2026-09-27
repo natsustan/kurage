@@ -135,8 +135,8 @@ struct ConversationImageTests {
         let task = session.dataTask(with: original)
         let response = try #require(HTTPURLResponse(url: endpoint, statusCode: status,
                                                    httpVersion: nil, headerFields: nil))
-        let delegate = SessionImageRedirectGuard(allowedHost: "api.lody.ai")
         for target in ["https://api.lody.ai/upload", "https://foreign.example/upload", "http://api.lody.ai/upload"] {
+            let delegate = SessionImageRedirectGuard(allowedHost: "api.lody.ai")
             var proposed = original
             proposed.url = URL(string: target)
             proposed.setValue(nil, forHTTPHeaderField: "Authorization")
@@ -148,9 +148,14 @@ struct ConversationImageTests {
                 #expect(followed?.httpMethod == "POST")
                 #expect(followed?.httpBody == original.httpBody)
                 #expect(followed?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+                #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: false) is CancellationError)
             } else {
                 #expect(followed == nil)
+                // A rejected redirect must reach the upload-error branch that restores the draft.
+                #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: false) as? LodyClientError == .notConnected)
+                #expect(delegate.transportError(CancellationError(), taskIsCancelled: false) as? LodyClientError == .notConnected)
             }
+            #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: true) is CancellationError)
         }
     }
 

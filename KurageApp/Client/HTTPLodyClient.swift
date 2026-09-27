@@ -866,15 +866,13 @@ final class HTTPLodyClient: LodyClient {
             }
             let data: Data
             let response: URLResponse
+            let redirectGuard = SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
             do {
                 (data, response) = try await session.data(
-                    for: request, delegate: SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
+                    for: request, delegate: redirectGuard
                 )
             } catch {
-                if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
-                    throw CancellationError()
-                }
-                throw error
+                throw redirectGuard.transportError(error, taskIsCancelled: Task.isCancelled)
             }
             try Task.checkCancellation()
             guard generation == authenticationGeneration, tokenStore.read() == token else { throw LodyClientError.signedOut }
