@@ -301,7 +301,7 @@ final class FixtureLodyClient: LodyClient {
             }
         }
         guard known else { throw LodyClientError.sessionMissing }
-        return attachmentImages[imageID] ?? FixtureImage.png
+        return attachmentImages[imageID] ?? (imageID == "pr-user-shot" ? FixtureImage.portraitPNG : FixtureImage.png)
     }
 
     @discardableResult
@@ -468,6 +468,9 @@ extension NewSessionRunConfig {
 }
 
 enum FixtureImage {
+    /// 300×400 portrait with no message dimensions, exercising loaded-image sizing.
+    static let portraitPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAASwAAAGQCAIAAACbF8osAAAE00lEQVR42u3TsQkAIBAEwS/MEm3NIoyNzb8EQQRBB7aC4yb6mJIuFiaQIJQglAShBKEkCCUIJUEoQSgJQglCSRBKEEqCUIJQEoQShJIglCCUBKEEoSQIJQglQShBKAlCCUJJEEoQSoJQglAShBKEkiCUIJQEoQShJAglCCVBKEEoCUIJQkkQShBKglCCUBKEEoSSIJQg3KrUJp0NQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQqcRhBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQihxwhCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCF0GkEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYROIwghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEArC1xFKnwShBKEEoSQIJQglQShBKAlCCUJJEEoQSoJQglAShBKEkiCUIJQEoQShJAglCCVBKEEoCUIJQkkQShBKglCCUBKEEoSSIJQglAShBKEkCCUIJUEoQSgJQglCSRBKEEqCUIJQEoQShJIglCCUtCgBDpLAqyYZ9voAAAAASUVORK5CYII=")!
+
     /// 120×80 PNG, so fixture layouts also exercise non-square image content.
     static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAYAAADSm7GJAAAA00lEQVR4nO3RMQ0AIADAMPwLQARyMAQySEaP/ks21tyHrvE6AIMxGIM/ZXCcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGx10d8AQ+quhfSQAAAABJRU5ErkJggg==")!
 }
@@ -538,8 +541,7 @@ extension SessionRecord {
                     id: "pr-user", author: .user, text: "Look at this PR",
                     parts: [
                         .image(ConversationImage(
-                            imageID: "pr-user-shot", mimeType: "image/png", fileName: "screenshot.png",
-                            width: 80, height: 80
+                            imageID: "pr-user-shot", mimeType: "image/png", fileName: "screenshot.png"
                         )),
                         .text("Look at this PR"),
                     ]

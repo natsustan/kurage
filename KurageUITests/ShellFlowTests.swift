@@ -774,6 +774,13 @@ final class ShellFlowTests: XCTestCase {
             XCTAssertEqual(thumbnail.frame.width, thumbnail.frame.height, accuracy: 1)
         }
         XCTAssertEqual(images[0].frame.minY, images[2].frame.minY, accuracy: 1)
+        let portrait = app.buttons["conversation-image-pr-user-shot"]
+        XCTAssertTrue(portrait.waitForExistence(timeout: 5))
+        let portraitSized = NSPredicate { _, _ in
+            abs(portrait.frame.width - 165) < 1 && abs(portrait.frame.height - 220) < 1
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: portraitSized, object: portrait)], timeout: 5), .completed)
+        XCTAssertEqual(portrait.frame.maxX, app.frame.maxX - 20, accuracy: 1)
         attachScreen(app, name: "conversation-image")
         tap(image)
 
@@ -783,6 +790,13 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["conversation-image-close"])
         XCTAssertFalse(preview.waitForExistence(timeout: 2))
         XCTAssertTrue(image.exists)
+        tap(portrait)
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        attachScreen(app, name: "conversation-portrait-preview")
+        tap(app.buttons["conversation-image-close"])
+        XCTAssertFalse(preview.waitForExistence(timeout: 2))
+        XCTAssertEqual(portrait.frame.width, 165, accuracy: 1)
+        XCTAssertEqual(portrait.frame.height, 220, accuracy: 1)
     }
 
     @MainActor
