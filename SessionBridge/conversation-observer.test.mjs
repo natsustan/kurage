@@ -23,6 +23,7 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
   const repo = {
     getDocMeta: async () => ({ meta }),
     listDoc: async () => [],
+    sync: async () => ({ ok: true }),
     openPersistedDoc: async () => ({ doc, joinRoom: createRoom }),
     openFlockDoc: async id => flock.open(id),
     joinMetaRoom: createRoom,
@@ -240,15 +241,120 @@ test('subtask metadata changes appear without parent history edits and stop afte
   assert.equal(h.releases(), 2);
 });
 
-test('message timestamps travel with snapshots and metadata-only updates', async () => {
+test('message timestamps follow cloud history on initial and metadata-only updates', async () => {
   const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
   const h = harness({ meta });
+  const history = h.doc.getList('history');
+  const synced = [];
+  h.repo.sync = async options => {
+    synced.push(options);
+    if (meta.lastMessageAt === 100) {
+      history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+    } else {
+      history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
+    }
+    h.doc.commit();
+    return { ok: true };
+  };
   await h.start();
   assert.equal(h.updates[0].lastMessageAt, 100);
+  assert.deepEqual(h.updates[0].order, ['first']);
+  meta.lastMessageAt = 200;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  assert.deepEqual(h.updates.at(-1).order, ['first', 'second']);
+  assert.deepEqual(synced.map(({ scope, docIds }) => [scope, docIds]), [
+    ['doc', ['session-abc']], ['doc', ['session-abc']],
+  ]);
+  h.controller.abort();
+});
+
+test('a metadata update cannot publish its read timestamp before history sync completes', async () => {
+  const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
+  const h = harness({ meta });
+  const history = h.doc.getList('history');
+  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+  h.doc.commit();
+  await h.start();
+  const syncing = Promise.withResolvers();
+  h.repo.sync = async () => {
+    await syncing.promise;
+    history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
+  meta.lastMessageAt = 200;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 100);
+  syncing.resolve();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  assert.deepEqual(h.updates.at(-1).order, ['first', 'second']);
+  h.controller.abort();
+});
+
+test('a synced marker stays unread until the visible conversation catches up', async () => {
+  const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
+  const h = harness({ meta });
+  const history = h.doc.getList('history');
+  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+  h.doc.commit();
+  await h.start();
+  meta.lastMessageAt = 200;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  assert.deepEqual(h.updates.at(-1).order, ['first']);
+  history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  assert.deepEqual(h.updates.at(-1).order, ['first', 'second']);
+  h.controller.abort();
+});
+
+test('history that arrives before metadata still advances the read timestamp', async () => {
+  const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
+  const h = harness({ meta });
+  const history = h.doc.getList('history');
+  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+  h.doc.commit();
+  await h.start();
+  history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 100);
   meta.lastMessageAt = 200;
   h.metadataChanged();
   await h.flush();
   assert.equal(h.updates.at(-1).lastMessageAt, 200);
   assert.deepEqual(h.updates.at(-1).changed, []);
   h.controller.abort();
+});
+
+test('failed history sync never publishes a newer read timestamp', async () => {
+  const h = harness({ meta: { status: { type: 'idle' }, lastMessageAt: 100 } });
+  h.repo.sync = async () => ({ ok: false });
+  await h.start();
+  assert.deepEqual(h.updates, [{ error: 'Conversation sync failed' }]);
+});
+
+test('cancelling a pending receipt sync releases observation without publishing', async () => {
+  const h = harness({ meta: { status: { type: 'idle' }, lastMessageAt: 100 } });
+  const syncing = Promise.withResolvers();
+  const started = Promise.withResolvers();
+  h.repo.sync = async ({ signal }) => {
+    assert.equal(signal, h.controller.signal);
+    started.resolve();
+    return syncing.promise;
+  };
+  const observing = h.start();
+  await started.promise;
+  h.controller.abort();
+  syncing.resolve({ ok: true });
+  await observing;
+  assert.deepEqual(h.updates, []);
+  assert.equal(h.releases(), 2);
 });

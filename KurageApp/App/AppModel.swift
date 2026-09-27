@@ -375,7 +375,8 @@ final class AppModel {
                 sessions[index].activity = activity
             }
             if let timestamp = update.lastMessageAt,
-               let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+               let index = sessions.firstIndex(where: { $0.id == sessionID }),
+               sessions[index].lastMessageAt != timestamp {
                 sessions[index].lastMessageAt = timestamp
             }
             onUpdate(update)

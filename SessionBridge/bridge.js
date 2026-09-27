@@ -11,7 +11,7 @@ import { observeConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
-import { archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
+import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
 const nativeFetch = createNativeFetch(
   message => window.webkit.messageHandlers.streamFetch.postMessage(message),
@@ -144,6 +144,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         }
       }
     }
+    visibleSessions.sort((a, b) => activityTime(b.meta) - activityTime(a.meta));
     const projected = visibleSessions.map((row) => {
       const project = row.meta.project;
       const repoName = project?.kind === 'github' ? project.repoFullName
@@ -170,10 +171,8 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
           ? row.meta.lastMessageAt : null,
-        sortAt: Number.isFinite(row.meta.lastMessageAt) ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
       };
-    })
-      .sort((a, b) => b.sortAt - a.sortAt);
+    });
     return JSON.stringify({ sessions: projected });
   }, true, controller.signal); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }

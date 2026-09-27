@@ -24,6 +24,14 @@ export function conversationPatch(previous, next) {
   };
 }
 
+function hasVisibleConversationChange(previous, next) {
+  if (!previous) return next.turns.length > 0;
+  const patch = conversationPatch(previous, next);
+  return patch.changed.length > 0 || patch.replacesFileChanges === true ||
+    patch.order.length !== previous.turns.length ||
+    patch.order.some((id, index) => id !== previous.turns[index].id);
+}
+
 async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, changed }) {
   const { machineId, agentConfigId } = meta;
   if (typeof workspaceID !== 'string' || typeof machineId !== 'string' || !machineId ||
@@ -52,6 +60,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let historyChanged = true;
   let subtasksChanged = true;
   let subtasks = [];
+  let syncedMessageAt = null;
+  let receiptConversation;
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -80,6 +90,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         const meta = await repo.getDocMeta(docID);
         if (stopped) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
+        const lastMessageAt = Number.isFinite(meta.meta.lastMessageAt) ? meta.meta.lastMessageAt : null;
+        if (lastMessageAt !== null && lastMessageAt !== syncedMessageAt) {
+          // Metadata and history use separate rooms. Pull the cloud history after
+          // seeing a new activity marker before offering it as a read receipt.
+          const report = await repo.sync({
+            scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal,
+          });
+          if (stopped) return;
+          if (!report.ok) throw new Error('Session history sync failed');
+          historyChanged = true;
+        }
         let next = previous;
         if (historyChanged || !previous) {
           const entries = handle.doc.getList('history').toJSON();
@@ -94,8 +115,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         }
         next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
+        // A synced marker alone does not show that its new content reached the UI.
+        if (lastMessageAt === null) {
+          syncedMessageAt = null;
+          receiptConversation = next;
+        } else if (lastMessageAt !== syncedMessageAt &&
+                   hasVisibleConversationChange(receiptConversation, next)) {
+          syncedMessageAt = lastMessageAt;
+          receiptConversation = next;
+        }
         update.activity = projectSessionActivity(meta.meta.status);
-        update.lastMessageAt = Number.isFinite(meta.meta.lastMessageAt) ? meta.meta.lastMessageAt : null;
+        update.lastMessageAt = lastMessageAt === syncedMessageAt ? syncedMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
         update.contextWindowUsage = usage && Number.isSafeInteger(usage.size) && usage.size > 0 &&
           Number.isSafeInteger(usage.used) && usage.used >= 0
