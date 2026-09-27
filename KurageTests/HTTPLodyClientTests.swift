@@ -6,6 +6,64 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
+    @Test(arguments: [false, true])
+    func cancellingInFlightAttachmentUploadThrowsCancellation(isImage: Bool) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        DeferredAuthURLProtocol.onStart = { request in
+            if request.request.url?.path == "/api/auth/get-session" {
+                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            } else {
+                continuation.yield(())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        let attachment = try ComposerAttachment(
+            fileName: isImage ? "photo.png" : "notes.txt", mimeType: isImage ? "image/png" : "text/plain",
+            data: isImage ? FixtureImage.png : Data("hello".utf8), isImage: isImage
+        )
+        let task = Task {
+            try await client.uploadAttachments([attachment], sessionID: "chat", workspaceID: "work")
+        }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test(arguments: [URLError.Code.cancelled, .timedOut, .networkConnectionLost])
+    func attachmentUploadPreservesNonCancellationTransportErrors(code: URLError.Code) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        DeferredAuthURLProtocol.onStart = { request in
+            if request.request.url?.path == "/api/auth/get-session" {
+                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            } else {
+                request.fail(URLError(code))
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                          data: Data("hello".utf8), isImage: false)
+        if code == .cancelled {
+            await #expect(throws: CancellationError.self) {
+                try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work")
+            }
+        } else {
+            do {
+                _ = try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work")
+                Issue.record("Expected attachment upload to fail")
+            } catch {
+                #expect((error as? URLError)?.code == code)
+            }
+        }
+    }
+
     @Test func attachmentUploadsUseCloudProtocolAndReuseOnlyWithinTheirSession() async throws {
         let store = MemoryAuthTokenStore()
         _ = store.write("account-token")

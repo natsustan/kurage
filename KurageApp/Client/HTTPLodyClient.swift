@@ -864,9 +864,18 @@ final class HTTPLodyClient: LodyClient {
                     "x-file-size-bytes": String(attachment.data.count), "x-file-text-preview": "false"]
                 for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
             }
-            let (data, response) = try await session.data(
-                for: request, delegate: SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
-            )
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(
+                    for: request, delegate: SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
+                )
+            } catch {
+                if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
+                throw error
+            }
             try Task.checkCancellation()
             guard generation == authenticationGeneration, tokenStore.read() == token else { throw LodyClientError.signedOut }
             guard let response = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
