@@ -95,6 +95,37 @@ struct ConversationImageTests {
         #expect(SessionImageRedirect.request(credentials, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
     }
 
+    @Test(arguments: [307, 308])
+    func uploadRedirectDelegateRejectsForeignHostsAndDowngrades(status: Int) async throws {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let endpoint = URL(string: "https://api.lody.ai/api/workspaces/w/session-files/upload")!
+        var original = URLRequest(url: endpoint)
+        original.httpMethod = "POST"
+        original.httpBody = Data("private attachment".utf8)
+        original.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+        let task = session.dataTask(with: original)
+        let response = try #require(HTTPURLResponse(url: endpoint, statusCode: status,
+                                                   httpVersion: nil, headerFields: nil))
+        let delegate = SessionImageRedirectGuard(allowedHost: "api.lody.ai")
+        for target in ["https://api.lody.ai/upload", "https://foreign.example/upload", "http://api.lody.ai/upload"] {
+            var proposed = original
+            proposed.url = URL(string: target)
+            proposed.setValue(nil, forHTTPHeaderField: "Authorization")
+            let followed: URLRequest? = await withCheckedContinuation { continuation in
+                delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                    newRequest: proposed) { continuation.resume(returning: $0) }
+            }
+            if target == "https://api.lody.ai/upload" {
+                #expect(followed?.httpMethod == "POST")
+                #expect(followed?.httpBody == original.httpBody)
+                #expect(followed?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+            } else {
+                #expect(followed == nil)
+            }
+        }
+    }
+
     @Test func liveClientDownloadsThumbnailsAndFallsBackToTheOriginal() async throws {
         let store = ImageTokenStore()
         _ = store.write("account-token")

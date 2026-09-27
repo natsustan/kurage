@@ -14,6 +14,7 @@ struct ComposerAttachments: View {
     @State private var showsFiles = false
     @State private var showsCamera = false
     @State private var photos: [PhotosPickerItem] = []
+    @State private var importID: UUID?
     @State private var importTask: Task<Void, Never>?
 
     var body: some View {
@@ -59,7 +60,7 @@ struct ComposerAttachments: View {
                     guard let data = try await photo.loadTransferable(type: Data.self) else {
                         throw AttachmentError.invalid("Could not load the selected photo.")
                     }
-                    result.append(try await Task.detached { try Self.image(data) }.value)
+                    result.append(try await Self.image(data))
                 }
                 return result
             }
@@ -70,25 +71,7 @@ struct ComposerAttachments: View {
                 guard urls.count + attachments.count <= 8 else { error = "Select up to 8 attachments."; return }
                 beginImport(placeholders: urls.map { PendingComposerAttachment(fileName: $0.lastPathComponent,
                     isImage: UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true) }) {
-                    try await Task.detached {
-                        try urls.map { url in
-                            let access = url.startAccessingSecurityScopedResource()
-                            defer { if access { url.stopAccessingSecurityScopedResource() } }
-                            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                            guard size <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
-                            let handle = try FileHandle(forReadingFrom: url)
-                            defer { try? handle.close() }
-                            let data = try handle.read(upToCount: 16 * 1024 * 1024 + 1) ?? Data()
-                            guard data.count <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
-                            let type = UTType(filenameExtension: url.pathExtension)
-                            if type?.conforms(to: .image) == true,
-                               CGImageSourceCreateWithData(data as CFData, nil) != nil {
-                                return try Self.image(data, name: url.lastPathComponent)
-                            }
-                            return try ComposerAttachment(fileName: url.lastPathComponent,
-                                mimeType: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
-                        }
-                    }.value
+                    try await Self.files(urls)
                 }
             case .failure(let failure): error = failure.localizedDescription
             }
@@ -98,29 +81,61 @@ struct ComposerAttachments: View {
                 showsCamera = false
                 if let data {
                     beginImport(placeholders: [PendingComposerAttachment(fileName: "Photo", isImage: true)]) {
-                        [try await Task.detached { try Self.image(data) }.value]
+                        [try await Self.image(data)]
                     }
                 }
             }.ignoresSafeArea()
         }
-        .onDisappear { importTask?.cancel(); pending = [] }
+        .onDisappear { importTask?.cancel(); importID = nil; pending = []; photos = [] }
     }
 
     private func beginImport(placeholders: [PendingComposerAttachment], _ load: @escaping @Sendable () async throws -> [ComposerAttachment]) {
         importTask?.cancel()
+        let id = UUID()
+        importID = id
         pending = placeholders
         importTask = Task {
-            defer { pending = []; photos = [] }
+            defer {
+                if importID == id { pending = []; photos = []; importTask = nil; importID = nil }
+            }
             do {
                 let imported = try await load()
                 try Task.checkCancellation()
                 guard attachments.count + imported.count <= 8 else { throw AttachmentError.invalid("Select up to 8 attachments.") }
                 attachments.append(contentsOf: imported)
-            } catch is CancellationError { } catch { self.error = error.localizedDescription }
+            } catch {
+                if !Task.isCancelled, importID == id { self.error = error.localizedDescription }
+            }
         }
     }
 
-    nonisolated private static func image(_ data: Data, name: String = "Photo.jpg") throws -> ComposerAttachment {
+    @concurrent private static func files(_ urls: [URL]) async throws -> [ComposerAttachment] {
+        var result: [ComposerAttachment] = []
+        for url in urls {
+            try Task.checkCancellation()
+            let access = url.startAccessingSecurityScopedResource()
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: 16 * 1024 * 1024 + 1) ?? Data()
+            guard data.count <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
+            let type = UTType(filenameExtension: url.pathExtension)
+            if type?.conforms(to: .image) == true,
+               CGImageSourceCreateWithData(data as CFData, nil) != nil {
+                result.append(try await Self.image(data, name: url.lastPathComponent))
+                continue
+            }
+            result.append(try ComposerAttachment(fileName: url.lastPathComponent,
+                mimeType: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false))
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
+    @concurrent private static func image(_ data: Data, name: String = "Photo.jpg") async throws -> ComposerAttachment {
+        try Task.checkCancellation()
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let identifier = CGImageSourceGetType(source) else { throw AttachmentError.invalid("Could not read this image.") }
         let type = UTType(identifier as String)
@@ -129,6 +144,7 @@ struct ComposerAttachments: View {
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: 360
         ] as CFDictionary).flatMap { UIImage(cgImage: $0).jpegData(compressionQuality: 0.8) }
+        try Task.checkCancellation()
         if let mime = type?.preferredMIMEType, ["image/jpeg", "image/png", "image/webp", "image/gif"].contains(mime), data.count <= 5 * 1024 * 1024 {
             return try ComposerAttachment(fileName: name == "Photo.jpg" ? "Photo.\(type?.preferredFilenameExtension ?? "jpg")" : name,
                                           mimeType: mime, data: data, isImage: true, thumbnailData: thumbnail)
@@ -141,6 +157,7 @@ struct ComposerAttachments: View {
         ] as CFDictionary), let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.85) else {
             throw AttachmentError.invalid("Could not prepare this image.")
         }
+        try Task.checkCancellation()
         return try ComposerAttachment(fileName: (name as NSString).deletingPathExtension + ".jpg", mimeType: "image/jpeg", data: jpeg, isImage: true, thumbnailData: thumbnail)
     }
 }

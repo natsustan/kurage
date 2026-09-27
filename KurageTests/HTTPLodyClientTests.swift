@@ -51,6 +51,91 @@ struct HTTPLodyClientTests {
         }
     }
 
+    @Test(arguments: [413, 415, 500])
+    func failedUploadsReleaseUnwrittenDrafts(status: Int) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            }
+            if request.url?.path == "/api/loro-streams/token" {
+                return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
+            }
+            return (status, Data())
+        }
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
+        _ = try #require(await client.restoreSession())
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                          data: Data("hello".utf8), isImage: false)
+        let expectedError: LodyClientError = status >= 500 ? .unreachable : .signInFailed
+        for text in ["First", "Edited"] {
+            await #expect(throws: expectedError) {
+                try await client.send(text, attachments: [file], sessionID: "chat", workspaceID: "work")
+            }
+            #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work") == nil)
+            await #expect(throws: expectedError) {
+                try await client.startSession(text, attachments: [file], agentConfigID: nil, selections: [],
+                                              projectID: "p", templateSessionID: "t", workspaceID: "work")
+            }
+            #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+        }
+        #expect(starter.requests.isEmpty)
+        // Removing the rejected attachment allows a new request to reach the writer.
+        var calls = starter.started.makeAsyncIterator()
+        let replacement = Task {
+            try await client.startSession("Without attachment", agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        _ = await calls.next()
+        starter.finish(0, result: "sent")
+        #expect(try await replacement.value == starter.requests[0].sessionID)
+    }
+
+    @Test func uploadedStartRetainsAttachmentsAfterUnconfirmedWrite() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            }
+            if request.url?.path == "/api/loro-streams/token" {
+                return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
+            }
+            return (200, Data("{\"image\":{\"type\":\"image\",\"imageId\":\"image-1\",\"fileName\":\"photo.png\",\"mimeType\":\"image/png\",\"sizeBytes\":\(FixtureImage.png.count)}}".utf8))
+        }
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
+        _ = try #require(await client.restoreSession())
+        let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png",
+                                           data: FixtureImage.png, isImage: true)
+        var calls = starter.started.makeAsyncIterator()
+        let first = Task {
+            try await client.startSession("Read", attachments: [image], agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        _ = await calls.next()
+        starter.finish(0, result: "unconfirmed")
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
+        let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+        #expect(pending.attachments == [image])
+        await #expect(throws: LodyClientError.previousSendPending("Read")) {
+            try await client.startSession("Read", agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        let retry = Task { try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work") }
+        _ = await calls.next()
+        #expect(starter.requests[1].sessionID == starter.requests[0].sessionID)
+        #expect(starter.requests[1].turnID == starter.requests[0].turnID)
+        starter.finish(1, result: "sent")
+        #expect(try await retry.value == pending.id)
+    }
+
     @Test func attachmentRetryCannotSilentlyDropSelectedFiles() async throws {
         let store = MemoryAuthTokenStore()
         _ = store.write("account-token")

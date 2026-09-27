@@ -316,9 +316,11 @@ private struct ConversationContent: View {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
                 draft = text
-                previousPendingText = trimmed
-                previousPendingWorkspaceID = model.selectedWorkspaceID
-                banner = "Could not confirm send. Retry to resume the same message."
+                previousPendingText = model.pendingTextSend(sessionID: sessionID)?.text
+                previousPendingWorkspaceID = previousPendingText == nil ? nil : model.selectedWorkspaceID
+                banner = previousPendingText == nil
+                    ? "Could not upload attachments. Review your draft and try again."
+                    : "Could not confirm send. Retry to resume the same message."
             }
         }
     }
@@ -382,7 +384,13 @@ private struct ConversationContent: View {
             } catch {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                banner = "Earlier send is still unconfirmed. Retry it before sending different text."
+                if model.pendingTextSend(sessionID: sessionID) == nil {
+                    previousPendingText = nil
+                    previousPendingWorkspaceID = nil
+                    banner = "Could not upload attachments. Review your draft and try again."
+                } else {
+                    banner = "Earlier send is still unconfirmed. Retry it before sending different text."
+                }
             }
         }
     }

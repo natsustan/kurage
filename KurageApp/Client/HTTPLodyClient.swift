@@ -25,6 +25,9 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private struct PendingSend {
+        var activePreparations = 0
+        var uploadFailed = false
+        var hasAttemptedWrite = false
         let attachments: [ComposerAttachment]
         let text: String
         let turnID: String
@@ -38,6 +41,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private struct PendingStart {
+        var hasAttemptedWrite = false
         let attachments: [ComposerAttachment]
         let templateSessionID: String
         let text: String
@@ -530,13 +534,33 @@ final class HTTPLodyClient: LodyClient {
         )
         let turnID = pending.turnID
         pendingSends[key] = pending
+        pendingSends[key]?.activePreparations += 1
+        defer {
+            if generation == authenticationGeneration, pendingSends[key]?.turnID == turnID {
+                pendingSends[key]?.activePreparations -= 1
+                if let current = pendingSends[key], current.activePreparations == 0,
+                   current.uploadFailed, !current.hasAttemptedWrite {
+                    pendingSends.removeValue(forKey: key)
+                }
+            }
+        }
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        let uploaded = try await uploadAttachments(pending.attachments, sessionID: sessionID,
+        let uploaded: [UploadedAttachment]
+        do {
+            uploaded = try await uploadAttachments(pending.attachments, sessionID: sessionID,
                                                    workspaceID: workspaceID, expectedGeneration: generation)
+        } catch {
+            if generation == authenticationGeneration, pendingSends[key]?.turnID == turnID {
+                pendingSends[key]?.uploadFailed = true
+            }
+            throw error
+        }
         guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        // Once a replica may have authored the turn, every retry must retain its identity.
+        if pendingSends[key]?.turnID == turnID { pendingSends[key]?.hasAttemptedWrite = true }
         let result = try await bridge.sendText(trimmed, attachments: uploaded, turnID: turnID, userID: userID,
                                                runConfig: pending.runConfig,
                                                sessionID: sessionID, workspaceID: workspaceID, access: access)
@@ -671,9 +695,20 @@ final class HTTPLodyClient: LodyClient {
             sessionBridge = liveBridge
             bridge = liveBridge
         }
-        let uploaded = try await uploadAttachments(pending.attachments, sessionID: pending.sessionID,
+        let uploaded: [UploadedAttachment]
+        do {
+            uploaded = try await uploadAttachments(pending.attachments, sessionID: pending.sessionID,
                                                    workspaceID: workspaceID, expectedGeneration: generation)
+        } catch {
+            if generation == authenticationGeneration,
+               let current = pendingStarts[key], current.sessionID == pending.sessionID,
+               !current.hasAttemptedWrite {
+                pendingStarts.removeValue(forKey: key)
+            }
+            throw error
+        }
         guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        pendingStarts[key]?.hasAttemptedWrite = true
         let result = try await bridge.startSession(
             pending.text, attachments: uploaded, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
             agentConfigID: pending.agentConfigID, selections: pending.selections,
@@ -829,7 +864,9 @@ final class HTTPLodyClient: LodyClient {
                     "x-file-size-bytes": String(attachment.data.count), "x-file-text-preview": "false"]
                 for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
             }
-            let (data, response) = try await session.data(for: request)
+            let (data, response) = try await session.data(
+                for: request, delegate: SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
+            )
             try Task.checkCancellation()
             guard generation == authenticationGeneration, tokenStore.read() == token else { throw LodyClientError.signedOut }
             guard let response = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
