@@ -378,6 +378,9 @@ final class AppModel {
                let index = sessions.firstIndex(where: { $0.id == sessionID }),
                sessions[index].lastMessageAt != timestamp {
                 sessions[index].lastMessageAt = timestamp
+                sessions.sort { ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0) }
+                sessionsByWorkspace[workspaceID] = sessions
+                persistSession()
             }
             onUpdate(update)
         }
@@ -561,6 +564,7 @@ final class AppModel {
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection,
               selectedWorkspaceID == workspaceID else { throw CancellationError() }
+        let interruptedRefresh = sessionRefreshTask != nil
         cancelSessionRefresh()
         if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
             switch normalized {
@@ -572,7 +576,7 @@ final class AppModel {
         }
         sessionsByWorkspace[workspaceID] = sessions
         persistSession()
-        if case .read = normalized { return }
+        if case .read = normalized, !interruptedRefresh { return }
         await refreshSessions(restart: true)
     }
 

@@ -22,6 +22,8 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var isPinned: Bool? = nil
     var lastMessageAt: Double? = nil
     var lastReadAt: Double? = nil
+    /// List sorting fallback from the bridge, including creation time when no message exists.
+    var lastActivityAt: Double? = nil
 
     var isUnread: Bool {
         guard let lastMessageAt, lastMessageAt.isFinite else { return false }

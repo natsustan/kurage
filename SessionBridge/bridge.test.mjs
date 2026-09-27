@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import { projectSubtasks } from './conversation-subtasks.mjs';
 import {
+  activityTime,
   deleteArchivedSession,
   readLocalProjectState,
   restoreArchivedSession,
@@ -55,6 +56,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
     updateSessionMetadata: extras.updateSessionMetadata,
+    activityTime,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
@@ -483,4 +485,14 @@ test('metadata cancellation prevents writes even when initial sync completes suc
   sync.resolve({ outcome: 'synced' });
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(repos[0].destroyed, true);
+});
+
+
+test('session list preserves the creation-time sorting fallback without inventing a message marker', async () => {
+  const { window } = makeBridge(async () => ({ ok: true }), [
+    { ...localSession, meta: { ...localSession.meta, lastMessageAt: undefined, createdAt: '2026-01-01T00:00:00Z' } },
+  ]);
+  const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
+  assert.equal(result.sessions[0].lastMessageAt, null);
+  assert.equal(result.sessions[0].lastActivityAt, Date.parse('2026-01-01T00:00:00Z'));
 });

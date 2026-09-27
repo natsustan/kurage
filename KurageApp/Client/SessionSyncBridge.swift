@@ -63,7 +63,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 projectName: metadata.projectName,
                 machineName: metadata.machineName,
                 isPinned: metadata.isPinned,
-                lastMessageAt: metadata.lastMessageAt, lastReadAt: metadata.lastReadAt
+                lastMessageAt: metadata.lastMessageAt, lastReadAt: metadata.lastReadAt,
+                lastActivityAt: metadata.lastActivityAt
             )
         }
     }
@@ -411,6 +412,7 @@ private struct SessionMetadata: Decodable {
     let isPinned: Bool?
     let lastMessageAt: Double?
     let lastReadAt: Double?
+    let lastActivityAt: Double?
 }
 
 private struct SessionSnapshot: Decodable {

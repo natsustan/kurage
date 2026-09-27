@@ -167,6 +167,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         projectID,
         projectName,
         isPinned: row.meta.isPinned === true,
+        lastActivityAt: activityTime(row.meta),
         lastReadAt: Number.isFinite(row.meta.lastReadAt) ? row.meta.lastReadAt : null,
         machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
