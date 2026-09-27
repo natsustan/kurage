@@ -2,6 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectConversation } from './conversation-projection.mjs';
 
+test('file-only turns survive long or missing display names', () => {
+  for (const fileName of ['a'.repeat(251) + '.txt', '', undefined, '\0']) {
+    const result = projectConversation('chat', [{ id: 'file-turn', role: 'user', items: [
+      { type: 'file', fileId: 'file-1', fileName, sizeBytes: 12 },
+    ] }]);
+    assert.equal(result.turns.length, 1);
+    assert.deepEqual(result.turns[0].parts, [{
+      type: 'file', fileID: 'file-1',
+      fileName: fileName?.startsWith('a') ? 'a'.repeat(200) : 'File', sizeBytes: 12,
+    }]);
+  }
+});
+
 test('projects chat text without exposing structured events as prose', () => {
   const result = projectConversation('abc', [
     { id: 'u1', role: 'user', items: [{ type: 'text', text: 'Hello **world**' }] },

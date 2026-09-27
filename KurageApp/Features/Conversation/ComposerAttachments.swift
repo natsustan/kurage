@@ -77,11 +77,11 @@ struct ComposerAttachments: View {
             }
         }
         .fullScreenCover(isPresented: $showsCamera) {
-            CameraCapture { data in
+            CameraCapture { image in
                 showsCamera = false
-                if let data {
+                if let image {
                     beginImport(placeholders: [PendingComposerAttachment(fileName: "Photo", isImage: true)]) {
-                        [try await Self.image(data)]
+                        [try await Self.cameraImage(image)]
                     }
                 }
             }.ignoresSafeArea()
@@ -132,6 +132,25 @@ struct ComposerAttachments: View {
         }
         try Task.checkCancellation()
         return result
+    }
+
+    @concurrent static func cameraImage(_ image: UIImage) async throws -> ComposerAttachment {
+        try Task.checkCancellation()
+        guard image.size.width > 0, image.size.height > 0 else {
+            throw AttachmentError.invalid("Could not prepare this image.")
+        }
+        let scale = min(1, 2048 / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        try Task.checkCancellation()
+        guard let data = resized.jpegData(compressionQuality: 0.85) else {
+            throw AttachmentError.invalid("Could not prepare this image.")
+        }
+        return try await Self.image(data)
     }
 
     @concurrent private static func image(_ data: Data, name: String = "Photo.jpg") async throws -> ComposerAttachment {
@@ -269,7 +288,7 @@ private struct ComposerAttachmentPreview: View {
 }
 
 private struct CameraCapture: UIViewControllerRepresentable {
-    let onFinish: (Data?) -> Void
+    let onFinish: (UIImage?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
@@ -279,11 +298,11 @@ private struct CameraCapture: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
-        let onFinish: (Data?) -> Void
-        init(onFinish: @escaping (Data?) -> Void) { self.onFinish = onFinish }
+        let onFinish: (UIImage?) -> Void
+        init(onFinish: @escaping (UIImage?) -> Void) { self.onFinish = onFinish }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { onFinish(nil) }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            onFinish((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.9))
+            onFinish(info[.originalImage] as? UIImage)
         }
     }
 }

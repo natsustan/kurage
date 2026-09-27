@@ -1,10 +1,38 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Kurage
 
 @MainActor
 @Suite(.serialized)
 struct ConversationImageTests {
+    @Test func cameraPhotoIsBoundedAndKeepsOrientation() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let original = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 1500), format: format).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 3000, height: 1500))
+        }
+        let rotated = UIImage(cgImage: try #require(original.cgImage), scale: 1, orientation: .right)
+        let attachment = try await ComposerAttachments.cameraImage(rotated)
+        let decoded = try #require(UIImage(data: attachment.data))
+        #expect(decoded.size == CGSize(width: 1024, height: 2048))
+        #expect(attachment.mimeType == "image/jpeg")
+        #expect(attachment.thumbnailData != nil)
+    }
+
+    @Test func cancelledCameraPreparationDoesNotReturnAttachment() async throws {
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ComposerAttachments.cameraImage(UIImage())
+        }
+        do {
+            _ = try await task.value
+            Issue.record("Cancelled camera preparation returned an attachment")
+        } catch is CancellationError {
+        }
+    }
+
     @Test func textOnlyTurnsRemainReadableWithoutImageParts() throws {
         let turn = ConversationTurn(id: "a", author: .agent, text: "Hello")
         #expect(turn.content == [.text("Hello")])
