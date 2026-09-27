@@ -23,14 +23,24 @@ export function appendUserTurn(history, { turnID, userID, text, timestamp, confi
   const item = items.insertContainer(0, new LoroMap());
   item.set('type', 'text');
   item.setContainer('text', new LoroText()).update(text);
+  for (const block of config.inputBlocks ?? []) {
+    if (block.type === 'text') continue;
+    const attachment = items.insertContainer(items.length, new LoroMap());
+    for (const [key, value] of Object.entries(block)) attachment.set(key, value);
+  }
   const inputConfig = turn.setContainer('inputConfig', new LoroMap());
   for (const [key, value] of Object.entries(config)) inputConfig.set(key, value);
 }
 
+const canonical = value => JSON.stringify(value, (_key, item) =>
+  item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+
 // A retry must name the same user turn it first wrote.
-export function assertSameTurn(existing, userID, text) {
+export function assertSameTurn(existing, userID, text, attachments = []) {
   if (existing.role !== 'user' || existing.userId !== userID ||
-      existing.items?.[0]?.text !== text) {
+      existing.items?.[0]?.text !== text ||
+      canonical(existing.inputConfig?.inputBlocks?.filter(block => block.type !== 'text') ?? []) !== canonical(attachments)) {
     throw new Error('Message ID belongs to another turn');
   }
 }
@@ -50,7 +60,7 @@ function competingActivation(meta, entries, turnID) {
 // A retry keeps its turn ID. If the body reached Streams before the reply was
 // lost, only the dispatch pointer needs another attempt.
 // `runConfig` changes one model or reasoning value, and only for a new turn.
-export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig) {
+export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = []) {
   const docID = `session-${sessionID}`;
   const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
   if (!row || row.meta.isArchived || row.meta.parentSessionId) {
@@ -70,7 +80,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
   const entries = history.toJSON();
   const existing = entries.find(entry => entry?.id === turnID);
   if (existing) {
-    assertSameTurn(existing, userID, text);
+    assertSameTurn(existing, userID, text, attachments);
     if (row.meta.lastHandledUserMsgId === turnID ||
         ['completed', 'cancelled', 'failed'].includes(existing.status)) return 'sent';
     const conflict = competingActivation(row.meta, entries, turnID);
@@ -89,7 +99,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
       latestUserTurn(entries), handle.doc.getMap('acpRuntimeConfig').toJSON(),
     );
     let config = {
-      prompt: text, inputBlocks: [{ type: 'text', text }], cliType, agentType,
+      prompt: text, inputBlocks: [{ type: 'text', text }, ...attachments], cliType, agentType,
     };
     for (const key of INHERITED_TURN_CONFIG_KEYS) {
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];

@@ -6,11 +6,15 @@ struct PendingSessionStart: Identifiable, Equatable {
     let projectID: String
     let templateSessionID: SessionSummary.ID
     let text: String
+    var attachments: [ComposerAttachment] = []
+
+    var displayText: String { text.isEmpty ? attachments.map(\.fileName).joined(separator: ", ") : text }
 }
 
 struct PendingTextSend: Equatable {
     let text: String
     let turnID: ConversationTurn.ID
+    var attachments: [ComposerAttachment] = []
 }
 
 /// App-facing seam for one Lody account.
@@ -48,7 +52,7 @@ protocol LodyClient: AnyObject {
     /// `runConfig` applies only when this call creates the turn.
     @discardableResult
     func send(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment],
         runConfig: RunConfigChoice?,
         turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
@@ -68,7 +72,7 @@ protocol LodyClient: AnyObject {
     /// Returns the new session's ID. An unconfirmed start is retried with the
     /// same session and turn IDs until it is confirmed.
     func startSession(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment],
         agentConfigID: String?,
         selections: [RunConfigChoice],
         projectID: String,
@@ -108,15 +112,15 @@ extension LodyClient {
     }
 
     @discardableResult
-    func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
-        try await send(text, runConfig: nil, turnID: UUID().uuidString.lowercased(),
+    func send(_ text: String, attachments: [ComposerAttachment] = [], sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
+        try await send(text, attachments: attachments, runConfig: nil, turnID: UUID().uuidString.lowercased(),
                        sessionID: sessionID, workspaceID: workspaceID)
     }
 
     @discardableResult
-    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: SessionSummary.ID,
+    func send(_ text: String, attachments: [ComposerAttachment] = [], runConfig: RunConfigChoice?, sessionID: SessionSummary.ID,
               workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
-        try await send(text, runConfig: runConfig, turnID: UUID().uuidString.lowercased(),
+        try await send(text, attachments: attachments, runConfig: runConfig, turnID: UUID().uuidString.lowercased(),
                        sessionID: sessionID, workspaceID: workspaceID)
     }
 
@@ -146,7 +150,7 @@ extension LodyClient {
     }
 
     func startSession(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         agentConfigID: String?,
         selections: [RunConfigChoice],
         projectID: String,

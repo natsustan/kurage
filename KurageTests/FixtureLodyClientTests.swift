@@ -4,6 +4,23 @@ import Testing
 
 @MainActor
 struct FixtureLodyClientTests {
+    @Test func attachmentOnlyMessagesKeepImageBytesAndFileMetadata() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png", data: FixtureImage.png, isImage: true)
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain", data: Data("hello".utf8), isImage: false)
+        try await client.send("", attachments: [image, file], sessionID: "session-long", workspaceID: "ws-demo")
+        let conversation = try await client.conversation(sessionID: "session-long", workspaceID: "ws-demo")
+        let turn = try #require(conversation.turns.last)
+        #expect(turn.content.count == 2)
+        #expect(try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn)) == turn)
+        #expect(try await client.loadSessionImage(workspaceID: "ws-demo", sessionID: "session-long",
+                                                 imageID: image.id.uuidString, variant: .original) == image.data)
+        await #expect(throws: LodyClientError.sessionMissing) {
+            try await client.loadSessionImage(workspaceID: "ws-demo", sessionID: "session-tests",
+                                              imageID: image.id.uuidString, variant: .original)
+        }
+    }
+
     @Test func fixtureConversationsSupportReadingAndActions() {
         let model = AppModel(client: FixtureLodyClient())
 
@@ -484,7 +501,7 @@ private final class DeferredSessionClient: LodyClient {
     }
     @discardableResult
     func send(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         runConfig: RunConfigChoice?,
         turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,

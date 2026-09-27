@@ -1,0 +1,272 @@
+import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
+import AVFoundation
+import ImageIO
+
+struct ComposerAttachments: View {
+    @Binding var attachments: [ComposerAttachment]
+    @Binding var pending: [PendingComposerAttachment]
+    private var isLoading: Bool { !pending.isEmpty }
+    @Binding var error: String?
+    let disabled: Bool
+    @State private var showsPhotos = false
+    @State private var showsFiles = false
+    @State private var showsCamera = false
+    @State private var photos: [PhotosPickerItem] = []
+    @State private var importTask: Task<Void, Never>?
+
+    var body: some View {
+        ZStack {
+            Menu {
+                Button("Files", systemImage: "paperclip") { showsFiles = true }
+                    .accessibilityIdentifier("attach-files")
+                Button("Camera", systemImage: "camera") {
+                    guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                        error = "Camera is unavailable on this device."; return
+                    }
+                    importTask = Task {
+                        let allowed = await AVCaptureDevice.requestAccess(for: .video)
+                        guard !Task.isCancelled else { return }
+                        if allowed { showsCamera = true }
+                        else { error = "Allow camera access in Settings to take a photo." }
+                    }
+                }
+                .accessibilityIdentifier("attach-camera")
+                Button("Photos", systemImage: "photo.on.rectangle") { showsPhotos = true }
+                    .accessibilityIdentifier("attach-photos")
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 22))
+                    .foregroundStyle(Color.primary)
+                    .frame(width: 44, height: 44)
+            }
+            .tint(Color.primary)
+            .menuOrder(.fixed)
+            .disabled(disabled || isLoading || attachments.count >= 8)
+            .accessibilityLabel("Add attachment")
+            .accessibilityIdentifier("add-attachment")
+        }
+        .photosPicker(isPresented: $showsPhotos, selection: $photos,
+                      maxSelectionCount: max(1, 8 - attachments.count), selectionBehavior: .ordered,
+                      matching: .images, preferredItemEncoding: .compatible)
+        .onChange(of: photos) { _, selection in
+            guard !selection.isEmpty else { return }
+            beginImport(placeholders: selection.map { _ in PendingComposerAttachment(fileName: "Photo", isImage: true) }) {
+                var result: [ComposerAttachment] = []
+                for photo in selection {
+                    try Task.checkCancellation()
+                    guard let data = try await photo.loadTransferable(type: Data.self) else {
+                        throw AttachmentError.invalid("Could not load the selected photo.")
+                    }
+                    result.append(try await Task.detached { try Self.image(data) }.value)
+                }
+                return result
+            }
+        }
+        .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls):
+                guard urls.count + attachments.count <= 8 else { error = "Select up to 8 attachments."; return }
+                beginImport(placeholders: urls.map { PendingComposerAttachment(fileName: $0.lastPathComponent,
+                    isImage: UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true) }) {
+                    try await Task.detached {
+                        try urls.map { url in
+                            let access = url.startAccessingSecurityScopedResource()
+                            defer { if access { url.stopAccessingSecurityScopedResource() } }
+                            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                            guard size <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
+                            let handle = try FileHandle(forReadingFrom: url)
+                            defer { try? handle.close() }
+                            let data = try handle.read(upToCount: 16 * 1024 * 1024 + 1) ?? Data()
+                            guard data.count <= 16 * 1024 * 1024 else { throw AttachmentError.invalid("Files must be 16 MB or smaller.") }
+                            let type = UTType(filenameExtension: url.pathExtension)
+                            if type?.conforms(to: .image) == true,
+                               CGImageSourceCreateWithData(data as CFData, nil) != nil {
+                                return try Self.image(data, name: url.lastPathComponent)
+                            }
+                            return try ComposerAttachment(fileName: url.lastPathComponent,
+                                mimeType: type?.preferredMIMEType ?? "application/octet-stream", data: data, isImage: false)
+                        }
+                    }.value
+                }
+            case .failure(let failure): error = failure.localizedDescription
+            }
+        }
+        .fullScreenCover(isPresented: $showsCamera) {
+            CameraCapture { data in
+                showsCamera = false
+                if let data {
+                    beginImport(placeholders: [PendingComposerAttachment(fileName: "Photo", isImage: true)]) {
+                        [try await Task.detached { try Self.image(data) }.value]
+                    }
+                }
+            }.ignoresSafeArea()
+        }
+        .onDisappear { importTask?.cancel(); pending = [] }
+    }
+
+    private func beginImport(placeholders: [PendingComposerAttachment], _ load: @escaping @Sendable () async throws -> [ComposerAttachment]) {
+        importTask?.cancel()
+        pending = placeholders
+        importTask = Task {
+            defer { pending = []; photos = [] }
+            do {
+                let imported = try await load()
+                try Task.checkCancellation()
+                guard attachments.count + imported.count <= 8 else { throw AttachmentError.invalid("Select up to 8 attachments.") }
+                attachments.append(contentsOf: imported)
+            } catch is CancellationError { } catch { self.error = error.localizedDescription }
+        }
+    }
+
+    nonisolated private static func image(_ data: Data, name: String = "Photo.jpg") throws -> ComposerAttachment {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let identifier = CGImageSourceGetType(source) else { throw AttachmentError.invalid("Could not read this image.") }
+        let type = UTType(identifier as String)
+        let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 360
+        ] as CFDictionary).flatMap { UIImage(cgImage: $0).jpegData(compressionQuality: 0.8) }
+        if let mime = type?.preferredMIMEType, ["image/jpeg", "image/png", "image/webp", "image/gif"].contains(mime), data.count <= 5 * 1024 * 1024 {
+            return try ComposerAttachment(fileName: name == "Photo.jpg" ? "Photo.\(type?.preferredFilenameExtension ?? "jpg")" : name,
+                                          mimeType: mime, data: data, isImage: true, thumbnailData: thumbnail)
+        }
+        // HEIC and oversized camera photos become bounded JPEGs; no library write is needed.
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 2048
+        ] as CFDictionary), let jpeg = UIImage(cgImage: image).jpegData(compressionQuality: 0.85) else {
+            throw AttachmentError.invalid("Could not prepare this image.")
+        }
+        return try ComposerAttachment(fileName: (name as NSString).deletingPathExtension + ".jpg", mimeType: "image/jpeg", data: jpeg, isImage: true, thumbnailData: thumbnail)
+    }
+}
+
+/// Selection placeholders stay separate from validated, sendable attachment bytes.
+struct PendingComposerAttachment: Identifiable {
+    let id = UUID()
+    let fileName: String
+    let isImage: Bool
+}
+
+struct ComposerAttachmentStrip: View {
+    @Binding var attachments: [ComposerAttachment]
+    let pending: [PendingComposerAttachment]
+    let disabled: Bool
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(attachments) { attachment in
+                    ComposerAttachmentPreview(fileName: attachment.fileName, isImage: attachment.isImage,
+                                              thumbnailData: attachment.thumbnailData, isLoading: disabled) {
+                        attachments.removeAll { $0.id == attachment.id }
+                    }
+                }
+                ForEach(pending) { item in
+                    ComposerAttachmentPreview(fileName: item.fileName, isImage: item.isImage,
+                                              thumbnailData: nil, isLoading: true, onRemove: nil)
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.top, 2)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("composer-attachments")
+    }
+}
+
+private struct ComposerAttachmentPreview: View {
+    let fileName: String
+    let isImage: Bool
+    let thumbnailData: Data?
+    let isLoading: Bool
+    let onRemove: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isImage {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 20).fill(Color.primary.opacity(0.07))
+                    if let thumbnailData, let image = UIImage(data: thumbnailData) {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .accessibilityLabel(fileName)
+                    }
+                }
+                .frame(width: 120, height: 120)
+                .clipShape(.rect(cornerRadius: 20))
+                .overlay {
+                    if isLoading {
+                        RoundedRectangle(cornerRadius: 20).fill(.black.opacity(0.2))
+                        ProgressView().tint(thumbnailData == nil ? Color.primary : .white)
+                            .accessibilityLabel("Loading \(fileName)")
+                    }
+                }
+                .overlay(alignment: .topTrailing) { removeButton }
+            } else {
+                HStack(spacing: 8) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(isPDF ? Color.red : Color.secondary)
+                        if isLoading {
+                            ProgressView().tint(.white)
+                                .accessibilityLabel("Loading \(fileName)")
+                        } else {
+                            Image(systemName: isPDF ? "doc.richtext" : "doc.fill")
+                                .font(.system(size: 19, weight: .medium)).foregroundStyle(.white)
+                        }
+                    }
+                    .frame(width: 32, height: 36)
+                    Text(fileName).font(.subheadline).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: 160, alignment: .leading)
+                    removeButton
+                }
+                .padding(.leading, 6)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.07), in: .rect(cornerRadius: 18))
+            }
+        }
+    }
+
+    private var isPDF: Bool { (fileName as NSString).pathExtension.lowercased() == "pdf" }
+
+    @ViewBuilder private var removeButton: some View {
+        if let onRemove {
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(.black.opacity(isImage ? 0.5 : 0.35), in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLoading)
+            .accessibilityLabel("Remove \(fileName)")
+        }
+    }
+}
+
+private struct CameraCapture: UIViewControllerRepresentable {
+    let onFinish: (Data?) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onFinish: (Data?) -> Void
+        init(onFinish: @escaping (Data?) -> Void) { self.onFinish = onFinish }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { onFinish(nil) }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            onFinish((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.9))
+        }
+    }
+}

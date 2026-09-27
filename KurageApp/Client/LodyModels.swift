@@ -70,9 +70,16 @@ struct ConversationImage: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+struct ConversationFile: Codable, Equatable, Sendable {
+    let fileID: String
+    let fileName: String
+    let sizeBytes: Int
+}
+
 enum ConversationPart: Equatable, Sendable {
     case text(String)
     case image(ConversationImage)
+    case file(ConversationFile)
 }
 
 struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
@@ -94,6 +101,8 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
             switch part {
             case .text(let text):
                 return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .text(text)
+            case .file(let file):
+                return .file(file)
             case .image(let image):
                 return image.isDisplayable ? .image(image) : nil
             }
@@ -139,6 +148,8 @@ private struct PartBox: Codable {
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 part = .text(text)
             }
+        case "file":
+            if let file = try? ConversationFile(from: decoder), ConversationImage.isReference(file.fileID), file.sizeBytes > 0 { part = .file(file) }
         case "image":
             if let image = try? ConversationImage(from: decoder), image.isDisplayable {
                 part = .image(image)
@@ -154,6 +165,9 @@ private struct PartBox: Codable {
         case .text(let text):
             try container.encode("text", forKey: .type)
             try container.encode(text, forKey: .text)
+        case .file(let file):
+            try container.encode("file", forKey: .type)
+            try file.encode(to: encoder)
         case .image(let image):
             try container.encode("image", forKey: .type)
             try container.encode(image.imageID, forKey: .imageID)

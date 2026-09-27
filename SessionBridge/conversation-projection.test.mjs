@@ -76,3 +76,12 @@ test('projects session images in order and keeps image-only turns', () => {
     },
   ]);
 });
+
+test('file attachments project explicit file metadata without inventing message text', () => {
+  const result = projectConversation('chat', [{ id: 'u-file', role: 'user', items: [
+    { type: 'file', fileId: 'f-1', fileName: 'notes.txt', sizeBytes: 12 },
+    { type: 'file', fileId: '../bad', fileName: 'bad.txt', sizeBytes: 1 },
+  ] }]);
+  assert.equal(result.turns[0].text, '');
+  assert.deepEqual(result.turns[0].parts, [{ type: 'file', fileID: 'f-1', fileName: 'notes.txt', sizeBytes: 12 }]);
+});

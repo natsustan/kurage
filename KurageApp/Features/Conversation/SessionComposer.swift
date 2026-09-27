@@ -124,6 +124,10 @@ struct SessionComposer: View {
     }
 
     @Binding var draft: String
+    @Binding var attachments: [ComposerAttachment]
+    @State private var pendingAttachments: [PendingComposerAttachment] = []
+    private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
+    @State private var attachmentError: String?
     let isSending: Bool
     let isCancelling: Bool
     let isSessionRunning: Bool
@@ -163,11 +167,14 @@ struct SessionComposer: View {
 
     private var canSend: Bool {
         showsSend && canSubmit && !isSending && !isCancelling &&
-            !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !isLoadingAttachments && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            if !attachments.isEmpty || isLoadingAttachments {
+                ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
+            }
             TextField(placeholder, text: editableDraft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...5)
@@ -181,9 +188,15 @@ struct SessionComposer: View {
             actionRow
         }
             .padding(8)
-            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 30))
+            .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(identifiers.container)
+            .alert("Attachment unavailable", isPresented: Binding(
+                get: { attachmentError != nil },
+                set: { if !$0 { attachmentError = nil } }
+            )) {
+                Button("OK", role: .cancel) { attachmentError = nil }
+            } message: { Text(attachmentError ?? "") }
             .onAppear {
                 targetGaugeProgress = runConfig?.reasoningProgress ?? 1
                 gaugeProgress = targetGaugeProgress
@@ -226,6 +239,8 @@ struct SessionComposer: View {
 
     private var actionRow: some View {
         HStack(spacing: 6) {
+            ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
+                                error: $attachmentError, disabled: isSending)
             Spacer(minLength: 0)
             if let contextWindowUsage, contextWindowUsage.isValid {
                 ContextWindowButton(usage: contextWindowUsage)

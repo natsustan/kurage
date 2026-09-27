@@ -17,7 +17,7 @@ struct ConversationSubtasksButton: View {
         }
         .foregroundStyle(showsTasks ? Color(uiColor: .systemBackground) : .primary)
         .buttonStyle(.plain)
-        .glassEffect(.regular.tint(showsTasks ? .primary : .clear).interactive(), in: .capsule)
+        .glassEffect(.regular.tint(showsTasks ? .primary : .clear), in: .capsule)
         .accessibilityIdentifier("conversation-subtasks")
         .accessibilityHint("View subtasks created from this conversation")
         .popover(isPresented: $showsTasks, arrowEdge: .bottom) {

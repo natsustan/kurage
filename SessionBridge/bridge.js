@@ -201,12 +201,12 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
 
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig) => {
+window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
   try {
     const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
     if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig);
+    return await sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments);
   } finally {
     await repo.destroy();
   }

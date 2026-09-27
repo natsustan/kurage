@@ -54,6 +54,7 @@ struct NewSessionView: View {
     @State private var configuration = NewSessionConfiguration()
     @State private var request = LoadRequest()
     @State private var draft = ""
+    @State private var attachments: [ComposerAttachment] = []
     @State private var isStarting = false
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
@@ -91,7 +92,7 @@ struct NewSessionView: View {
         .safeAreaInset(edge: .bottom) {
             if pendingStart == nil {
                 SessionComposer(
-                    draft: $draft, isSending: isStarting, isCancelling: false, isSessionRunning: false,
+                    draft: $draft, attachments: $attachments, isSending: isStarting, isCancelling: false, isSessionRunning: false,
                     supportsTextSending: true, supportsTextSendingWhileRunning: false,
                     supportsSessionCancellation: false,
                     runConfig: configuration.menu,
@@ -124,7 +125,7 @@ struct NewSessionView: View {
             }
             detailRow(route.projectName, systemImage: "folder")
             if let pendingStart {
-                Text(pendingStart.text)
+                Text(pendingStart.displayText)
                     .lineLimit(4)
                     .foregroundStyle(.primary)
                 Button("Retry earlier start", systemImage: "arrow.clockwise") {
@@ -183,12 +184,13 @@ struct NewSessionView: View {
 
     private func start() {
         guard isCurrentWorkspace, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
-              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+              (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
         let text = draft
+        let sentAttachments = attachments
         let selections = runConfig?.selections ?? []
         performStart {
             try await model.startSession(
-                text, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+                text, attachments: sentAttachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
                 selections: selections, projectID: route.projectID,
                 templateSessionID: route.templateSessionID
             )

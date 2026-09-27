@@ -3,11 +3,12 @@ import UIKit
 
 enum ConversationBlock: Equatable, Identifiable {
     case text(id: String, text: String)
+    case file(id: String, file: ConversationFile)
     case images(id: String, images: [ConversationImage])
 
     var id: String {
         switch self {
-        case .text(let id, _), .images(let id, _): id
+        case .text(let id, _), .images(let id, _), .file(let id, _): id
         }
     }
 }
@@ -18,13 +19,16 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
     if author == .user {
         var images: [ConversationImage] = []
         var texts: [String] = []
+        var files: [ConversationFile] = []
         for part in content {
             switch part {
+            case .file(let file): files.append(file)
             case .text(let text): texts.append(text)
             case .image(let image): images.append(image)
             }
         }
         var blocks: [ConversationBlock] = []
+        blocks.append(contentsOf: files.map { .file(id: "file-\($0.fileID)", file: $0) })
         if !images.isEmpty { blocks.append(.images(id: "images", images: images)) }
         if !texts.isEmpty { blocks.append(.text(id: "text", text: texts.joined(separator: "\n\n"))) }
         return blocks
@@ -33,6 +37,8 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
     var blocks: [ConversationBlock] = []
     for part in content {
         switch part {
+        case .file(let file):
+            blocks.append(.file(id: "file-\(blocks.count)", file: file))
         case .text(let text):
             blocks.append(.text(id: "text-\(blocks.count)", text: text))
         case .image(let image):

@@ -47,6 +47,10 @@ function projectImage(item) {
 function projectParts(items) {
   const parts = [];
   for (const item of items) {
+    if (item?.type === 'file' && isImageReference(item.fileId) && optionalFileName(item.fileName) && Number.isInteger(item.sizeBytes) && item.sizeBytes > 0) {
+      parts.push({ type: 'file', fileID: item.fileId, fileName: optionalFileName(item.fileName), sizeBytes: item.sizeBytes });
+      continue;
+    }
     if (item?.type === 'text') {
       const text = visibleText(item.text);
       if (text) parts.push({ type: 'text', text });

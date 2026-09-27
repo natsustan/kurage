@@ -830,3 +830,94 @@ final class ShellFlowTests: XCTestCase {
         add(attachment)
     }
 }
+
+extension ShellFlowTests {
+    @MainActor
+    func testAttachmentSourcesAndPrivatePhotoPicker() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let add = app.buttons["add-attachment"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        attachScreen(app, name: "attachment-composer")
+        tap(add)
+        XCTAssertTrue(app.buttons["Files"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Camera"].exists)
+        XCTAssertTrue(app.buttons["Photos"].exists)
+        attachScreen(app, name: "attachment-menu")
+        app.buttons["Files"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "attachment-files-picker")
+        tap(app.buttons["Cancel"])
+        tap(add)
+        app.buttons["Photos"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
+        attachScreen(app, name: "attachment-private-photos-picker")
+        tap(app.buttons["Cancel"])
+        tap(add)
+        app.buttons["Camera"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let cameraDismiss = app.buttons["DismissButton"]
+        if cameraDismiss.waitForExistence(timeout: 5) {
+            XCTAssertTrue(app.buttons["PhotoCapture"].exists)
+            attachScreen(app, name: "system-camera")
+            tap(cameraDismiss)
+        } else {
+            XCTAssertTrue(app.staticTexts["Camera is unavailable on this device."].exists)
+            tap(app.buttons["OK"])
+        }
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+    }
+}
+
+extension ShellFlowTests {
+    @MainActor
+    func testPhotoAttachmentPreviewRemovalAndSend() throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("Photo selection requires an isolated test simulator with sample photos.")
+        #endif
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        let add = app.buttons["add-attachment"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+        for shouldSend in [false, true] {
+            tap(add)
+            tap(app.buttons["Photos"])
+            XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
+            let privacyBannerClose = app.buttons["Close"].firstMatch
+            if privacyBannerClose.exists { tap(privacyBannerClose) }
+            let photos = app.images.matching(identifier: "PXGGridLayout-Info")
+            guard photos.firstMatch.waitForExistence(timeout: 30) else {
+                throw XCTSkip("This device needs a test photo in the system library.")
+            }
+            // Run only on an isolated simulator whose library contains test sample photos.
+            tap(photos.element(boundBy: photos.count - 1))
+            tap(app.buttons["Done"])
+            let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
+            XCTAssertTrue(remove.waitForExistence(timeout: 10))
+            let send = app.buttons["new-session-send"]
+            XCTAssertTrue(send.isEnabled)
+            attachScreen(app, name: "photo-attachment-preview")
+            if shouldSend {
+                tap(send)
+                XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 10))
+                XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+                XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'conversation-image-' AND identifier != 'conversation-image-close'")).firstMatch.waitForExistence(timeout: 5))
+                attachScreen(app, name: "photo-attachment-only-sent")
+            } else {
+                tap(remove)
+                XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+                XCTAssertFalse(send.isEnabled)
+                attachScreen(app, name: "photo-attachment-removed")
+            }
+        }
+    }
+}
