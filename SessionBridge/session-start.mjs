@@ -28,16 +28,13 @@ function readProviders(flock, machineID) {
   return providers.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// The most recent session with this agent, preferring the same project, gives
+// The most recent session with this agent across projects gives
 // the first turn's permission mode, model, options and MCP selection.
 async function readBaseline(repo, rows, meta, agentConfigID, signal) {
   const candidates = rows
     .filter(row => isRootSession(row) && row.meta.machineId === meta.machineId &&
       row.meta.agentConfigId === agentConfigID)
-    .sort((a, b) => {
-      const sameProject = row => row.meta.project?.localProjectId === meta.project.localProjectId ? 1 : 0;
-      return sameProject(b) - sameProject(a) || activityAt(b.meta) - activityAt(a.meta);
-    });
+    .sort((a, b) => activityAt(b.meta) - activityAt(a.meta));
   const source = candidates[0];
   if (!source) return {};
   return readDocumentBaseline(repo, source.docId, signal);

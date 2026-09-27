@@ -54,6 +54,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
+    updateSessionMetadata: extras.updateSessionMetadata,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
@@ -277,15 +278,16 @@ test('optional machine sync failure still returns sessions with a fallback proje
   assert.equal(result.sessions[0].projectName, 'Local Project');
 });
 
-test('session list includes the machine name from workspace metadata', async () => {
+test('session list includes the machine name and pin from workspace metadata', async () => {
   const rows = [
-    localSession,
+    { ...localSession, meta: { ...localSession.meta, isPinned: true } },
     { docId: 'machine-machine', meta: { name: 'spike@mac' } },
   ];
   const { window } = makeBridge(async () => ({ ok: true }), rows);
 
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].machineName, 'spike@mac');
+  assert.equal(result.sessions[0].isPinned, true);
 });
 
 test('cancelling a transcript read releases the queued conversation observation', async () => {
@@ -409,6 +411,74 @@ test('new-session options forward cancellation after metadata sync and release t
   const pending = window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2');
   await ready;
   window.kurageCancel('options-2');
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(repos[0].destroyed, true);
+});
+
+
+test('metadata edits use the requested workspace and release their replica on success or failure', async () => {
+  for (const fails of [false, true]) {
+    let request;
+    const { window, repos, transports } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+      updateSessionMetadata: async (repo, sessionID, change) => {
+        request = { repo, sessionID, change };
+        if (fails) throw new Error('write failed');
+        return 'updated';
+      },
+    });
+    const operation = window.kurageUpdateSessionMetadata('workspace-other', 'chat', 'https://gateway.lody.ai', { isPinned: true });
+    if (fails) await assert.rejects(operation, /write failed/);
+    else assert.equal(await operation, 'updated');
+    assert.equal(request.sessionID, 'chat');
+    assert.equal(request.repo, repos[0]);
+    assert.equal(request.change.isPinned, true);
+    assert.equal(repos[0].destroyed, true);
+    assert.equal(transports[0].metaStreamId, 'workspace-other:meta');
+  }
+});
+
+for (const phase of ['initial sync', 'write sync']) {
+  test(`metadata cancellation during ${phase} aborts and releases its replica`, async () => {
+    const started = Promise.withResolvers();
+    let observedSignal;
+    let writes = 0;
+    const waitForCancellation = async signal => {
+      observedSignal = signal;
+      started.resolve();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    };
+    const { window, repos } = makeBridge(async ({ signal }) => {
+      if (phase === 'initial sync') await waitForCancellation(signal);
+      return { outcome: 'synced' };
+    }, [], undefined, undefined, {
+      updateSessionMetadata: async (repo, sessionID, change, signal) => {
+        writes++;
+        await waitForCancellation(signal);
+      },
+    });
+    const pending = window.kurageUpdateSessionMetadata('ws', 'chat', 'https://gateway.lody.ai', { isPinned: true }, 'edit');
+    await started.promise;
+    window.kurageCancel('edit');
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(writes, phase === 'initial sync' ? 0 : 1);
+    assert.equal(repos[0].destroyed, true);
+  });
+}
+
+test('metadata cancellation prevents writes even when initial sync completes successfully after abort', async () => {
+  const started = Promise.withResolvers();
+  const sync = Promise.withResolvers();
+  const { window, repos } = makeBridge(() => {
+    started.resolve();
+    return sync.promise;
+  }, [], undefined, undefined, {
+    updateSessionMetadata: async () => assert.fail('unexpected metadata write'),
+  });
+  const pending = window.kurageUpdateSessionMetadata('ws', 'chat', 'https://gateway.lody.ai', { title: 'New' }, 'edit');
+  await started.promise;
+  window.kurageCancel('edit');
+  sync.resolve({ outcome: 'synced' });
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(repos[0].destroyed, true);
 });

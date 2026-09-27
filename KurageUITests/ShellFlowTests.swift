@@ -736,7 +736,7 @@ final class ShellFlowTests: XCTestCase {
 
         let alert = app.alerts.firstMatch
         XCTAssertTrue(alert.waitForExistence(timeout: 2))
-        XCTAssertTrue(alert.staticTexts["This removes the task from the remote task list."].exists)
+        XCTAssertTrue(alert.staticTexts["This archives the session and its child sessions."].exists)
         tap(alert.buttons["Cancel"])
         XCTAssertTrue(session.waitForExistence(timeout: 2))
 
@@ -933,5 +933,134 @@ extension ShellFlowTests {
                 attachScreen(app, name: "photo-attachment-removed")
             }
         }
+    }
+}
+
+extension ShellFlowTests {
+    @MainActor
+    func testSessionContextMenuPinRenameCopyAndArchive() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-tests"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        session.press(forDuration: 1)
+        XCTAssertTrue(app.buttons["Pin"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Rename session"].exists)
+        XCTAssertTrue(app.buttons["Copy Session URL"].exists)
+        XCTAssertTrue(app.buttons["Archive"].exists)
+        attachScreen(app, name: "Session context menu")
+        tap(app.buttons["Pin"])
+        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
+        attachScreen(app, name: "Pinned session group")
+        tap(app.buttons["more-options"])
+        tap(app.buttons["By Time"])
+        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
+        attachScreen(app, name: "Pinned session by time")
+        tap(app.buttons["more-options"])
+        tap(app.buttons["By Project"])
+        session.press(forDuration: 1)
+        tap(app.buttons["Unpin"])
+        XCTAssertTrue(app.staticTexts["Pinned"].waitForNonExistence(timeout: 5))
+        session.press(forDuration: 1)
+        tap(app.buttons["Rename session"])
+        let title = app.alerts.textFields["Session title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        replaceSessionTitle(title, with: "Renamed fixture session")
+        attachScreen(app, name: "Rename session prompt")
+        tap(app.alerts.buttons["Save"])
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "Renamed fixture session"), object: session
+        )], timeout: 5), .completed)
+        session.press(forDuration: 1)
+        tap(app.buttons["Copy Session URL"])
+        XCTAssertTrue(app.buttons["Copy Session URL"].waitForNonExistence(timeout: 3))
+        tap(session)
+        let composer = app.descendants(matching: .any)["follow-up-field"].firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        tap(composer)
+        composer.press(forDuration: 1)
+        let paste = app.menuItems["Paste"].firstMatch
+        if paste.waitForExistence(timeout: 2) {
+            tap(paste)
+        } else {
+            tap(app.buttons["Paste"].firstMatch)
+        }
+        let allowPaste = app.buttons["Allow Paste"]
+        if allowPaste.waitForExistence(timeout: 1) { tap(allowPaste) }
+        XCTAssertTrue((composer.value as? String)?.contains("/demo/sessions/session-tests") == true)
+        app.navigationBars.buttons.firstMatch.tap()
+        session.press(forDuration: 1)
+        tap(app.buttons["Archive"])
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 3))
+        tap(app.alerts.buttons["Cancel"])
+        XCTAssertTrue(session.exists)
+        session.press(forDuration: 1)
+        tap(app.buttons["Archive"])
+        tap(app.buttons.matching(identifier: "archive-confirm").firstMatch)
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testDetailSessionActionsKeepConversationOpenUntilArchive() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-tests"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+        let options = app.buttons["session-options"]
+        XCTAssertTrue(options.waitForExistence(timeout: 5))
+        tap(options)
+        XCTAssertTrue(app.buttons["Pin"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["Rename session"].exists)
+        XCTAssertTrue(app.buttons["Copy Session URL"].exists)
+        XCTAssertTrue(app.buttons["Archive"].exists)
+        attachScreen(app, name: "Conversation session menu")
+        tap(app.buttons["Pin"])
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(options.exists)
+        tap(options)
+        XCTAssertTrue(app.buttons["Unpin"].waitForExistence(timeout: 3))
+        tap(app.buttons["Copy Session URL"])
+        XCTAssertTrue(options.exists)
+        tap(options)
+        tap(app.buttons["Rename session"])
+        let title = app.alerts.textFields["Session title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        replaceSessionTitle(title, with: "Renamed in detail")
+        tap(app.alerts.buttons["Save"])
+        XCTAssertTrue(app.staticTexts["Renamed in detail"].waitForExistence(timeout: 5))
+        XCTAssertTrue(options.exists)
+        attachScreen(app, name: "Renamed conversation title")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 5))
+        tap(session)
+        tap(options)
+        tap(app.buttons["Archive"])
+        XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 3))
+        attachScreen(app, name: "Conversation archive confirmation")
+        tap(app.buttons.matching(identifier: "archive-confirm").firstMatch)
+        XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 5))
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+    }
+}
+
+
+extension ShellFlowTests {
+    @MainActor
+    private func replaceSessionTitle(_ field: XCUIElement, with title: String) {
+        // The alert focuses the initial title. Keep that selection/caret position;
+        // tapping long text can move the caret into the middle at accessibility sizes.
+        let count = (field.value as? String)?.count ?? 0
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count))
+        field.typeText(title)
+        XCTAssertEqual(field.value as? String, title)
     }
 }

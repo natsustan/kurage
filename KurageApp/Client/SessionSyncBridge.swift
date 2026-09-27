@@ -61,7 +61,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 preview: metadata.preview,
                 projectID: metadata.projectID,
                 projectName: metadata.projectName,
-                machineName: metadata.machineName
+                machineName: metadata.machineName,
+                isPinned: metadata.isPinned
             )
         }
     }
@@ -147,6 +148,27 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
             access: access,
             arguments: ["sessionID": sessionID]
         )
+    }
+
+    func updateSessionMetadata(sessionID: String, workspaceID: String, access: StreamsAccess,
+                               change: SessionMetadataChange) async throws -> String {
+        let patch: [String: Any]
+        switch change {
+        case .pin(let value): patch = ["isPinned": value]
+        case .rename(let title): patch = ["title": title]
+        }
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        return try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageUpdateSessionMetadata(workspaceID, sessionID, baseURL, change, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "change": patch, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
     }
 
     func archiveSession(
@@ -384,6 +406,7 @@ private struct SessionMetadata: Decodable {
     let projectID: String?
     let projectName: String?
     let machineName: String?
+    let isPinned: Bool?
 }
 
 private struct SessionSnapshot: Decodable {

@@ -762,6 +762,22 @@ final class HTTPLodyClient: LodyClient {
         }
     }
 
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws {
+        guard account != nil else { throw LodyClientError.signedOut }
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw CancellationError() }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.updateSessionMetadata(sessionID: sessionID, workspaceID: workspaceID, access: access, change: change)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw CancellationError() }
+        guard result == "updated" else { throw LodyClientError.deliveryUnconfirmed }
+    }
+
+    var supportsSessionMetadataEditing: Bool { true }
+
     func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary] {
         try Task.checkCancellation()
         let generation = authenticationGeneration

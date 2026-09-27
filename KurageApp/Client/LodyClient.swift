@@ -1,5 +1,10 @@
 import Foundation
 
+enum SessionMetadataChange: Sendable {
+    case pin(Bool)
+    case rename(String)
+}
+
 /// A process-local creation that must resume its existing session and first turn.
 struct PendingSessionStart: Identifiable, Equatable {
     let id: SessionSummary.ID
@@ -33,6 +38,8 @@ protocol LodyClient: AnyObject {
     var supportsTextSendingWhileRunning: Bool { get }
     var supportsSessionCancellation: Bool { get }
     var supportsSessionArchiving: Bool { get }
+    var supportsSessionMetadataEditing: Bool { get }
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws
     var supportsPermissionResponses: Bool { get }
     /// Whether a local project can start a session from its most recent one.
     var supportsSessionCreation: Bool { get }
@@ -132,6 +139,10 @@ extension LodyClient {
     var supportsTextSendingWhileRunning: Bool { false }
     var supportsSessionCancellation: Bool { false }
     var supportsSessionArchiving: Bool { false }
+    var supportsSessionMetadataEditing: Bool { false }
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws {
+        throw LodyClientError.notConnected
+    }
     var supportsPermissionResponses: Bool { false }
     var supportsSessionCreation: Bool { false }
 

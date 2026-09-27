@@ -19,6 +19,7 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var projectID: String? = nil
     var projectName: String? = nil
     var machineName: String? = nil
+    var isPinned: Bool? = nil
 }
 
 struct ArchivedSessionSummary: Identifiable, Equatable, Sendable {
