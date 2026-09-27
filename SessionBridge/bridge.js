@@ -341,6 +341,15 @@ window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL
   }
 };
 
-window.kurageUpdateSessionMetadata = (workspaceID, sessionID, gatewayBaseURL, change) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
-    repo => updateSessionMetadata(repo, sessionID, change));
+window.kurageUpdateSessionMetadata = async (workspaceID, sessionID, gatewayBaseURL, change, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+      repo => updateSessionMetadata(repo, sessionID, change, controller.signal),
+      { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};

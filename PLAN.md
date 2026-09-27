@@ -135,3 +135,6 @@
 - 附件分支后续审查修复：文件历史投影将长文件名截短为最多 200 字符，缺失名称使用 `File`，不再因展示名称丢弃文件块或整条纯附件消息。相机回调不再同步编码原图；图片通过可取消的后台任务按最长边 2048px 缩放、保留方向后编码，再生成缩略图。本轮 frozen lockfile 安装、113 项 JavaScript 测试及 bundle 重建通过；14 项图片相关 Swift 测试通过，包含新增的相机图片尺寸/方向及取消回归；2 项附件 fixture UI 回归通过。真机拍照延迟及真实服务长文件名上传尚未验证。
 
 - 新建会话默认配置修复：移除同项目优先排序，按同机器、同 provider 的根会话活动时间选取有效运行配置，避免旧项目配置覆盖最近在其它项目使用的模型。机器与目标项目仍取项目模板；缺少 agentConfigId 的旧模板仍只继承自身。网页版参考 `components/chat/chat-landing.tsx` 和 `lib/local-storage-cache.ts`：`agentDefaultsCache` 是浏览器 localStorage 偏好，无法直接跨端读取；Kurage 使用已同步会话恢复最近配置，并非同步网页未发送的选择。frozen lockfile 安装、114 项 JS 测试和 bundle 重建通过，新增回归覆盖跨项目优先级、运行时模型/reasoning、页面与首轮写入一致，以及子会话/归档/机器/provider 隔离。未修改原生契约或 UI，未跑 iOS 测试；真实账号默认模型仍待验证。
+
+- PR #14 取消链路修复：置顶和改名通过 operation ID 将 Swift Task 取消传入临时仓库、metadata 同步及原生网络代理；读取后写入前检查取消，退出时销毁副本并清理认证别名。取消会停止尚未完成的工作，不能撤回服务端已接收的写入；真实账号弱网场景仍待验证。
+  本轮 frozen lockfile 安装、125 项 JavaScript 测试及 bundle 重建通过；7 项 iOS 定向测试通过（StreamFetchHandlerTests、SessionMetadataTests），包含实际 WebKit 桥接取消原生网络请求的回归。

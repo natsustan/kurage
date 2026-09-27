@@ -1,7 +1,9 @@
 // Match Lody updateSessionTitle / setSessionPinned; preserve unrelated metadata.
-export async function updateSessionMetadata(repo, sessionID, change) {
+export async function updateSessionMetadata(repo, sessionID, change, signal) {
+  signal?.throwIfAborted();
   const docID = `session-${sessionID}`;
   const row = await repo.getDocMeta(docID);
+  signal?.throwIfAborted();
   if (!row || row.deleted || row.exists === false || row.e === false || !row.meta || row.meta.isArchived) return 'missing';
   let patch;
   if (typeof change.isPinned === 'boolean') {
@@ -12,9 +14,12 @@ export async function updateSessionMetadata(repo, sessionID, change) {
     return 'invalid';
   }
   await repo.upsertDocMeta(docID, patch);
-  const report = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
+  signal?.throwIfAborted();
+  const report = await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+  signal?.throwIfAborted();
   if (report?.outcome !== 'synced' && report?.ok !== true) return 'unconfirmed';
   const confirmed = await repo.getDocMeta(docID);
+  signal?.throwIfAborted();
   if (!confirmed || confirmed.deleted || confirmed.exists === false || confirmed.e === false || confirmed.meta?.isArchived) return 'unconfirmed';
   return Object.entries(patch).every(([key, value]) => confirmed.meta?.[key] === value)
     ? 'updated' : 'unconfirmed';

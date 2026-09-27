@@ -436,3 +436,49 @@ test('metadata edits use the requested workspace and release their replica on su
     assert.equal(transports[0].metaStreamId, 'workspace-other:meta');
   }
 });
+
+for (const phase of ['initial sync', 'write sync']) {
+  test(`metadata cancellation during ${phase} aborts and releases its replica`, async () => {
+    const started = Promise.withResolvers();
+    let observedSignal;
+    let writes = 0;
+    const waitForCancellation = async signal => {
+      observedSignal = signal;
+      started.resolve();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    };
+    const { window, repos } = makeBridge(async ({ signal }) => {
+      if (phase === 'initial sync') await waitForCancellation(signal);
+      return { outcome: 'synced' };
+    }, [], undefined, undefined, {
+      updateSessionMetadata: async (repo, sessionID, change, signal) => {
+        writes++;
+        await waitForCancellation(signal);
+      },
+    });
+    const pending = window.kurageUpdateSessionMetadata('ws', 'chat', 'https://gateway.lody.ai', { isPinned: true }, 'edit');
+    await started.promise;
+    window.kurageCancel('edit');
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.equal(observedSignal.aborted, true);
+    assert.equal(writes, phase === 'initial sync' ? 0 : 1);
+    assert.equal(repos[0].destroyed, true);
+  });
+}
+
+test('metadata cancellation prevents writes even when initial sync completes successfully after abort', async () => {
+  const started = Promise.withResolvers();
+  const sync = Promise.withResolvers();
+  const { window, repos } = makeBridge(() => {
+    started.resolve();
+    return sync.promise;
+  }, [], undefined, undefined, {
+    updateSessionMetadata: async () => assert.fail('unexpected metadata write'),
+  });
+  const pending = window.kurageUpdateSessionMetadata('ws', 'chat', 'https://gateway.lody.ai', { title: 'New' }, 'edit');
+  await started.promise;
+  window.kurageCancel('edit');
+  sync.resolve({ outcome: 'synced' });
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(repos[0].destroyed, true);
+});

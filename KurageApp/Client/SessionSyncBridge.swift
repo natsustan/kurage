@@ -157,11 +157,18 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         case .pin(let value): patch = ["isPinned": value]
         case .rename(let title): patch = ["title": title]
         }
-        return try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageUpdateSessionMetadata(workspaceID, sessionID, baseURL, change))",
-            workspaceID: workspaceID, access: access,
-            arguments: ["sessionID": sessionID, "change": patch]
-        )
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        return try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageUpdateSessionMetadata(workspaceID, sessionID, baseURL, change, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "change": patch, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
     }
 
     func archiveSession(
