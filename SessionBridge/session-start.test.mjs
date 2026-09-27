@@ -92,6 +92,41 @@ test('a new session offers both the model and its reasoning from the template ba
   assert.equal(options.runConfig.reasoning.value, 'high');
 });
 
+test('recent provider use across projects wins over an older project template at display and write time', async () => {
+  const { repo, rows, docs } = fixture();
+  rows.get('session-template').lastMessageAt = 1;
+  rows.set('session-recent', {
+    ...rows.get('session-template'), lastMessageAt: 10,
+    project: { kind: 'local', localProjectId: 'elsewhere' },
+  });
+  const recent = new LoroDoc();
+  recent.getList('history').push({ id: 'recent-turn', role: 'user', inputConfig: {
+    modelId: 'gpt-5.5', configOptionValues: { reasoning_effort: 'high' },
+  } });
+  recent.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'recent-turn');
+  recent.getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  recent.getMap('acpRuntimeConfig').set('configOptionValues', { reasoning_effort: 'low' });
+  recent.commit();
+  docs.set('session-recent', recent);
+  // These newer rows must never supply this provider's default configuration.
+  for (const [id, patch] of Object.entries({
+    child: { parentSessionId: 'recent' }, archived: { isArchived: true },
+    machine: { machineId: 'another-machine' }, provider: { agentConfigId: 'another-provider' },
+  })) {
+    rows.set(`session-${id}`, { ...rows.get('session-recent'), lastMessageAt: 20, ...patch });
+    docs.set(`session-${id}`, docs.get('session-template'));
+  }
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.runConfig.model.value, 'gpt-5.4-mini');
+  assert.equal(options.runConfig.reasoning.value, 'low');
+  assert.equal(await start(repo), 'sent');
+  const config = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(config.modelId, options.runConfig.model.value);
+  assert.equal(config.configOptionValues.reasoning_effort, options.runConfig.reasoning.value);
+  assert.equal(rows.get('session-new').project.localProjectId, 'proj');
+  assert.equal(rows.get('session-new').machineId, 'mac');
+});
+
 test('the first turn is durable before metadata publishes and dispatches it', async () => {
   const { repo, rows, docs, calls } = fixture();
   assert.equal(await start(repo, { selections: [

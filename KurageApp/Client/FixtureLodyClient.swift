@@ -316,6 +316,20 @@ final class FixtureLodyClient: LodyClient {
         return [sessionID]
     }
 
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        try Task.checkCancellation()
+        guard let index = records.firstIndex(where: { $0.summary.id == sessionID }),
+              !archivedSessionIDs.contains(sessionID) else { throw LodyClientError.sessionMissing }
+        switch change {
+        case .pin(let value): records[index].summary.isPinned = value
+        case .rename(let title): records[index].summary.title = title
+        }
+    }
+
+    var supportsSessionMetadataEditing: Bool { true }
+
     func archivedSessions(workspaceID: WorkspaceSummary.ID) async throws -> [ArchivedSessionSummary] {
         try requireAccount()
         try requireWorkspace(workspaceID)

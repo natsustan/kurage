@@ -17,6 +17,7 @@ struct SessionNavigation {
 struct SessionListView: View {
     let model: AppModel
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
+    @State private var actionRequest: SessionActionRequest?
     @State private var archiveFailed = false
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
@@ -30,6 +31,9 @@ struct SessionListView: View {
         NavigationStack(path: $navigation.path) {
             SessionList(
                 sessions: model.sessions,
+                canEdit: model.supportsSessionMetadataEditing,
+                canCopyURL: model.sessionURL(sessionID: "") != nil,
+                onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
                 mode: listMode,
                 supportsConversations: model.supportsConversations,
                 canArchive: model.supportsSessionArchiving,
@@ -136,6 +140,7 @@ struct SessionListView: View {
                 }
             }
         }
+        .modifier(SessionActionPresenter(model: model, request: $actionRequest))
         .onChange(of: model.workspaceGeneration) { _, _ in
             archiveFailed = false
         }
@@ -180,6 +185,9 @@ private enum SessionListMode: String, Hashable {
 
 private struct SessionList: View {
     let sessions: [SessionSummary]
+    let canEdit: Bool
+    let canCopyURL: Bool
+    let onAction: (SessionSummary, SessionAction) -> Void
     let mode: SessionListMode
     let supportsConversations: Bool
     let canArchive: Bool
@@ -230,6 +238,9 @@ private struct SessionList: View {
             } else {
                 SessionBrowser(
                     rows: rows,
+                    canEdit: canEdit,
+                    canCopyURL: canCopyURL,
+                    onAction: onAction,
                     canArchive: canArchive,
                     opensSessions: supportsConversations,
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
@@ -276,9 +287,21 @@ private struct SessionList: View {
         if !supportsConversations {
             rows.append(.banner("Only the session list is available. Conversations are not supported yet."))
         }
-        rows.append(.title(mode == .byProject ? "Projects" : "Recent"))
+        let pinned = visibleSessions.filter { $0.isPinned == true }
+        let unpinned = visibleSessions.filter { $0.isPinned != true }
+        if !pinned.isEmpty {
+            rows.append(.title("Pinned"))
+            rows.append(contentsOf: sessionRows(pinned))
+        }
+        if mode == .byProject || !unpinned.isEmpty {
+            rows.append(.title(mode == .byProject ? "Projects" : "Recent"))
+        }
         if mode == .byProject {
+            // Keep local project headers available for New session even when all
+            // their sessions have moved into Pinned.
             for group in SessionProjectGroup.make(from: visibleSessions) {
+                let groupSessions = group.sessions.filter { $0.isPinned != true }
+                guard !groupSessions.isEmpty || canCreateSession(group.id) else { continue }
                 let collapsed = trimmedQuery.isEmpty && collapsedProjectIDs.contains(group.id)
                 rows.append(.project(
                     id: group.id,
@@ -288,11 +311,11 @@ private struct SessionList: View {
                     canCreate: canCreateSession(group.id)
                 ))
                 if !collapsed {
-                    rows.append(contentsOf: sessionRows(group.sessions))
+                    rows.append(contentsOf: sessionRows(groupSessions))
                 }
             }
         } else {
-            rows.append(contentsOf: sessionRows(visibleSessions))
+            rows.append(contentsOf: sessionRows(unpinned))
         }
         return rows
     }
@@ -346,7 +369,7 @@ private enum SessionBrowserRow: Hashable {
         switch self {
         case .note: "note"
         case .banner: "banner"
-        case .title: "title"
+        case .title(let title): "title-\(title)"
         case let .project(id, _, _, _, _): "project-\(id)"
         case let .session(session, _, _): "session-\(session.id)"
         }
@@ -355,6 +378,9 @@ private enum SessionBrowserRow: Hashable {
 
 private struct SessionBrowser: UIViewControllerRepresentable {
     var rows: [SessionBrowserRow]
+    var canEdit: Bool
+    var canCopyURL: Bool
+    var onAction: (SessionSummary, SessionAction) -> Void
     var canArchive: Bool
     var opensSessions: Bool
     var bottomContentInset: CGFloat
@@ -369,6 +395,9 @@ private struct SessionBrowser: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: SessionBrowserController, context: Context) {
         controller.loadViewIfNeeded()
+        controller.canEdit = canEdit
+        controller.canCopyURL = canCopyURL
+        controller.onAction = onAction
         controller.onOpen = onOpen
         controller.onToggleProject = onToggleProject
         controller.onNewSession = onNewSession
@@ -387,6 +416,9 @@ private struct SessionBrowser: UIViewControllerRepresentable {
 /// `completion(false)` closes the swipe and leaves the row's height alone.
 /// The confirmation is presented by this controller, not by rebuilding the list.
 private final class SessionBrowserController: UIViewController, UITableViewDelegate {
+    var canEdit = false
+    var canCopyURL = false
+    var onAction: ((SessionSummary, SessionAction) -> Void)?
     var refreshAction: RefreshAction?
     private var refreshTask: Task<Void, Never>?
     var onOpen: ((SessionSummary.ID) -> Void)?
@@ -506,6 +538,35 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         let configuration = UISwipeActionsConfiguration(actions: [action])
         configuration.performsFirstActionWithFullSwipe = false
         return configuration
+    }
+
+    func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath,
+                   point: CGPoint) -> UIContextMenuConfiguration? {
+        guard let id = dataSource.itemIdentifier(for: indexPath),
+              case let .session(session, _, dimmed) = rows[id], !dimmed else { return nil }
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            guard let self else { return nil }
+            var actions: [UIAction] = []
+            if canEdit {
+                actions.append(UIAction(title: session.isPinned == true ? "Unpin" : "Pin",
+                                        image: UIImage(systemName: session.isPinned == true ? "pin.slash" : "pin")) { [weak self] _ in
+                    self?.onAction?(session, .pin)
+                })
+                actions.append(UIAction(title: "Rename session", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                    self?.onAction?(session, .rename)
+                })
+            }
+            actions.append(UIAction(title: "Copy Session URL", image: UIImage(systemName: "link"),
+                                    attributes: canCopyURL ? [] : .disabled) { [weak self] _ in
+                self?.onAction?(session, .copyURL)
+            })
+            if canArchive {
+                actions.append(UIAction(title: "Archive", image: UIImage(systemName: "archivebox"), attributes: .destructive) { [weak self] _ in
+                    self?.onAction?(session, .archive)
+                })
+            }
+            return UIMenu(children: actions)
+        }
     }
 
     private func confirmArchive(_ session: SessionSummary) {

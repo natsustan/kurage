@@ -520,6 +520,46 @@ final class AppModel {
         await refreshSessions(restart: true)
     }
 
+    var supportsSessionMetadataEditing: Bool { client.supportsSessionMetadataEditing }
+
+    func sessionURL(sessionID: String) -> URL? {
+        guard let workspace = workspaces.first(where: { $0.id == selectedWorkspaceID }),
+              !workspace.slug.isEmpty else { return nil }
+        return URL(string: LodyEndpoints.webOrigin)?
+            .appendingPathComponent(workspace.slug)
+            .appendingPathComponent("sessions")
+            .appendingPathComponent(sessionID)
+    }
+
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String) async throws {
+        try Task.checkCancellation()
+        guard let workspaceID = selectedWorkspaceID, supportsSessionMetadataEditing else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let normalized: SessionMetadataChange
+        switch change {
+        case .pin: normalized = change
+        case .rename(let title):
+            let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, title.utf16.count <= 200 else { throw LodyClientError.deliveryUnconfirmed }
+            normalized = .rename(title)
+        }
+        try await client.updateSessionMetadata(normalized, sessionID: sessionID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection,
+              selectedWorkspaceID == workspaceID else { throw CancellationError() }
+        cancelSessionRefresh()
+        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+            switch normalized {
+            case .pin(let value): sessions[index].isPinned = value
+            case .rename(let title): sessions[index].title = title
+            }
+        }
+        sessionsByWorkspace[workspaceID] = sessions
+        persistSession()
+        await refreshSessions(restart: true)
+    }
+
     func archiveSession(sessionID: SessionSummary.ID) async throws {
         guard supportsSessionArchiving, let workspaceID = selectedWorkspaceID else {
             throw LodyClientError.notConnected

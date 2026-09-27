@@ -54,6 +54,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
+    updateSessionMetadata: extras.updateSessionMetadata,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
@@ -277,15 +278,16 @@ test('optional machine sync failure still returns sessions with a fallback proje
   assert.equal(result.sessions[0].projectName, 'Local Project');
 });
 
-test('session list includes the machine name from workspace metadata', async () => {
+test('session list includes the machine name and pin from workspace metadata', async () => {
   const rows = [
-    localSession,
+    { ...localSession, meta: { ...localSession.meta, isPinned: true } },
     { docId: 'machine-machine', meta: { name: 'spike@mac' } },
   ];
   const { window } = makeBridge(async () => ({ ok: true }), rows);
 
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].machineName, 'spike@mac');
+  assert.equal(result.sessions[0].isPinned, true);
 });
 
 test('cancelling a transcript read releases the queued conversation observation', async () => {
@@ -411,4 +413,26 @@ test('new-session options forward cancellation after metadata sync and release t
   window.kurageCancel('options-2');
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(repos[0].destroyed, true);
+});
+
+
+test('metadata edits use the requested workspace and release their replica on success or failure', async () => {
+  for (const fails of [false, true]) {
+    let request;
+    const { window, repos, transports } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+      updateSessionMetadata: async (repo, sessionID, change) => {
+        request = { repo, sessionID, change };
+        if (fails) throw new Error('write failed');
+        return 'updated';
+      },
+    });
+    const operation = window.kurageUpdateSessionMetadata('workspace-other', 'chat', 'https://gateway.lody.ai', { isPinned: true });
+    if (fails) await assert.rejects(operation, /write failed/);
+    else assert.equal(await operation, 'updated');
+    assert.equal(request.sessionID, 'chat');
+    assert.equal(request.repo, repos[0]);
+    assert.equal(request.change.isPinned, true);
+    assert.equal(repos[0].destroyed, true);
+    assert.equal(transports[0].metaStreamId, 'workspace-other:meta');
+  }
 });

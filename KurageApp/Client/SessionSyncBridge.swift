@@ -61,7 +61,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 preview: metadata.preview,
                 projectID: metadata.projectID,
                 projectName: metadata.projectName,
-                machineName: metadata.machineName
+                machineName: metadata.machineName,
+                isPinned: metadata.isPinned
             )
         }
     }
@@ -146,6 +147,20 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
             workspaceID: workspaceID,
             access: access,
             arguments: ["sessionID": sessionID]
+        )
+    }
+
+    func updateSessionMetadata(sessionID: String, workspaceID: String, access: StreamsAccess,
+                               change: SessionMetadataChange) async throws -> String {
+        let patch: [String: Any]
+        switch change {
+        case .pin(let value): patch = ["isPinned": value]
+        case .rename(let title): patch = ["title": title]
+        }
+        return try await callBridge(
+            "return await window.kurageBridgeReady.then(() => window.kurageUpdateSessionMetadata(workspaceID, sessionID, baseURL, change))",
+            workspaceID: workspaceID, access: access,
+            arguments: ["sessionID": sessionID, "change": patch]
         )
     }
 
@@ -384,6 +399,7 @@ private struct SessionMetadata: Decodable {
     let projectID: String?
     let projectName: String?
     let machineName: String?
+    let isPinned: Bool?
 }
 
 private struct SessionSnapshot: Decodable {

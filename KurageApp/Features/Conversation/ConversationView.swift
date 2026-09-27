@@ -36,6 +36,8 @@ private struct ConversationContent: View {
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
     private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
 
+    @Environment(\.dismiss) private var dismiss
+    @State private var actionRequest: SessionActionRequest?
     @Environment(\.scenePhase) private var scenePhase
     @State private var observedWorkspaceID: String?
     @State private var observedSessionID: String?
@@ -118,7 +120,7 @@ private struct ConversationContent: View {
         .id(ConversationIdentity(workspaceID: model.selectedWorkspaceID, sessionID: sessionID))
         .ignoresSafeArea(.keyboard)
         .ignoresSafeArea(.container, edges: .bottom)
-        .navigationTitle(title)
+        .navigationTitle(session?.title ?? title)
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $previewImage) { image in
             ConversationImagePreview(image: image) { image, variant in
@@ -133,10 +135,23 @@ private struct ConversationContent: View {
                                     latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
                                     initialTurnNumber: selection.turnNumber)
         }
+        .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: { dismiss() }))
         .toolbar {
+            if !isReadOnly, let session {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        SessionActionButtons(session: session, model: model) { action in
+                            actionRequest = SessionActionRequest(session: session, action: action)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis").accessibilityLabel("Session options")
+                    }
+                    .accessibilityIdentifier("session-options")
+                }
+            }
             ToolbarItem(placement: .principal) {
                 ConversationNavigationTitle(
-                    title: title, projectName: session?.projectName,
+                    title: session?.title ?? title, projectName: session?.projectName,
                     machineName: session?.machineName,
                     connectionStatus: showsConnectionIndicator ? connectionStatus : nil
                 )

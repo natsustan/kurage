@@ -1,3 +1,4 @@
+import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
 import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
@@ -164,6 +165,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         preview: row.meta.repoFullName ?? '',
         projectID,
         projectName,
+        isPinned: row.meta.isPinned === true,
         machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
           ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
@@ -338,3 +340,7 @@ window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL
     throw error;
   }
 };
+
+window.kurageUpdateSessionMetadata = (workspaceID, sessionID, gatewayBaseURL, change) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => updateSessionMetadata(repo, sessionID, change));
