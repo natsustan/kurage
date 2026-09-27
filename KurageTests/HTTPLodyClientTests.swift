@@ -6,6 +6,212 @@ import WebKit
 @MainActor
 @Suite(.serialized)
 struct HTTPLodyClientTests {
+    @Test(arguments: [false, true])
+    func cancellingInFlightAttachmentUploadThrowsCancellation(isImage: Bool) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let (started, continuation) = AsyncStream<Void>.makeStream()
+        DeferredAuthURLProtocol.onStart = { request in
+            if request.request.url?.path == "/api/auth/get-session" {
+                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            } else {
+                continuation.yield(())
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        let attachment = try ComposerAttachment(
+            fileName: isImage ? "photo.png" : "notes.txt", mimeType: isImage ? "image/png" : "text/plain",
+            data: isImage ? FixtureImage.png : Data("hello".utf8), isImage: isImage
+        )
+        let task = Task {
+            try await client.uploadAttachments([attachment], sessionID: "chat", workspaceID: "work")
+        }
+        var iterator = started.makeAsyncIterator()
+        _ = await iterator.next()
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+
+    @Test(arguments: [URLError.Code.cancelled, .timedOut, .networkConnectionLost])
+    func attachmentUploadPreservesNonCancellationTransportErrors(code: URLError.Code) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        DeferredAuthURLProtocol.onStart = { request in
+            if request.request.url?.path == "/api/auth/get-session" {
+                request.respond(status: 200, data: Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            } else {
+                request.fail(URLError(code))
+            }
+        }
+        defer { DeferredAuthURLProtocol.onStart = nil }
+        let client = HTTPLodyClient(session: deferredSession(), tokenStore: store, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                          data: Data("hello".utf8), isImage: false)
+        if code == .cancelled {
+            await #expect(throws: CancellationError.self) {
+                try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work")
+            }
+        } else {
+            do {
+                _ = try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work")
+                Issue.record("Expected attachment upload to fail")
+            } catch {
+                #expect((error as? URLError)?.code == code)
+            }
+        }
+    }
+
+    @Test func attachmentUploadsUseCloudProtocolAndReuseOnlyWithinTheirSession() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store,
+                                   baseURL: log.baseURL, imageBaseURL: URL(string: "https://api.lody.ai")!,
+                                   cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        let file = try ComposerAttachment(fileName: "a b.txt", mimeType: "text/plain", data: Data("hello".utf8), isImage: false)
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work", expectedGeneration: -1)
+        }
+        log.install { request in
+            #expect(request.url?.host == "api.lody.ai")
+            #expect(request.url?.path == "/api/workspaces/work/session-files/upload")
+            #expect(request.httpMethod == "POST")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer account-token")
+            #expect(request.value(forHTTPHeaderField: "x-file-name") == "a%20b%2Etxt")
+            #expect(request.value(forHTTPHeaderField: "x-file-size-bytes") == "5")
+            #expect(request.value(forHTTPHeaderField: "x-file-text-preview") == "false")
+            return (200, Data(#"{"file":{"type":"file","fileId":"file-1","fileName":"a b.txt","mimeType":"text/plain","sizeBytes":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","textPreview":false,"transport":"r2","uploadedAt":1}}"#.utf8))
+        }
+        let first = try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work")
+        #expect(try await client.uploadAttachments([file], sessionID: "chat", workspaceID: "work") == first)
+        #expect(log.bodies.count == 1)
+        #expect(log.bodies.first == Data("hello".utf8))
+        _ = try await client.uploadAttachments([file], sessionID: "other", workspaceID: "work")
+        #expect(log.bodies.count == 2)
+        let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png", data: FixtureImage.png, isImage: true)
+        log.install { request in
+            #expect(request.url?.path == "/api/workspaces/work/session-images/upload")
+            #expect(request.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("multipart/form-data; boundary=") == true)
+            return (200, Data("{\"image\":{\"type\":\"image\",\"imageId\":\"image-1\",\"fileName\":\"photo.png\",\"mimeType\":\"image/png\",\"sizeBytes\":\(FixtureImage.png.count)}}".utf8))
+        }
+        _ = try await client.uploadAttachments([image], sessionID: "chat", workspaceID: "work")
+        let body = try #require(log.bodies.last)
+        #expect(body.range(of: Data("name=\"sessionId\"\r\n\r\nchat".utf8)) != nil)
+        #expect(body.range(of: FixtureImage.png) != nil)
+        client.signOut()
+        await #expect(throws: LodyClientError.signedOut) {
+            try await client.uploadAttachments([image], sessionID: "chat", workspaceID: "work")
+        }
+    }
+
+    @Test(arguments: [413, 415, 500])
+    func failedUploadsReleaseUnwrittenDrafts(status: Int) async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            }
+            if request.url?.path == "/api/loro-streams/token" {
+                return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
+            }
+            return (status, Data())
+        }
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
+        _ = try #require(await client.restoreSession())
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                          data: Data("hello".utf8), isImage: false)
+        let expectedError: LodyClientError = status >= 500 ? .unreachable : .signInFailed
+        for text in ["First", "Edited"] {
+            await #expect(throws: expectedError) {
+                try await client.send(text, attachments: [file], sessionID: "chat", workspaceID: "work")
+            }
+            #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work") == nil)
+            await #expect(throws: expectedError) {
+                try await client.startSession(text, attachments: [file], agentConfigID: nil, selections: [],
+                                              projectID: "p", templateSessionID: "t", workspaceID: "work")
+            }
+            #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
+        }
+        #expect(starter.requests.isEmpty)
+        // Removing the rejected attachment allows a new request to reach the writer.
+        var calls = starter.started.makeAsyncIterator()
+        let replacement = Task {
+            try await client.startSession("Without attachment", agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        _ = await calls.next()
+        starter.finish(0, result: "sent")
+        #expect(try await replacement.value == starter.requests[0].sessionID)
+    }
+
+    @Test func uploadedStartRetainsAttachmentsAfterUnconfirmedWrite() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { request in
+            if request.url?.path == "/api/auth/get-session" {
+                return (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8))
+            }
+            if request.url?.path == "/api/loro-streams/token" {
+                return (200, Data(#"{"token":"streams-token","expiresIn":300}"#.utf8))
+            }
+            return (200, Data("{\"image\":{\"type\":\"image\",\"imageId\":\"image-1\",\"fileName\":\"photo.png\",\"mimeType\":\"image/png\",\"sizeBytes\":\(FixtureImage.png.count)}}".utf8))
+        }
+        let starter = DeferredSessionStarter()
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL,
+                                    cacheURL: Self.isolatedCacheURL, sessionStarter: starter)
+        _ = try #require(await client.restoreSession())
+        let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png",
+                                           data: FixtureImage.png, isImage: true)
+        var calls = starter.started.makeAsyncIterator()
+        let first = Task {
+            try await client.startSession("Read", attachments: [image], agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        _ = await calls.next()
+        starter.finish(0, result: "unconfirmed")
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
+        let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
+        #expect(pending.attachments == [image])
+        await #expect(throws: LodyClientError.previousSendPending("Read")) {
+            try await client.startSession("Read", agentConfigID: nil, selections: [],
+                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+        }
+        let retry = Task { try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work") }
+        _ = await calls.next()
+        #expect(starter.requests[1].sessionID == starter.requests[0].sessionID)
+        #expect(starter.requests[1].turnID == starter.requests[0].turnID)
+        starter.finish(1, result: "sent")
+        #expect(try await retry.value == pending.id)
+    }
+
+    @Test func attachmentRetryCannotSilentlyDropSelectedFiles() async throws {
+        let store = MemoryAuthTokenStore()
+        _ = store.write("account-token")
+        let log = AuthRequestLog()
+        log.install { _ in (200, Data(#"{"user":{"id":"current-user","email":"ada@lody.ai"}}"#.utf8)) }
+        let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: Self.isolatedCacheURL)
+        _ = try #require(await client.restoreSession())
+        log.install { _ in (503, Data()) }
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain", data: Data("hello".utf8), isImage: false)
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.send("Read", attachments: [file], sessionID: "chat", workspaceID: "work")
+        }
+        #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work")?.attachments == [file])
+        await #expect(throws: LodyClientError.previousSendPending("Read")) {
+            try await client.send("Read", sessionID: "chat", workspaceID: "work")
+        }
+    }
+
     @Test func realConversationsNeedAnAccountIDToSendText() {
         let model = AppModel(client: HTTPLodyClient(tokenStore: MemoryAuthTokenStore()))
 
@@ -1126,7 +1332,7 @@ private final class DeferredSessionStarter: SessionStarting {
 
     init() { (started, signal) = AsyncStream.makeStream() }
 
-    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+    func startSession(_ text: String, attachments: [UploadedAttachment] = [], sessionID: String, turnID: String, userID: String,
                       agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
                       workspaceID: String, access: StreamsAccess) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in

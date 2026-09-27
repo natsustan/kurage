@@ -20,7 +20,7 @@ struct ConversationChangesHUD: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
+        .glassEffect(.regular, in: .capsule)
         .accessibilityIdentifier("conversation-changes-hud")
         .accessibilityHint("View file changes recorded in this conversation")
     }

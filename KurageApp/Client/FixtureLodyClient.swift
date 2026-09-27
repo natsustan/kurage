@@ -73,6 +73,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func signOut() {
+        attachmentImages.removeAll()
         pendingStarts = [:]
         pendingSends = [:]
         account = nil
@@ -127,7 +128,7 @@ final class FixtureLodyClient: LodyClient {
 
     @discardableResult
     func send(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         runConfig: RunConfigChoice?,
         turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
@@ -136,16 +137,16 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         let pending = pendingSends[sessionID]
-        if let pending, pending.message.text != trimmed {
+        if let pending, (pending.message.text != trimmed || pending.message.attachments != attachments) {
             throw LodyClientError.previousSendPending(pending.message.text)
         }
         let effectiveTurnID = pending?.message.turnID ?? turnID
         let effectiveRunConfig = if let pending { pending.runConfig } else { runConfig }
         if failSendOnce {
             failSendOnce = false
-            pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID), effectiveRunConfig)
+            pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID, attachments: attachments), effectiveRunConfig)
             throw LodyClientError.deliveryUnconfirmed
         }
         if let sendDelay { try await Task.sleep(for: sendDelay) }
@@ -158,7 +159,7 @@ final class FixtureLodyClient: LodyClient {
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
             }
-            let turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed)
+            let turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))
             record.turns.append(turn)
             record.summary.preview = trimmed
         }
@@ -189,7 +190,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func startSession(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         agentConfigID: String?,
         selections: [RunConfigChoice],
         projectID: String,
@@ -199,7 +200,7 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         if let pending = pendingSessionStarts(workspaceID: workspaceID).first(where: { $0.projectID == projectID }) {
-            guard pending.text == text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            guard pending.text == text.trimmingCharacters(in: .whitespacesAndNewlines), pending.attachments == attachments else {
                 throw LodyClientError.previousSendPending(pending.text)
             }
             return try await retrySessionStart(sessionID: pending.id, workspaceID: workspaceID)
@@ -210,7 +211,7 @@ final class FixtureLodyClient: LodyClient {
         let template = try record(templateSessionID)
         guard template.summary.projectID == projectID else { throw LodyClientError.sessionMissing }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         var runConfig = options.runConfig ?? NewSessionRunConfig()
         for choice in selections {
             if choice.configOptionID == runConfig.model?.configOptionID {
@@ -223,12 +224,12 @@ final class FixtureLodyClient: LodyClient {
         let id = "session-new-\(makeTurnID())"
         let created = SessionRecord(
             summary: SessionSummary(
-                id: id, title: String(trimmed.prefix(50)), agentName: options.agentConfigID,
+                id: id, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: options.agentConfigID,
                 activity: .idle, preview: trimmed,
                 projectID: projectID, projectName: template.summary.projectName,
                 machineName: template.summary.machineName
             ),
-            turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)],
+            turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
             permission: nil,
             runConfig: SessionRunConfig(
                 model: runConfig.selectedModel.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
@@ -239,7 +240,7 @@ final class FixtureLodyClient: LodyClient {
         if failStartAndArchiveProjectOnce {
             failStartAndArchiveProjectOnce = false
             pendingStarts[id] = (PendingSessionStart(id: id, projectID: projectID,
-                templateSessionID: templateSessionID, text: trimmed), created)
+                templateSessionID: templateSessionID, text: trimmed, attachments: attachments), created)
             archivedSessionIDs.formUnion(records.filter { $0.summary.projectID == projectID }.map(\.summary.id))
             throw LodyClientError.deliveryUnconfirmed
         }
@@ -270,6 +271,19 @@ final class FixtureLodyClient: LodyClient {
         }
     }
 
+    private var attachmentImages: [String: Data] = [:]
+
+    private func attachmentParts(_ attachments: [ComposerAttachment], text: String) -> [ConversationPart] {
+        (text.isEmpty ? [] : [.text(text)]) + attachments.map { attachment in
+            let id = attachment.id.uuidString
+            if attachment.isImage {
+                attachmentImages[id] = attachment.data
+                return .image(ConversationImage(imageID: id, mimeType: attachment.mimeType, fileName: attachment.fileName))
+            }
+            return .file(ConversationFile(fileID: id, fileName: attachment.fileName, sizeBytes: attachment.data.count))
+        }
+    }
+
     func loadSessionImage(
         workspaceID: WorkspaceSummary.ID,
         sessionID: SessionSummary.ID,
@@ -287,7 +301,7 @@ final class FixtureLodyClient: LodyClient {
             }
         }
         guard known else { throw LodyClientError.sessionMissing }
-        return FixtureImage.png
+        return attachmentImages[imageID] ?? (imageID == "pr-user-shot" ? FixtureImage.portraitPNG : FixtureImage.png)
     }
 
     @discardableResult
@@ -454,6 +468,9 @@ extension NewSessionRunConfig {
 }
 
 enum FixtureImage {
+    /// 300×400 portrait with no message dimensions, exercising loaded-image sizing.
+    static let portraitPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAASwAAAGQCAIAAACbF8osAAAE00lEQVR42u3TsQkAIBAEwS/MEm3NIoyNzb8EQQRBB7aC4yb6mJIuFiaQIJQglAShBKEkCCUIJUEoQSgJQglCSRBKEEqCUIJQEoQShJIglCCUBKEEoSQIJQglQShBKAlCCUJJEEoQSoJQglAShBKEkiCUIJQEoQShJAglCCVBKEEoCUIJQkkQShBKglCCUBKEEoSSIJQg3KrUJp0NQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQggFIYSCEEIIBSGEghBCCAUhhIIQQqcRhBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQghhIIQQkEIIYSCEEJBCCGEghBCQQihxwhCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIJQghFIQQShBCKAghlCCEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCGEUBBCKAghhFAQQigIIYRQEEIoCCF0GkEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEApCCCUIIRSEEEoQQigIIZQghFAQQihBCKEghFCCEEJBCKEEIYSCEEIJQggFIYQShBAKQgglCCEUhBBKEEIoCCGUIIRQEEIoQQihIIRQghBCQQihBCGEghBCCUIIBSGEEoQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYQQCkIIBSGEEApCCAUhhBAKQggFIYROIwghFIQQShBCKAghlCCEUBBCKEEIoSCEUIIQQkEIoQQhhIIQQglCCAUhhBKEEArC1xFKnwShBKEEoSQIJQglQShBKAlCCUJJEEoQSoJQglAShBKEkiCUIJQEoQShJAglCCVBKEEoCUIJQkkQShBKglCCUBKEEoSSIJQglAShBKEkCCUIJUEoQSgJQglCSRBKEEqCUIJQEoQShJIglCCUtCgBDpLAqyYZ9voAAAAASUVORK5CYII=")!
+
     /// 120×80 PNG, so fixture layouts also exercise non-square image content.
     static let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAHgAAABQCAYAAADSm7GJAAAA00lEQVR4nO3RMQ0AIADAMPwLQARyMAQySEaP/ks21tyHrvE6AIMxGIM/ZXCcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGxxkcZ3CcwXEGx10d8AQ+quhfSQAAAABJRU5ErkJggg==")!
 }
@@ -524,8 +541,7 @@ extension SessionRecord {
                     id: "pr-user", author: .user, text: "Look at this PR",
                     parts: [
                         .image(ConversationImage(
-                            imageID: "pr-user-shot", mimeType: "image/png", fileName: "screenshot.png",
-                            width: 80, height: 80
+                            imageID: "pr-user-shot", mimeType: "image/png", fileName: "screenshot.png"
                         )),
                         .text("Look at this PR"),
                     ]

@@ -25,6 +25,10 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private struct PendingSend {
+        var activePreparations = 0
+        var uploadFailed = false
+        var hasAttemptedWrite = false
+        let attachments: [ComposerAttachment]
         let text: String
         let turnID: String
         let runConfig: RunConfigChoice?
@@ -37,6 +41,8 @@ final class HTTPLodyClient: LodyClient {
     }
 
     private struct PendingStart {
+        var hasAttemptedWrite = false
+        let attachments: [ComposerAttachment]
         let templateSessionID: String
         let text: String
         let sessionID: String
@@ -70,6 +76,7 @@ final class HTTPLodyClient: LodyClient {
     private var authenticationGeneration = 0
     private var sessionBridge: SessionSyncBridge?
     private var streamsAccessCache: [WorkspaceSummary.ID: (access: StreamsAccess, expiresAt: Date, accountToken: String)] = [:]
+    private var uploadedAttachments: [String: UploadedAttachment] = [:]
     private var pendingSends: [SendKey: PendingSend] = [:]
     private var pendingStarts: [StartKey: PendingStart] = [:]
     private var activeStarts: [StartKey: SessionStartOperation] = [:]
@@ -221,6 +228,7 @@ final class HTTPLodyClient: LodyClient {
     func signOut() {
         authenticationGeneration += 1
         tokenStore.delete()
+        uploadedAttachments.removeAll()
         account = nil
         sessionBridge?.close()
         sessionBridge = nil
@@ -501,36 +509,59 @@ final class HTTPLodyClient: LodyClient {
         guard let userID = account?.id,
               let pending = pendingSends[SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)]
         else { return nil }
-        return PendingTextSend(text: pending.text, turnID: pending.turnID)
+        return PendingTextSend(text: pending.text, turnID: pending.turnID, attachments: pending.attachments)
     }
 
     @discardableResult
     func send(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         runConfig: RunConfigChoice?,
         turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
-        if let pending = pendingSends[key], pending.text != trimmed {
+        if let pending = pendingSends[key], (pending.text != trimmed || pending.attachments != attachments) {
             throw LodyClientError.previousSendPending(pending.text)
         }
         // A retry resumes the original turn, including the configuration it was authored with.
         let pending = pendingSends[key] ?? PendingSend(
-            text: trimmed, turnID: turnID, runConfig: runConfig
+            attachments: attachments, text: trimmed, turnID: turnID, runConfig: runConfig
         )
         let turnID = pending.turnID
         pendingSends[key] = pending
+        pendingSends[key]?.activePreparations += 1
+        defer {
+            if generation == authenticationGeneration, pendingSends[key]?.turnID == turnID {
+                pendingSends[key]?.activePreparations -= 1
+                if let current = pendingSends[key], current.activePreparations == 0,
+                   current.uploadFailed, !current.hasAttemptedWrite {
+                    pendingSends.removeValue(forKey: key)
+                }
+            }
+        }
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        let result = try await bridge.sendText(trimmed, turnID: turnID, userID: userID,
+        let uploaded: [UploadedAttachment]
+        do {
+            uploaded = try await uploadAttachments(pending.attachments, sessionID: sessionID,
+                                                   workspaceID: workspaceID, expectedGeneration: generation)
+        } catch {
+            if generation == authenticationGeneration, pendingSends[key]?.turnID == turnID {
+                pendingSends[key]?.uploadFailed = true
+            }
+            throw error
+        }
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        // Once a replica may have authored the turn, every retry must retain its identity.
+        if pendingSends[key]?.turnID == turnID { pendingSends[key]?.hasAttemptedWrite = true }
+        let result = try await bridge.sendText(trimmed, attachments: uploaded, turnID: turnID, userID: userID,
                                                runConfig: pending.runConfig,
                                                sessionID: sessionID, workspaceID: workspaceID, access: access)
         guard generation == authenticationGeneration, account != nil else {
@@ -572,7 +603,7 @@ final class HTTPLodyClient: LodyClient {
         pendingStarts.compactMap { key, pending in
             guard key.userID == account?.id, key.workspaceID == workspaceID else { return nil }
             return PendingSessionStart(id: pending.sessionID, projectID: key.projectID,
-                                       templateSessionID: pending.templateSessionID, text: pending.text)
+                                       templateSessionID: pending.templateSessionID, text: pending.text, attachments: pending.attachments)
         }.sorted { $0.id < $1.id }
     }
 
@@ -582,13 +613,13 @@ final class HTTPLodyClient: LodyClient {
             $0.key.userID == userID && $0.key.workspaceID == workspaceID && $0.value.sessionID == sessionID
         }) else { throw LodyClientError.sessionMissing }
         // A stale retry must never fall through to allocating a new session.
-        return try await startSession(pending.text, agentConfigID: pending.agentConfigID,
+        return try await startSession(pending.text, attachments: pending.attachments, agentConfigID: pending.agentConfigID,
                                       selections: pending.selections, projectID: key.projectID,
                                       templateSessionID: pending.templateSessionID, workspaceID: workspaceID)
     }
 
     func startSession(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         agentConfigID: String?,
         selections: [RunConfigChoice],
         projectID: String,
@@ -596,19 +627,19 @@ final class HTTPLodyClient: LodyClient {
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         // An unconfirmed start may already exist remotely. Resume it rather
         // than creating a second session with different text.
         let key = StartKey(userID: userID, workspaceID: workspaceID, projectID: projectID)
-        if let pending = pendingStarts[key], pending.text != trimmed {
+        if let pending = pendingStarts[key], (pending.text != trimmed || pending.attachments != attachments) {
             throw LodyClientError.previousSendPending(pending.text)
         }
         try Task.checkCancellation()
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
-            templateSessionID: templateSessionID, text: trimmed, sessionID: UUID().uuidString.lowercased(),
+            attachments: attachments, templateSessionID: templateSessionID, text: trimmed, sessionID: UUID().uuidString.lowercased(),
             turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
         )
         pendingStarts[key] = pending
@@ -664,8 +695,22 @@ final class HTTPLodyClient: LodyClient {
             sessionBridge = liveBridge
             bridge = liveBridge
         }
+        let uploaded: [UploadedAttachment]
+        do {
+            uploaded = try await uploadAttachments(pending.attachments, sessionID: pending.sessionID,
+                                                   workspaceID: workspaceID, expectedGeneration: generation)
+        } catch {
+            if generation == authenticationGeneration,
+               let current = pendingStarts[key], current.sessionID == pending.sessionID,
+               !current.hasAttemptedWrite {
+                pendingStarts.removeValue(forKey: key)
+            }
+            throw error
+        }
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        pendingStarts[key]?.hasAttemptedWrite = true
         let result = try await bridge.startSession(
-            pending.text, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
+            pending.text, attachments: uploaded, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
             agentConfigID: pending.agentConfigID, selections: pending.selections,
             templateSessionID: pending.templateSessionID,
             workspaceID: workspaceID, access: access
@@ -778,6 +823,78 @@ final class HTTPLodyClient: LodyClient {
         workspaceID: WorkspaceSummary.ID
     ) async throws {
         throw LodyClientError.notConnected
+    }
+
+    func uploadAttachments(_ attachments: [ComposerAttachment], sessionID: String,
+                           workspaceID: String, expectedGeneration: Int? = nil) async throws -> [UploadedAttachment] {
+        guard expectedGeneration == nil || expectedGeneration == authenticationGeneration else {
+            throw LodyClientError.signedOut
+        }
+        if attachments.isEmpty { return [] }
+        guard attachments.count <= 8 else { throw AttachmentError.invalid("Select up to 8 attachments.") }
+        guard let token = tokenStore.read(), account != nil else { throw LodyClientError.signedOut }
+        let generation = authenticationGeneration
+        var uploaded: [UploadedAttachment] = []
+        for attachment in attachments {
+            try Task.checkCancellation()
+            let key = "\(generation)/\(workspaceID)/\(sessionID)/\(attachment.id)"
+            if let cached = uploadedAttachments[key] { uploaded.append(cached); continue }
+            let endpoint = imageBaseURL.appendingPathComponent("api/workspaces")
+                .appendingPathComponent(workspaceID)
+                .appendingPathComponent(attachment.isImage ? "session-images/upload" : "session-files/upload")
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            if attachment.isImage {
+                let boundary = UUID().uuidString
+                request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+                let fileName = attachment.fileName.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+                    .replacingOccurrences(of: "\\", with: "_").replacingOccurrences(of: "\"", with: "_")
+                var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"sessionId\"\r\n\r\n\(sessionID)\r\n--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\nContent-Type: \(attachment.mimeType)\r\n\r\n".utf8)
+                body.append(attachment.data)
+                body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+                request.httpBody = body
+            } else {
+                request.httpBody = attachment.data
+                request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                let headers = ["x-session-id": sessionID,
+                    "x-file-name": attachment.fileName.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "file",
+                    "x-file-mime-type": attachment.mimeType,
+                    "x-file-sha256": SHA256.hash(data: attachment.data).map { String(format: "%02x", $0) }.joined(),
+                    "x-file-size-bytes": String(attachment.data.count), "x-file-text-preview": "false"]
+                for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+            }
+            let data: Data
+            let response: URLResponse
+            let redirectGuard = SessionImageRedirectGuard(allowedHost: imageBaseURL.host?.lowercased() ?? "")
+            do {
+                (data, response) = try await session.data(
+                    for: request, delegate: redirectGuard
+                )
+            } catch {
+                throw redirectGuard.transportError(error, taskIsCancelled: Task.isCancelled)
+            }
+            try Task.checkCancellation()
+            guard generation == authenticationGeneration, tokenStore.read() == token else { throw LodyClientError.signedOut }
+            guard let response = response as? HTTPURLResponse else { throw LodyClientError.notConnected }
+            guard (200..<300).contains(response.statusCode) else { throw errorCode(status: response.statusCode) }
+            guard let wrapper = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw AttachmentError.invalid("Invalid attachment upload response.")
+            }
+            var value = wrapper[attachment.isImage ? "image" : "file"] as? [String: Any] ?? wrapper
+            if attachment.isImage, value["fileName"] == nil { value["fileName"] = attachment.fileName }
+            let block = try JSONDecoder().decode(UploadedAttachment.self, from: JSONSerialization.data(withJSONObject: value))
+            guard block.type == (attachment.isImage ? "image" : "file"), block.sizeBytes == attachment.data.count, block.mimeType == attachment.mimeType,
+                  attachment.isImage ? block.imageId.map(ConversationImage.isReference) == true :
+                    (block.fileId.map(ConversationImage.isReference) == true && block.sha256 == request.value(forHTTPHeaderField: "x-file-sha256") && block.transport == "r2" && block.uploadedAt != nil)
+            else { throw AttachmentError.invalid("Invalid attachment upload response.") }
+            // Overlapping retries must author the same references even if two
+            // uploads completed before either caller published the turn.
+            let stableBlock = uploadedAttachments[key] ?? block
+            uploadedAttachments[key] = stableBlock
+            uploaded.append(stableBlock)
+        }
+        return uploaded
     }
 
     private func url(path: String) -> URL {

@@ -3,11 +3,12 @@ import UIKit
 
 enum ConversationBlock: Equatable, Identifiable {
     case text(id: String, text: String)
+    case file(id: String, file: ConversationFile)
     case images(id: String, images: [ConversationImage])
 
     var id: String {
         switch self {
-        case .text(let id, _), .images(let id, _): id
+        case .text(let id, _), .images(let id, _), .file(let id, _): id
         }
     }
 }
@@ -18,13 +19,16 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
     if author == .user {
         var images: [ConversationImage] = []
         var texts: [String] = []
+        var files: [ConversationFile] = []
         for part in content {
             switch part {
+            case .file(let file): files.append(file)
             case .text(let text): texts.append(text)
             case .image(let image): images.append(image)
             }
         }
         var blocks: [ConversationBlock] = []
+        blocks.append(contentsOf: files.map { .file(id: "file-\($0.fileID)", file: $0) })
         if !images.isEmpty { blocks.append(.images(id: "images", images: images)) }
         if !texts.isEmpty { blocks.append(.text(id: "text", text: texts.joined(separator: "\n\n"))) }
         return blocks
@@ -33,6 +37,8 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
     var blocks: [ConversationBlock] = []
     for part in content {
         switch part {
+        case .file(let file):
+            blocks.append(.file(id: "file-\(blocks.count)", file: file))
         case .text(let text):
             blocks.append(.text(id: "text-\(blocks.count)", text: text))
         case .image(let image):
@@ -182,15 +188,15 @@ struct ConversationImagePreview: View {
 
 enum ConversationImageFrame {
     static func single(width: Int?, height: Int?) -> CGSize {
-        let maxWidth: CGFloat = 300
+        let maxWidth: CGFloat = 220
         let maxHeight: CGFloat = 220
         guard let width, let height, width > 0, height > 0 else {
-            return CGSize(width: maxWidth, height: 168)
+            return CGSize(width: 160, height: 160)
         }
-        let scale = min(maxWidth / CGFloat(width), maxHeight / CGFloat(height))
+        let scale = min(1, maxWidth / CGFloat(width), maxHeight / CGFloat(height))
         return CGSize(
-            width: max(44, (CGFloat(width) * scale).rounded()),
-            height: max(44, (CGFloat(height) * scale).rounded())
+            width: CGFloat(width) * scale,
+            height: CGFloat(height) * scale
         )
     }
 }
@@ -205,12 +211,20 @@ private struct ConversationImageTile: View {
     @State private var loaded: UIImage?
     @State private var failed = false
 
+    // Thumbnail dimensions also cover missing or stale message metadata.
+    private var resolvedSize: CGSize? {
+        guard !fills, let loaded else { return size }
+        return ConversationImageFrame.single(
+            width: Int(loaded.size.width), height: Int(loaded.size.height)
+        )
+    }
+
     var body: some View {
         Button {
             onPreview(image)
         } label: {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
+                .fill(Color.primary.opacity(loaded == nil ? 0.06 : 0))
                 .overlay {
                     Group {
                         if let loaded {
@@ -228,13 +242,14 @@ private struct ConversationImageTile: View {
                     }
                     .accessibilityHidden(true)
                 }
-                .frame(width: size?.width, height: size?.height)
+                .frame(width: resolvedSize?.width, height: resolvedSize?.height)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .contentShape(.rect)
                 .overlay {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                        .strokeBorder(Color.primary.opacity(loaded == nil ? 0.12 : 0), lineWidth: 1)
                 }
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(image.accessibilityName)

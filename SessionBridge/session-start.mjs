@@ -133,18 +133,18 @@ export async function newSessionOptions(repo, workspaceID, templateSessionID, ag
 // the machine never sees a session without its message. Metadata carries the
 // dispatch pointer in the same write. Retries reuse both IDs.
 export async function startSession(repo, workspaceID, {
-  templateSessionID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections,
+  templateSessionID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections, attachments = [],
 }) {
   if (!text(userID) || !text(sessionID) || !text(turnID)) {
     throw new Error('Session dispatch configuration is unavailable');
   }
-  if (!text(prompt?.trim())) throw new Error('Message is empty');
+  if (!text(prompt?.trim()) && !attachments.length) throw new Error('Message is empty');
   const docID = `session-${sessionID}`;
   const published = (await repo.listDoc()).find(entry => entry.docId === docID);
   if (published?.deleted) throw new Error('Session was removed');
   if (published) {
     if (published.meta?.userId !== userID) throw new Error('Session ID belongs to another session');
-    return sendText(repo, sessionID, turnID, userID, prompt, timestamp);
+    return sendText(repo, sessionID, turnID, userID, prompt, timestamp, undefined, attachments);
   }
 
   const handle = await repo.openPersistedDoc(docID);
@@ -154,7 +154,7 @@ export async function startSession(repo, workspaceID, {
   const history = handle.doc.getList('history');
   const entries = history.toJSON();
   const existing = entries.find(entry => entry?.id === turnID);
-  if (existing) assertSameTurn(existing, userID, prompt);
+  if (existing) assertSameTurn(existing, userID, prompt, attachments);
   else if (entries.length > 0) throw new Error('Session ID belongs to another session');
 
   let template;
@@ -165,7 +165,7 @@ export async function startSession(repo, workspaceID, {
     template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
       { allowArchived: Boolean(existing) });
     if (!existing) config = applyNewSessionChoices({
-      prompt, inputBlocks: [{ type: 'text', text: prompt }],
+      prompt, inputBlocks: [{ type: 'text', text: prompt }, ...attachments],
       cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,
     }, template.runConfig, selections);
   } catch (error) {
@@ -196,7 +196,7 @@ export async function startSession(repo, workspaceID, {
     createdAt: timestamp,
     cliType: agent.cliType,
     agentType: agent.agentType,
-    title: prompt.trim().slice(0, TITLE_LENGTH),
+    title: (prompt.trim() || attachments[0]?.fileName || 'New session').slice(0, TITLE_LENGTH),
     titleSource: 'draft',
     project,
     latestUserMsgId: turnID,

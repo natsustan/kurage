@@ -411,12 +411,12 @@ final class AppModel {
     }
 
     @discardableResult
-    func send(_ text: String, runConfig: RunConfigChoice? = nil,
+    func send(_ text: String, attachments: [ComposerAttachment] = [], runConfig: RunConfigChoice? = nil,
               turnID: ConversationTurn.ID = UUID().uuidString.lowercased(),
               sessionID: SessionSummary.ID) async throws -> RunConfigChoice? {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
-        let sentChoice = try await client.send(text, runConfig: runConfig, turnID: turnID,
+        let sentChoice = try await client.send(text, attachments: attachments, runConfig: runConfig, turnID: turnID,
                                                sessionID: sessionID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
             throw CancellationError()
@@ -454,7 +454,7 @@ final class AppModel {
     }
 
     func startSession(
-        _ text: String,
+        _ text: String, attachments: [ComposerAttachment] = [],
         agentConfigID: String? = nil,
         selections: [RunConfigChoice],
         projectID: String,
@@ -466,7 +466,7 @@ final class AppModel {
         let generation = authenticationGeneration
         defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
         let sessionID = try await client.startSession(
-            text, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
+            text, attachments: attachments, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
             templateSessionID: templateSessionID, workspaceID: workspaceID
         )
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
@@ -475,7 +475,7 @@ final class AppModel {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !sessions.contains(where: { $0.id == sessionID }) {
             sessions.insert(SessionSummary(
-                id: sessionID, title: String(trimmed.prefix(50)), agentName: template.agentName,
+                id: sessionID, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: template.agentName,
                 activity: .idle, preview: trimmed, projectID: projectID,
                 projectName: template.projectName, machineName: template.machineName
             ), at: 0)

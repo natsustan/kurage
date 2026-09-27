@@ -76,7 +76,7 @@ struct SessionListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             ForEach(model.pendingSessionStarts) { pending in
-                                Button(String(pending.text.prefix(50))) {
+                                Button(String(pending.displayText.prefix(50))) {
                                     navigation.path.append(.newSession(NewSessionRoute(
                                         projectID: pending.projectID,
                                         projectName: model.sessions.first { $0.projectID == pending.projectID }?.projectName ?? "Project",

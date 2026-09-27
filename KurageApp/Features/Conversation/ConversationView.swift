@@ -42,6 +42,7 @@ private struct ConversationContent: View {
     @State private var refreshID = 0
     @State private var conversation: Conversation?
     @State private var draft = ""
+    @State private var attachments: [ComposerAttachment] = []
     @State private var isSending = false
     @State private var pendingTurns: [ConversationTurn] = []
     @State private var isCancelling = false
@@ -93,7 +94,7 @@ private struct ConversationContent: View {
                 onOpenChanges: { changesSelection = FileChangesSelection(turnNumber: nil) },
                 subtasks: displayedConversation?.subtasks ?? [],
                 onOpenSubtasks: { selectedSubtask = $0 },
-                draft: $draft,
+                draft: $draft, attachments: $attachments,
                 isSending: isSending,
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
@@ -177,7 +178,7 @@ private struct ConversationContent: View {
            let pending = model.pendingTextSend(sessionID: sessionID) {
             previousPendingText = pending.text
             previousPendingWorkspaceID = model.selectedWorkspaceID
-            if draft.isEmpty { draft = pending.text }
+            if draft.isEmpty { draft = pending.text; attachments = pending.attachments }
             banner = "Send could not be confirmed. Retry to resume the same message."
         }
         observedWorkspaceID = model.selectedWorkspaceID
@@ -251,8 +252,9 @@ private struct ConversationContent: View {
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
+        let sentAttachments = attachments
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
         let pending = model.pendingTextSend(sessionID: sessionID)
         let turnID: ConversationTurn.ID
         if let pending, pending.text == trimmed {
@@ -271,9 +273,10 @@ private struct ConversationContent: View {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, runConfig: choice, turnID: turnID,
+                let sentChoice = try await model.send(text, attachments: sentAttachments, runConfig: choice, turnID: turnID,
                                                        sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
+                attachments.removeAll { sentAttachments.contains($0) }
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 runConfigState.didSend(sentChoice)
@@ -313,9 +316,11 @@ private struct ConversationContent: View {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
                 draft = text
-                previousPendingText = trimmed
-                previousPendingWorkspaceID = model.selectedWorkspaceID
-                banner = "Could not confirm send. Retry to resume the same message."
+                previousPendingText = model.pendingTextSend(sessionID: sessionID)?.text
+                previousPendingWorkspaceID = previousPendingText == nil ? nil : model.selectedWorkspaceID
+                banner = previousPendingText == nil
+                    ? "Could not upload attachments. Review your draft and try again."
+                    : "Could not confirm send. Retry to resume the same message."
             }
         }
     }
@@ -355,9 +360,10 @@ private struct ConversationContent: View {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text,
+                let sentChoice = try await model.send(text, attachments: pending?.attachments ?? [],
                     turnID: turnID ?? UUID().uuidString.lowercased(), sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
+                attachments.removeAll { pending?.attachments.contains($0) == true }
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
@@ -378,7 +384,13 @@ private struct ConversationContent: View {
             } catch {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                banner = "Earlier send is still unconfirmed. Retry it before sending different text."
+                if model.pendingTextSend(sessionID: sessionID) == nil {
+                    previousPendingText = nil
+                    previousPendingWorkspaceID = nil
+                    banner = "Could not upload attachments. Review your draft and try again."
+                } else {
+                    banner = "Earlier send is still unconfirmed. Retry it before sending different text."
+                }
             }
         }
     }
@@ -507,6 +519,14 @@ struct TurnRow: View {
         VStack(alignment: alignment, spacing: 8) {
             ForEach(conversationBlocks(author: turn.author, content: turn.content)) { block in
                 switch block {
+                case .file(_, let file):
+                    Label {
+                        VStack(alignment: .leading) {
+                            Text(file.fileName).lineLimit(2)
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                        }
+                    } icon: { Image(systemName: "doc") }
+                    .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
                 case .text(_, let text):
                     messageText(text)
                 case .images(_, let images):
@@ -557,6 +577,7 @@ private struct ConversationFooter: View {
     let subtasks: [ConversationSubtask]
     let onOpenSubtasks: (ConversationSubtask) -> Void
     @Binding var draft: String
+    @Binding var attachments: [ComposerAttachment]
     let isSending: Bool
     let isCancelling: Bool
     let isSessionRunning: Bool
@@ -576,6 +597,9 @@ private struct ConversationFooter: View {
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
+        // Keep these glass backgrounds noninteractive: on iOS 27 their hit
+        // regions intercept attachment-menu items overlapping the footer.
+        // The controls themselves retain their normal button interactions.
         GlassEffectContainer(spacing: 8) {
             VStack(alignment: .leading, spacing: 10) {
                 if let banner {
@@ -605,7 +629,7 @@ private struct ConversationFooter: View {
                     .frame(maxWidth: .infinity)
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
-                    SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
+                    SessionComposer(draft: $draft, attachments: $attachments, isSending: isSending, isCancelling: isCancelling,
                                     isSessionRunning: isSessionRunning,
                                     supportsTextSending: supportsTextSending,
                                     supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,

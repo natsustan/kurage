@@ -411,3 +411,13 @@ test('five retries from fresh CRDT replicas keep one durable first turn', async 
     assert.equal(turns[0].items[0].text, 'Build the thing');
   }
 });
+
+test('attachment-only first turns upload references before publishing and retry unchanged', async () => {
+  const { repo, docs, rows } = fixture();
+  const attachments = [{ type: 'image', imageId: 'image-1', mimeType: 'image/png', fileName: 'photo.png', sizeBytes: 10 }];
+  assert.equal(await start(repo, { text: '', attachments }), 'sent');
+  assert.equal(rows.get('session-new').title, 'photo.png');
+  assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].items[1], attachments[0]);
+  assert.equal(await start(repo, { text: '', attachments }), 'sent');
+  await assert.rejects(start(repo, { text: 'changed', attachments }), /another turn/);
+});

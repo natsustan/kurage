@@ -3,7 +3,7 @@ import WebKit
 
 @MainActor
 protocol SessionStarting {
-    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+    func startSession(_ text: String, attachments: [UploadedAttachment], sessionID: String, turnID: String, userID: String,
                       agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
                       workspaceID: String, access: StreamsAccess) async throws -> String
 }
@@ -87,18 +87,18 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return try JSONDecoder().decode(Conversation.self, from: data)
     }
 
-    func sendText(_ text: String, turnID: String, userID: String, runConfig: RunConfigChoice?,
+    func sendText(_ text: String, attachments: [UploadedAttachment] = [], turnID: String, userID: String, runConfig: RunConfigChoice?,
                   sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
         let choice: Any = runConfig.map { choice -> [String: Any] in
             ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
         } ?? NSNull()
         return try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig))",
+            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig, attachments))",
             workspaceID: workspaceID,
             access: access,
             arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
                         "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
-                        "runConfig": choice]
+                        "runConfig": choice, "attachments": try attachments.map { try $0.bridgeValue() }]
         )
     }
 
@@ -121,12 +121,12 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return try JSONDecoder().decode(NewSessionOptions.self, from: Data(json.utf8))
     }
 
-    func startSession(_ text: String, sessionID: String, turnID: String, userID: String,
+    func startSession(_ text: String, attachments: [UploadedAttachment] = [], sessionID: String, turnID: String, userID: String,
                       agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
                       workspaceID: String, access: StreamsAccess) async throws -> String {
         let request: [String: Any] = [
             "templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
-            "sessionID": sessionID, "turnID": turnID,
+            "sessionID": sessionID, "turnID": turnID, "attachments": try attachments.map { try $0.bridgeValue() },
             "userID": userID, "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
             "selections": selections.map { choice -> [String: Any] in
                 ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]

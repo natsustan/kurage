@@ -190,9 +190,20 @@ enum SessionImageTransport {
 
 final class SessionImageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let allowedHost: String
+    private let lock = NSLock()
+    private var rejectedRedirect = false
 
     init(allowedHost: String) {
         self.allowedHost = allowedHost
+    }
+
+    func transportError(_ error: Error, taskIsCancelled: Bool) -> Error {
+        if taskIsCancelled { return CancellationError() }
+        if lock.withLock({ rejectedRedirect }) { return LodyClientError.notConnected }
+        if error is CancellationError || (error as? URLError)?.code == .cancelled {
+            return CancellationError()
+        }
+        return error
     }
 
     func urlSession(
@@ -203,7 +214,9 @@ final class SessionImageRedirectGuard: NSObject, URLSessionTaskDelegate, @unchec
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
         let authorization = task.originalRequest?.value(forHTTPHeaderField: "Authorization")
-        completionHandler(SessionImageRedirect.request(request, allowedHost: allowedHost, authorization: authorization))
+        let followed = SessionImageRedirect.request(request, allowedHost: allowedHost, authorization: authorization)
+        if followed == nil { lock.withLock { rejectedRedirect = true } }
+        completionHandler(followed)
     }
 }
 

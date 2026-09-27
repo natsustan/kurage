@@ -1,10 +1,38 @@
 import Foundation
 import Testing
+import UIKit
 @testable import Kurage
 
 @MainActor
 @Suite(.serialized)
 struct ConversationImageTests {
+    @Test func cameraPhotoIsBoundedAndKeepsOrientation() async throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let original = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 1500), format: format).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 3000, height: 1500))
+        }
+        let rotated = UIImage(cgImage: try #require(original.cgImage), scale: 1, orientation: .right)
+        let attachment = try await ComposerAttachments.cameraImage(rotated)
+        let decoded = try #require(UIImage(data: attachment.data))
+        #expect(decoded.size == CGSize(width: 1024, height: 2048))
+        #expect(attachment.mimeType == "image/jpeg")
+        #expect(attachment.thumbnailData != nil)
+    }
+
+    @Test func cancelledCameraPreparationDoesNotReturnAttachment() async throws {
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await ComposerAttachments.cameraImage(UIImage())
+        }
+        do {
+            _ = try await task.value
+            Issue.record("Cancelled camera preparation returned an attachment")
+        } catch is CancellationError {
+        }
+    }
+
     @Test func textOnlyTurnsRemainReadableWithoutImageParts() throws {
         let turn = ConversationTurn(id: "a", author: .agent, text: "Hello")
         #expect(turn.content == [.text("Hello")])
@@ -93,6 +121,42 @@ struct ConversationImageTests {
         #expect(SessionImageRedirect.request(downgrade, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
         let credentials = URLRequest(url: URL(string: "https://user:pass@api.lody.ai/image")!)
         #expect(SessionImageRedirect.request(credentials, allowedHost: "api.lody.ai", authorization: "Bearer secret") == nil)
+    }
+
+    @Test(arguments: [307, 308])
+    func uploadRedirectDelegateRejectsForeignHostsAndDowngrades(status: Int) async throws {
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let endpoint = URL(string: "https://api.lody.ai/api/workspaces/w/session-files/upload")!
+        var original = URLRequest(url: endpoint)
+        original.httpMethod = "POST"
+        original.httpBody = Data("private attachment".utf8)
+        original.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+        let task = session.dataTask(with: original)
+        let response = try #require(HTTPURLResponse(url: endpoint, statusCode: status,
+                                                   httpVersion: nil, headerFields: nil))
+        for target in ["https://api.lody.ai/upload", "https://foreign.example/upload", "http://api.lody.ai/upload"] {
+            let delegate = SessionImageRedirectGuard(allowedHost: "api.lody.ai")
+            var proposed = original
+            proposed.url = URL(string: target)
+            proposed.setValue(nil, forHTTPHeaderField: "Authorization")
+            let followed: URLRequest? = await withCheckedContinuation { continuation in
+                delegate.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                                    newRequest: proposed) { continuation.resume(returning: $0) }
+            }
+            if target == "https://api.lody.ai/upload" {
+                #expect(followed?.httpMethod == "POST")
+                #expect(followed?.httpBody == original.httpBody)
+                #expect(followed?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+                #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: false) is CancellationError)
+            } else {
+                #expect(followed == nil)
+                // A rejected redirect must reach the upload-error branch that restores the draft.
+                #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: false) as? LodyClientError == .notConnected)
+                #expect(delegate.transportError(CancellationError(), taskIsCancelled: false) as? LodyClientError == .notConnected)
+            }
+            #expect(delegate.transportError(URLError(.cancelled), taskIsCancelled: true) is CancellationError)
+        }
     }
 
     @Test func liveClientDownloadsThumbnailsAndFallsBackToTheOriginal() async throws {

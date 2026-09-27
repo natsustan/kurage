@@ -1,6 +1,6 @@
 import { projectFileChanges } from './file-changes.mjs';
 
-// Project ordinary chat text and session images. Tool results, thoughts, files,
+// Project ordinary chat text, session images, and file metadata. Tool results, thoughts,
 // and other item types need their own UI; rendering them as prose would
 // misrepresent them.
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -47,6 +47,12 @@ function projectImage(item) {
 function projectParts(items) {
   const parts = [];
   for (const item of items) {
+    if (item?.type === 'file' && isImageReference(item.fileId) && Number.isInteger(item.sizeBytes) && item.sizeBytes > 0) {
+      const fileName = typeof item.fileName === 'string'
+        ? item.fileName.replaceAll('\0', '').trim().slice(0, 200) : '';
+      parts.push({ type: 'file', fileID: item.fileId, fileName: fileName || 'File', sizeBytes: item.sizeBytes });
+      continue;
+    }
     if (item?.type === 'text') {
       const text = visibleText(item.text);
       if (text) parts.push({ type: 'text', text });

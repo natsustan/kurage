@@ -163,3 +163,20 @@ test('new turns use the matching runtime baseline, while retries keep their auth
   await sendText(repo, 'chat', 'u2', 'current-user', 'Again', 'now');
   assert.equal(doc.getList('history').toJSON()[2].inputConfig.modelId, 'actual-model');
 });
+
+test('image and file blocks survive history, dispatch, and same-ID retries', async () => {
+  const { repo, doc } = fixture();
+  const attachments = [
+    { type: 'image', imageId: 'image-1', mimeType: 'image/png', fileName: 'test.png', sizeBytes: 10 },
+    { type: 'file', fileId: 'file-1', fileName: 'notes.txt', mimeType: 'text/plain', sizeBytes: 12,
+      sha256: 'a'.repeat(64), transport: 'r2', uploadedAt: 1, textPreview: false },
+  ];
+  assert.equal(await sendText(repo, 'chat', 'turn-attachments', 'user', '', 'now', undefined, attachments), 'sent');
+  const turn = doc.getList('history').toJSON()[0];
+  assert.deepEqual(turn.items.slice(1), attachments);
+  assert.deepEqual(turn.inputConfig.inputBlocks.slice(1), attachments);
+  const reordered = attachments.map(block => Object.fromEntries(Object.entries(block).reverse()));
+  assert.equal(await sendText(repo, 'chat', 'turn-attachments', 'user', '', 'now', undefined, reordered), 'sent');
+  assert.equal(doc.getList('history').length, 1);
+  await assert.rejects(sendText(repo, 'chat', 'turn-attachments', 'user', '', 'now', undefined, []), /another turn/);
+});
