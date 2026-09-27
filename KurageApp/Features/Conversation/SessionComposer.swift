@@ -366,7 +366,8 @@ private struct RunConfigPanel: View {
                reasoning.options.count > 1 {
                 ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
                     .padding(10)
-                    .glassEffect(.regular, in: .capsule)
+                    // Glass can render this dial invisible in the separate overlay window.
+                    .background(.regularMaterial, in: Capsule())
             } else {
                 Text("Reasoning is not adjustable for this model.")
                     .font(.footnote)
