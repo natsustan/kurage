@@ -2,30 +2,33 @@ import SwiftUI
 
 struct ConversationChangesHUD: View {
     let summary: FileChangeSummary
+    var compact = false
     let onOpen: () -> Void
 
     var body: some View {
-        HStack {
-            Spacer(minLength: 0)
-            Button(action: onOpen) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        Label("\(summary.count) files changed", systemImage: "doc.text")
-                        FileChangeCounts(additions: summary.additions, deletions: summary.deletions)
-                    }
-                    Label("\(summary.count) files changed", systemImage: "doc.text")
+        Button(action: onOpen) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    fileCount
+                    FileChangeCounts(additions: summary.additions, deletions: summary.deletions)
                 }
-                .font(.footnote.weight(.medium))
-                .padding(.horizontal, 14)
-                .frame(minHeight: 44)
-                .contentShape(Capsule())
+                fileCount
             }
-            .buttonStyle(.plain)
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .accessibilityIdentifier("conversation-changes-hud")
-            .accessibilityHint("View file changes recorded in this conversation")
-            Spacer(minLength: 0)
+            .font(.footnote.weight(.medium))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
         }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityIdentifier("conversation-changes-hud")
+        .accessibilityHint("View file changes recorded in this conversation")
+    }
+
+    @ViewBuilder
+    private var fileCount: some View {
+        if compact { Text("\(summary.count) files") }
+        else { Label("\(summary.count) files changed", systemImage: "doc.text") }
     }
 }
 
@@ -53,6 +56,7 @@ struct FileChangeCounts: View {
 
 struct ConversationChangesView: View {
     let groups: [ConversationFileChangeGroup]
+    let latestTurnNumber: Int
     var initialTurnNumber: Int? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
@@ -60,7 +64,7 @@ struct ConversationChangesView: View {
     @State private var showsAllTurns = false
 
     private var visibleGroups: [ConversationFileChangeGroup] {
-        showsAllTurns ? groups : groups.filter { $0.turnNumber == (initialTurnNumber ?? groups.last?.turnNumber) }
+        showsAllTurns ? groups : groups.filter { $0.turnNumber == (initialTurnNumber ?? latestTurnNumber) }
     }
 
     private var drawerBackground: Color {
@@ -80,7 +84,7 @@ struct ConversationChangesView: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    if groups.isEmpty {
+                    if visibleGroups.isEmpty {
                         ContentUnavailableView("No recorded changes", systemImage: "doc.text")
                     }
                     ForEach(visibleGroups) { group in

@@ -74,13 +74,13 @@ struct ConversationLayoutTests {
         expectAtBottom(table)
     }
 
-    @Test func fileChangesRefreshWithoutChangingMessageText() throws {
+    @Test(arguments: ["Done", ""]) func fileChangesRefreshWithoutChangingMessageText(text: String) throws {
         let (controller, window) = try makeController()
         defer {
             window.isHidden = true
             window.rootViewController = nil
         }
-        let turns = [ConversationTurn(id: "long-agent-20", author: .agent, text: "Done")]
+        let turns = [ConversationTurn(id: "long-agent-20", author: .agent, text: text)]
         update(controller, turns: turns)
         let table = try transcript(in: controller.view)
         let originalHeight = table.rectForRow(at: IndexPath(row: 0, section: 0)).height

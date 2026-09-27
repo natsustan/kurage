@@ -5,11 +5,12 @@ struct ConversationView: View {
     let sessionID: SessionSummary.ID
     let title: String
     let model: AppModel
+    var isReadOnly = false
 
     var body: some View {
         ConversationContent(sessionID: sessionID, title: title, model: model,
-                            workspaceGeneration: model.workspaceGeneration)
-            .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration))
+                            workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly)
+            .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly))
     }
 }
 
@@ -21,6 +22,7 @@ private struct FileChangesSelection: Identifiable {
 private struct ConversationScope: Hashable {
     let sessionID: String
     let workspaceGeneration: Int
+    let isReadOnly: Bool
 }
 
 // Scope the owner of all transient state, not just its layout subtree.
@@ -29,6 +31,7 @@ private struct ConversationContent: View {
     let title: String
     let model: AppModel
     let workspaceGeneration: Int
+    let isReadOnly: Bool
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
     private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
@@ -54,6 +57,8 @@ private struct ConversationContent: View {
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
     @State private var changesSelection: FileChangesSelection?
+    @State private var selectedSubtask: ConversationSubtask?
+    @State private var observedActivity: SessionActivity?
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -86,16 +91,18 @@ private struct ConversationContent: View {
                 permission: displayedConversation?.permission,
                 fileChanges: displayedConversation?.fileChanges ?? [],
                 onOpenChanges: { changesSelection = FileChangesSelection(turnNumber: nil) },
+                subtasks: displayedConversation?.subtasks ?? [],
+                onOpenSubtasks: { selectedSubtask = $0 },
                 draft: $draft,
                 isSending: isSending,
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
                 connectionMessage: showsConnectionMessage ? connectionStatus : nil,
-                supportsTextSending: model.supportsTextSending,
+                supportsTextSending: !isReadOnly && model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
-                supportsSessionCancellation: model.supportsSessionCancellation,
-                supportsPermissionResponses: model.supportsPermissionResponses,
+                supportsSessionCancellation: !isReadOnly && model.supportsSessionCancellation,
+                supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
                 onSend: sendDraft,
@@ -117,8 +124,13 @@ private struct ConversationContent: View {
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             }
         }
+        .sheet(item: $selectedSubtask) { subtask in
+            ConversationSubtaskSheet(subtask: subtask, model: model)
+        }
         .sheet(item: $changesSelection) { selection in
-            ConversationChangesView(groups: displayedConversation?.fileChanges ?? [], initialTurnNumber: selection.turnNumber)
+            ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
+                                    latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
+                                    initialTurnNumber: selection.turnNumber)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -128,7 +140,7 @@ private struct ConversationContent: View {
                     connectionStatus: showsConnectionIndicator ? connectionStatus : nil
                 )
             }
-            if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
+            if (observedActivity ?? session?.activity) == .running {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProgressView()
                         .controlSize(.small)
@@ -171,6 +183,7 @@ private struct ConversationContent: View {
                 try await model.observeConversation(sessionID: sessionID) { update in
                     guard isCurrentWorkspace else { return }
                     receiveConversation(update.conversation)
+                    observedActivity = update.activity
                     runConfigState.receive(update.runConfig)
                     contextWindowUsage = update.contextWindowUsage
                     isLoading = false
@@ -226,7 +239,7 @@ private struct ConversationContent: View {
     }
 
     private func sendDraft() {
-        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
@@ -305,7 +318,7 @@ private struct ConversationContent: View {
     }
 
     private func cancelSession() {
-        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
               model.sessions.first(where: { $0.id == sessionID })?.activity == .running else { return }
         isCancelling = true
         banner = nil
@@ -323,7 +336,7 @@ private struct ConversationContent: View {
     }
 
     private func retryPreviousSend() {
-        guard isCurrentWorkspace, !isSending, let text = previousPendingText,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, let text = previousPendingText,
               previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
         let pending = model.pendingTextSend(sessionID: sessionID)
         let turnID = pending?.text == text ? pending?.turnID : nil
@@ -340,7 +353,8 @@ private struct ConversationContent: View {
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
-                banner = "Earlier message confirmed. Review your draft before sending."
+                if draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
+                banner = draft.isEmpty ? nil : "Earlier message confirmed. Review your draft before sending."
                 if let latest = try? await model.conversation(sessionID: sessionID) {
                     receiveConversation(latest)
                 }
@@ -362,6 +376,7 @@ private struct ConversationContent: View {
     }
 
     private func respond(_ decision: PermissionDecision, requestID: PermissionPrompt.ID) {
+        guard !isReadOnly else { return }
         Task {
             do {
                 try await model.respond(decision, requestID: requestID, sessionID: sessionID)
@@ -531,6 +546,8 @@ private struct ConversationFooter: View {
     let permission: PermissionPrompt?
     let fileChanges: [ConversationFileChangeGroup]
     let onOpenChanges: () -> Void
+    let subtasks: [ConversationSubtask]
+    let onOpenSubtasks: (ConversationSubtask) -> Void
     @Binding var draft: String
     let isSending: Bool
     let isCancelling: Bool
@@ -572,8 +589,12 @@ private struct ConversationFooter: View {
                 if let permission, supportsPermissionResponses {
                     PermissionCard(permission: permission, onDecision: onDecision)
                 }
-                if !fileChanges.isEmpty {
-                    ConversationChangesHUD(summary: FileChangeSummary(fileChanges), onOpen: onOpenChanges)
+                if !subtasks.isEmpty || !fileChanges.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { conversationHUDs }
+                        VStack(spacing: 8) { conversationHUDs }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
                     SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
@@ -595,6 +616,17 @@ private struct ConversationFooter: View {
             .padding(.horizontal, 18)
             .padding(.top, 10)
             .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var conversationHUDs: some View {
+        if !fileChanges.isEmpty {
+            ConversationChangesHUD(summary: FileChangeSummary(fileChanges), compact: !subtasks.isEmpty,
+                                   onOpen: onOpenChanges)
+        }
+        if !subtasks.isEmpty {
+            ConversationSubtasksButton(subtasks: subtasks, onOpen: onOpenSubtasks)
         }
     }
 }

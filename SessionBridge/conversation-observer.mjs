@@ -1,3 +1,4 @@
+import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
@@ -13,6 +14,9 @@ export function conversationPatch(previous, next) {
         JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []);
     }),
     permission: next.permission,
+    latestTurnNumber: next.latestTurnNumber,
+    ...(!previous || JSON.stringify(previous.subtasks ?? []) !== JSON.stringify(next.subtasks ?? [])
+      ? { replacesSubtasks: true, subtasks: next.subtasks ?? [] } : {}),
     ...(!previous || JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null)
       ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),
   };
@@ -44,6 +48,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let stopped = signal.aborted;
   let ready = false;
   let historyChanged = true;
+  let subtasksChanged = true;
+  let subtasks = [];
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -79,6 +85,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
           latestTurn = latestUserTurn(entries);
         }
         historyChanged = false;
+        if (subtasksChanged) {
+          subtasksChanged = false;
+          subtasks = projectSubtasks(sessionID, await repo.listDoc());
+          if (stopped) return;
+        }
+        next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
         update.activity = projectSessionActivity(meta.meta.status);
         const usage = meta.meta.contextWindowUsage;
@@ -110,8 +122,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
     });
     if (stopped) return;
-    const watch = repo.watch(queue, {
-      docIds: [docID], kinds: ['doc-metadata', 'doc-existence-changed'],
+    const watch = repo.watch(() => { subtasksChanged = true; queue(); }, {
+      kinds: ['doc-metadata', 'doc-existence-changed'],
     });
     own(() => watch.unsubscribe());
     for (const join of [() => handle.joinRoom(), () => repo.joinMetaRoom()]) {

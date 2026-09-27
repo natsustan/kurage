@@ -3,6 +3,56 @@ import Testing
 @testable import Kurage
 
 struct ConversationChangesTests {
+    @Test func subtaskPatchesReplaceAndClearWithoutLosingParentContent() throws {
+        let subtask = ConversationSubtask(id: "child", title: "Review", agentName: "codex", status: .running)
+        let previous = Conversation(sessionID: "root", turns: [
+            ConversationTurn(id: "a", author: .agent, text: "Parent output"),
+        ], permission: nil, subtasks: [subtask])
+        func patch(_ fields: String) throws -> ConversationPatch {
+            try JSONDecoder().decode(ConversationPatch.self, from: Data("""
+            {"sessionID":"root","order":["a"],"changed":[],"permission":null,"activity":"idle","syncState":"live"\(fields)}
+            """.utf8))
+        }
+        let unchanged = try patch("").applying(to: previous).conversation
+        #expect(unchanged.subtasks == [subtask])
+        let changed = try patch("""
+        ,"replacesSubtasks":true,"subtasks":[{"id":"child","title":"Review","agentName":"codex","status":"idle"}]
+        """).applying(to: previous).conversation
+        #expect(changed.subtasks?.first?.status == .idle)
+        #expect(changed.turns == previous.turns)
+        let removed = try patch(",\"replacesSubtasks\":true,\"subtasks\":[]").applying(to: changed).conversation
+        #expect(removed.subtasks == [])
+        #expect(removed.turns == previous.turns)
+    }
+
+    @Test @MainActor func subtasksStayOutOfRootListAndUseWorkspaceScopedReading() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, records: SessionRecord.samplesWithSubtasks)
+        let roots = try await client.sessions(workspaceID: "ws-demo")
+        #expect(!roots.contains { $0.id == "review-reuse" || $0.id == "review-quality" })
+        let parent = try await client.conversation(sessionID: "session-long", workspaceID: "ws-demo")
+        #expect(parent.subtasks?.map(\.id) == ["review-reuse", "review-quality"])
+        let other = try await client.conversation(sessionID: "session-tests", workspaceID: "ws-demo")
+        #expect(other.subtasks == [])
+        let child = try await client.conversation(sessionID: "review-reuse", workspaceID: "ws-demo")
+        #expect(child.turns.last?.text == "Reuse review finished.")
+        await #expect(throws: LodyClientError.self) {
+            try await client.conversation(sessionID: "review-reuse", workspaceID: "other-workspace")
+        }
+    }
+
+    @Test func latestTurnSurvivesPatchesEvenWhenItsUserMessageIsNotDisplayable() throws {
+        let previous = Conversation(sessionID: "s", turns: [], permission: nil,
+                                    fileChanges: [.fixture], latestTurnNumber: 21)
+        #expect(previous.lastTurnNumber == 21)
+        let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data("""
+        {"sessionID":"s","order":[],"changed":[],"permission":null,"activity":"idle","syncState":"live","latestTurnNumber":22}
+        """.utf8))
+        let next = try patch.applying(to: previous).conversation
+        #expect(next.lastTurnNumber == 22)
+        #expect(next.fileChanges == previous.fileChanges)
+        #expect(next.fileChanges?.filter { $0.turnNumber == next.lastTurnNumber }.isEmpty == true)
+    }
+
     @Test func summaryCountsUniqueFilesButKeepsRecordedEditTotals() {
         let first = ConversationFileChangeGroup.fixture
         let second = ConversationFileChangeGroup(id: "other", turnNumber: 21, files: [first.files[0]])

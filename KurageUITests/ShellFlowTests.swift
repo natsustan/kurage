@@ -2,6 +2,46 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testSubtasksOpenReadOnlyAndReturnToParentDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        XCTAssertFalse(app.descendants(matching: .any)["session-review-reuse"].exists)
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep parent draft")
+        let subtasks = app.buttons["conversation-subtasks"]
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["turn-changes-toggle-long-agent-20"].isHittable)
+        attachScreen(app, name: "Parent subtask summary")
+        tap(subtasks)
+        let reuse = app.buttons["subtask-review-reuse"]
+        XCTAssertTrue(reuse.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["subtask-review-quality"].exists)
+        attachScreen(app, name: "Subtasks with states")
+        tap(reuse)
+        XCTAssertTrue(app.staticTexts["Reuse review finished."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Read-only conversation"].exists)
+        let child = app.descendants(matching: .any)["subtask-transcript"]
+        XCTAssertTrue(child.waitForExistence(timeout: 5))
+        XCTAssertFalse(child.buttons["send-follow-up"].exists)
+        XCTAssertFalse(child.descendants(matching: .any)["follow-up-field"].exists)
+        attachScreen(app, name: "Read-only subtask transcript")
+        tap(app.buttons["close-subtask"])
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        tap(subtasks)
+        tap(app.buttons["subtask-review-quality"])
+        XCTAssertTrue(app.staticTexts["Checking state isolation."].waitForExistence(timeout: 5))
+        XCTAssertFalse(child.buttons["pause-session"].exists)
+        tap(app.buttons["close-subtask"])
+        XCTAssertEqual(field.value as? String, "Keep parent draft")
+        XCTAssertTrue(subtasks.exists)
+        attachScreen(app, name: "Parent draft after subtask")
+    }
+
+    @MainActor
     func testRecordedFileChangesHUDAndDetails() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -71,6 +111,50 @@ final class ShellFlowTests: XCTestCase {
         add(diffCapture)
         tap(app.buttons["close-file-changes"])
         XCTAssertEqual(field.value as? String, "Keep this draft")
+    }
+
+    @MainActor
+    func testRetryClearsConfirmedDraftAndPreservesEditedDraft() {
+        for editDraft in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--fixture", "--fixture-send-unconfirmed"]
+            app.launch()
+            tap(app.buttons["sign-in-button"])
+            tap(app.descendants(matching: .any)["session-session-tests"])
+            let field = app.descendants(matching: .any)["follow-up-field"]
+            tap(field)
+            field.typeText("Retry this message")
+            tap(app.buttons["send-follow-up"])
+            let retry = app.buttons["Retry earlier message"]
+            XCTAssertTrue(retry.waitForExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, "Retry this message")
+            if editDraft { tap(field); field.typeText(" edited") }
+            tap(retry)
+            XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, editDraft ? "Retry this message edited" : "Send a follow-up")
+            XCTAssertEqual(app.staticTexts.matching(identifier: "Retry this message").count, 1)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testLatestTurnWithoutChangesShowsEmptyScope() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Explain without editing")
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(app.buttons["send-follow-up"].wait(for: \.label, toEqual: "Send", timeout: 5))
+        tap(app.buttons["conversation-changes-hud"])
+        XCTAssertTrue(app.staticTexts["No recorded changes"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Latest turn has no changes")
+        tap(app.buttons["file-changes-title"])
+        tap(app.buttons["All turns"])
+        XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -660,18 +744,29 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     private func assertMessageAboveComposer(_ message: XCUIElement, field: XCUIElement,
                                            file: StaticString = #filePath, line: UInt = #line) {
-        let hud = XCUIApplication().buttons["conversation-changes-hud"]
+        let app = XCUIApplication()
+        let hud = app.buttons["conversation-changes-hud"]
         let boundary = hud.exists ? hud : field
+        // File cards belong to the message row and sit below its text.
+        // A tall row may exceed the space above a multiline composer on small
+        // screens. Its bottom must remain visible; require its text when it fits.
+        let transcript = app.tables["conversation-transcript"]
+        let row = transcript.cells
+            .containing(.staticText, identifier: message.label).firstMatch
         let settled = NSPredicate { _, _ in
-            message.isHittable
-                && message.frame.maxY <= boundary.frame.minY
-                && boundary.frame.minY - message.frame.maxY < 100
+            row.exists && row.isHittable
+                && (row.frame.height > boundary.frame.minY - transcript.frame.minY || message.isHittable)
+                && row.frame.maxY <= boundary.frame.minY
+                && boundary.frame.minY - row.frame.maxY < 100
         }
         let expectation = XCTNSPredicateExpectation(predicate: settled, object: message)
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, file: file, line: line)
-        XCTAssertTrue(message.isHittable, file: file, line: line)
+        XCTAssertTrue(row.isHittable, file: file, line: line)
+        if row.frame.height <= boundary.frame.minY - transcript.frame.minY {
+            XCTAssertTrue(message.isHittable, file: file, line: line)
+        }
         XCTAssertLessThanOrEqual(message.frame.maxY, boundary.frame.minY, file: file, line: line)
-        XCTAssertLessThan(boundary.frame.minY - message.frame.maxY, 100, file: file, line: line)
+        XCTAssertLessThan(boundary.frame.minY - row.frame.maxY, 100, file: file, line: line)
     }
 
     @MainActor

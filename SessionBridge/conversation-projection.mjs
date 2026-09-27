@@ -69,11 +69,14 @@ function projectParts(items) {
 
 export function projectConversation(sessionID, history) {
   const turns = [];
+  const fileChanges = projectFileChanges(history);
+  const changedTurnIDs = new Set(fileChanges.map(group => group.id));
+  const latestTurnNumber = Math.max(1, history.filter(entry => entry?.role === 'user').length);
   for (const entry of history) {
     if (entry?.role !== 'user' && entry?.role !== 'assistant') continue;
-    if (typeof entry.id !== 'string' || !Array.isArray(entry.items)) continue;
-    const parts = projectParts(entry.items);
-    if (parts.length === 0) continue;
+    if (typeof entry.id !== 'string') continue;
+    const parts = projectParts(Array.isArray(entry.items) ? entry.items : []);
+    if (parts.length === 0 && !changedTurnIDs.has(entry.id)) continue;
     const text = parts
       .filter((part) => part.type === 'text')
       .map((part) => part.text)
@@ -85,6 +88,5 @@ export function projectConversation(sessionID, history) {
       parts,
     });
   }
-  const fileChanges = projectFileChanges(history);
-  return { sessionID, turns, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };
+  return { sessionID, turns, latestTurnNumber, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };
 }

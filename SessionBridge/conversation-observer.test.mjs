@@ -22,6 +22,7 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
   };
   const repo = {
     getDocMeta: async () => ({ meta }),
+    listDoc: async () => [],
     openPersistedDoc: async () => ({ doc, joinRoom: createRoom }),
     openFlockDoc: async id => flock.open(id),
     joinMetaRoom: createRoom,
@@ -37,9 +38,8 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
   const flush = async () => {
     await Promise.resolve();
     for (const [id, callback] of [...timers]) { timers.delete(id); callback(); }
-    // publish crosses getDocMeta and emit boundaries.
-    await Promise.resolve();
-    await Promise.resolve();
+    // Drain metadata reads and delivery without relying on a fixed await count.
+    await new Promise(setImmediate);
   };
   return { doc, updates, controller, start, flush, rooms, repo,
     metadataChanged: () => metaListener?.(), releases: () => releases };
@@ -164,7 +164,7 @@ test('patch keeps turn identity and explicitly transmits ordering and removals',
   const previous = { sessionID: 'abc', turns: [a, b], permission: null };
   const next = { ...previous, turns: [b, { ...a, text: 'one more' }] };
   assert.deepEqual(conversationPatch(previous, next), {
-    sessionID: 'abc', order: ['b', 'a'], changed: [{ ...a, text: 'one more' }], permission: null,
+    sessionID: 'abc', latestTurnNumber: undefined, order: ['b', 'a'], changed: [{ ...a, text: 'one more' }], permission: null,
   });
 });
 
@@ -189,7 +189,7 @@ test('file-only history updates replace summaries and removal clears them while 
   h.doc.commit();
   await h.start();
   assert.equal(h.updates[0].fileChanges[0].files[0].additions, 1);
-  assert.deepEqual(h.updates[0].order, []);
+  assert.deepEqual(h.updates[0].order, ['a']);
   history.delete(0, 1);
   history.push({ ...turn, fileDiff: [{ filePath: 'a.swift', add: 4, del: 2 }] });
   h.doc.commit();
@@ -200,4 +200,42 @@ test('file-only history updates replace summaries and removal clears them while 
   await h.flush();
   assert.equal(h.updates.at(-1).fileChanges, null);
   h.controller.abort();
+});
+
+test('subtask metadata changes appear without parent history edits and stop after cancellation', async () => {
+  const h = harness();
+  let rows = [];
+  let reads = 0;
+  h.repo.listDoc = async () => { reads++; return rows; };
+  let watched;
+  const watch = h.repo.watch;
+  h.repo.watch = (listener, filter) => { watched = filter; return watch(listener); };
+  await h.start();
+  assert.equal(watched.docIds, undefined, 'new children must not be filtered out by the parent ID');
+  assert.deepEqual(h.updates[0].subtasks, []);
+  rows = [{ docId: 'session-child', meta: { parentSessionId: 'abc', title: 'Review', status: { type: 'running' } } }];
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).replacesSubtasks, true);
+  assert.equal(h.updates.at(-1).subtasks[0].status, 'running');
+  const beforeText = reads;
+  h.doc.getList('history').push({ id: 'a', role: 'assistant', items: [{ type: 'text', text: 'Output' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(reads, beforeText, 'streaming text must not rescan workspace metadata');
+  assert.equal(h.updates.at(-1).replacesSubtasks, undefined);
+  rows[0].meta.status.type = 'idle';
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).subtasks[0].status, 'idle');
+  rows = [];
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).subtasks, []);
+  h.controller.abort();
+  const count = h.updates.length;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.length, count);
+  assert.equal(h.releases(), 2);
 });

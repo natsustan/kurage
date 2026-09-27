@@ -255,6 +255,12 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                 }
             } else {
                 tableView.contentOffset.y = target
+                // Self-sizing can move a cell during this layout pass while its
+                // hosting content still has the old position (especially at large text sizes).
+                for cell in tableView.visibleCells {
+                    cell.setNeedsLayout()
+                    cell.layoutIfNeeded()
+                }
             }
         }
     }

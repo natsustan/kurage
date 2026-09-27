@@ -380,3 +380,34 @@ test('project deletion after an authored turn preserves the unconfirmed start', 
   assert.equal(docs.get('session-new').getList('history').length, 1);
   assert.equal(rows.has('session-new'), false);
 });
+
+test('five retries from fresh CRDT replicas keep one durable first turn', async () => {
+  const remote = new LoroDoc();
+  let published;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const { repo, docs, rows } = fixture();
+    if (published) rows.set('session-new', published);
+    repo.sync = async ({ scope, docIds }) => {
+      if (scope === 'doc' && docIds?.includes('session-new')) {
+        const local = docs.get('session-new');
+        local.import(remote.export({ mode: 'snapshot' }));
+        const update = local.export({ mode: 'update' });
+        // A transport can replay bytes after losing a response. They remain
+        // the same CRDT operations, unlike authoring another list insertion.
+        for (let replay = 0; replay < 5; replay += 1) remote.import(update);
+      }
+      return { ok: true, outcome: 'synced' };
+    };
+    repo.upsertDocMeta = async (_id, meta) => {
+      if (attempt < 4) throw new Error('Metadata acknowledgement lost');
+      published = { ...published, ...meta };
+      rows.set('session-new', published);
+    };
+    if (attempt < 4) await assert.rejects(start(repo), /acknowledgement lost/);
+    else assert.equal(await start(repo), 'sent');
+    const turns = remote.getList('history').toJSON();
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0].id, 'turn-1');
+    assert.equal(turns[0].items[0].text, 'Build the thing');
+  }
+});

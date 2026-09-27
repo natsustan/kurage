@@ -24,6 +24,8 @@ final class FixtureLodyClient: LodyClient {
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
     private let sendDelay: Duration?
+    private var failSendOnce: Bool
+    private var pendingSends: [String: PendingTextSend] = [:]
 
     init(
         startsSignedIn: Bool = false,
@@ -31,12 +33,14 @@ final class FixtureLodyClient: LodyClient {
         archivedIDs: Set<SessionSummary.ID>? = nil,
         failingConversationIDsOnce: Set<String> = [],
         failStartAndArchiveProjectOnce: Bool = false,
-        sendDelay: Duration? = nil
+        sendDelay: Duration? = nil,
+        failSendOnce: Bool = false
     ) {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
         self.sendDelay = sendDelay
+        self.failSendOnce = failSendOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -70,6 +74,7 @@ final class FixtureLodyClient: LodyClient {
 
     func signOut() {
         pendingStarts = [:]
+        pendingSends = [:]
         account = nil
     }
 
@@ -82,7 +87,7 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         return records
-            .filter { !archivedSessionIDs.contains($0.summary.id) }
+            .filter { !archivedSessionIDs.contains($0.summary.id) && $0.parentSessionID == nil }
             .map(\.summary)
     }
 
@@ -95,19 +100,29 @@ final class FixtureLodyClient: LodyClient {
             sessionID: record.summary.id,
             turns: record.turns,
             permission: record.permission,
-            fileChanges: record.fileChanges
+            fileChanges: record.fileChanges,
+            subtasks: records.filter { $0.parentSessionID == sessionID }.map {
+                ConversationSubtask(id: $0.summary.id, title: $0.summary.title, agentName: $0.summary.agentName,
+                                    status: archivedSessionIDs.contains($0.summary.id) ? .archived :
+                                        $0.summary.activity == .running ? .running : .idle)
+            }
         )
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
-        let update = ConversationUpdate(conversation: snapshot, activity: nil, syncState: .live,
+        let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
                                         runConfig: try record(sessionID).runConfig,
                                         contextWindowUsage: try record(sessionID).contextWindowUsage)
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
             continuation.finish()
         }
+    }
+
+    func pendingTextSend(sessionID: String, workspaceID: String) -> PendingTextSend? {
+        guard account != nil, workspaceID == "ws-demo" else { return nil }
+        return pendingSends[sessionID]
     }
 
     @discardableResult
@@ -122,6 +137,15 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        if let pending = pendingSends[sessionID], pending.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.text)
+        }
+        let effectiveTurnID = pendingSends[sessionID]?.turnID ?? turnID
+        if failSendOnce {
+            failSendOnce = false
+            pendingSends[sessionID] = PendingTextSend(text: trimmed, turnID: effectiveTurnID)
+            throw LodyClientError.deliveryUnconfirmed
+        }
         if let sendDelay { try await Task.sleep(for: sendDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
@@ -132,13 +156,14 @@ final class FixtureLodyClient: LodyClient {
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
             }
-            let turn = ConversationTurn(id: turnID, author: .user, text: trimmed)
+            let turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed)
             record.turns.append(turn)
             record.summary.preview = trimmed
         }
         if let index = records.firstIndex(where: { $0.summary.id == sessionID }) {
             records.insert(records.remove(at: index), at: 0)
         }
+        pendingSends.removeValue(forKey: sessionID)
         return runConfig
     }
 
@@ -378,6 +403,7 @@ struct SessionRecord: Equatable, Sendable {
     var contextWindowUsage: ContextWindowUsage? = nil
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var canRestore: Bool = true
+    var parentSessionID: String? = nil
 }
 
 extension SessionRunConfig {
@@ -562,4 +588,26 @@ extension ConversationFileChangeGroup {
         ConversationFileChange(path: "KurageTests/ConversationChangesTests.swift",
                                additions: 12, deletions: 0, edits: []),
     ])
+}
+
+
+extension SessionRecord {
+    static var samplesWithSubtasks: [SessionRecord] {
+        samples + [
+            SessionRecord(
+                summary: SessionSummary(id: "review-reuse", title: "Review code reuse", agentName: "codex",
+                                        activity: .idle, preview: ""),
+                turns: [ConversationTurn(id: "reuse-task", author: .user, text: "Check reuse opportunities"),
+                        ConversationTurn(id: "reuse-result", author: .agent, text: "Reuse review finished.")],
+                permission: nil, parentSessionID: "session-long"
+            ),
+            SessionRecord(
+                summary: SessionSummary(id: "review-quality", title: "Review correctness", agentName: "codex",
+                                        activity: .running, preview: ""),
+                turns: [ConversationTurn(id: "quality-task", author: .user, text: "Check correctness"),
+                        ConversationTurn(id: "quality-result", author: .agent, text: "Checking state isolation.")],
+                permission: nil, parentSessionID: "session-long"
+            ),
+        ]
+    }
 }

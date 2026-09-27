@@ -16,6 +16,7 @@ test('projects chat text without exposing structured events as prose', () => {
   ]);
   assert.deepEqual(result, {
     sessionID: 'abc',
+    latestTurnNumber: 1,
     turns: [
       {
         id: 'u1', author: 'user', text: 'Hello **world**',

@@ -15,7 +15,8 @@ test('projects summary-only turns and retains repeated paths separately by turn'
     { id: 'b', role: 'assistant', fileDiff: [{ filePath: diff.path, add: 3, del: 0 }], items: [] },
   ];
   const result = projectConversation('s', history);
-  assert.equal(result.turns.length, 0);
+  assert.deepEqual(result.turns.map(turn => turn.id), ['a', 'b']);
+  assert.equal(result.latestTurnNumber, 2);
   assert.deepEqual(result.fileChanges.map(group => [group.id, group.turnNumber, group.files[0].additions]),
     [['a', 1, 2], ['b', 2, 3]]);
   const next = projectConversation('s', history.slice(0, 2));
@@ -118,4 +119,25 @@ test('snapshot replacement recomputes repeated summaries rather than accumulatin
   assert.equal(patch.replacesFileChanges, true);
   assert.equal(patch.fileChanges[0].files[0].additions, 1);
   assert.equal(patch.fileChanges[0].files[0].deletions, 0);
+});
+
+
+test('latest turn includes invisible user turns and empty file-only rows disappear with their changes', () => {
+  const history = [
+    { id: 'u1', role: 'user', items: [] },
+    { id: 'a1', role: 'assistant', items: [tool('completed', [diff])] },
+    { id: 'u2', role: 'user', items: [{ type: 'unsupported' }] },
+    { id: 'a2', role: 'assistant', items: [{ type: 'text', text: 'Explanation only' }] },
+  ];
+  const before = projectConversation('s', history);
+  assert.equal(before.latestTurnNumber, 2);
+  assert.deepEqual(before.fileChanges.map(group => group.turnNumber), [1]);
+  assert.deepEqual(before.turns.map(turn => turn.id), ['a1', 'a2']);
+  history[1].items = [];
+  const patch = conversationPatch(before, projectConversation('s', history));
+  assert.deepEqual(patch.order, ['a2']);
+  assert.equal(patch.latestTurnNumber, 2);
+  assert.equal(patch.fileChanges, null);
+  const truncated = conversationPatch(before, projectConversation('s', history.slice(0, 2)));
+  assert.equal(truncated.latestTurnNumber, 1);
 });
