@@ -7,7 +7,7 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
-import { observeConversation } from './conversation-observer.mjs';
+import { observeConversation, readSyncedConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
@@ -298,13 +298,11 @@ window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, opera
     }
     const handle = await repo.openPersistedDoc(docID);
     try {
-      const report = await repo.sync({
-        scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal: controller.signal,
+      const conversation = await readSyncedConversation({
+        repo, workspaceID, sessionID, doc: handle.doc, signal: controller.signal,
       });
-      controller.signal.throwIfAborted();
-      if (!report.ok) throw new Error('Session history sync failed');
       return JSON.stringify({
-        ...projectConversation(sessionID, handle.doc.getList('history').toJSON()),
+        ...conversation,
         subtasks: projectSubtasks(sessionID, await repo.listDoc()),
       });
     } finally {

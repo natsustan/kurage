@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { readSyncedConversation } from './conversation-observer.mjs';
 import { projectSubtasks } from './conversation-subtasks.mjs';
 import {
   activityTime,
@@ -52,6 +53,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     projectSubtasks,
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
+    readSyncedConversation,
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,

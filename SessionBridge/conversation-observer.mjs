@@ -3,9 +3,42 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
 
-// Only reuse markers whose conversation was successfully delivered. Weak keys
-// keep this evidence scoped to the actual document instance and its lifetime.
-const deliveredReceipts = new WeakMap();
+// Evidence survives document unloads, but never outlives its workspace repo.
+// Keep only one compact version per session, never the search transcripts.
+const syncedReceipts = new WeakMap();
+const receiptKey = (workspaceID, sessionID) => JSON.stringify([workspaceID, sessionID]);
+const documentVersion = doc => Array.from(doc.version().encode()).join(',');
+
+function confirmedMarker(repo, workspaceID, sessionID, version) {
+  const receipt = syncedReceipts.get(repo)?.get(receiptKey(workspaceID, sessionID));
+  return receipt?.version === version ? receipt.timestamp : null;
+}
+
+function rememberMarker(repo, workspaceID, sessionID, version, timestamp) {
+  let receipts = syncedReceipts.get(repo);
+  if (!receipts) syncedReceipts.set(repo, receipts = new Map());
+  const key = receiptKey(workspaceID, sessionID);
+  receipts.set(key, { version, timestamp });
+}
+
+// Search preloads establish sync evidence without authoring a read receipt.
+export async function readSyncedConversation({ repo, workspaceID, sessionID, doc, signal }) {
+  signal.throwIfAborted();
+  const baseline = projectConversation(sessionID, doc.getList('history').toJSON());
+  const metadata = await repo.getDocMeta(`session-${sessionID}`);
+  signal.throwIfAborted();
+  const timestamp = metadata?.meta?.lastMessageAt;
+  const report = await repo.sync({
+    scope: 'doc', docIds: [`session-${sessionID}`], requireTransports: ['cloud'], signal,
+  });
+  signal.throwIfAborted();
+  if (!report.ok) throw new Error('Session history sync failed');
+  const next = projectConversation(sessionID, doc.getList('history').toJSON());
+  if (Number.isFinite(timestamp) && hasVisibleConversationChange(baseline, next)) {
+    rememberMarker(repo, workspaceID, sessionID, documentVersion(doc), timestamp);
+  }
+  return next;
+}
 
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
@@ -83,11 +116,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
     receiptConversation = projectConversation(sessionID, handle.doc.getList('history').toJSON());
-    const delivered = deliveredReceipts.get(handle.doc);
-    if (delivered?.workspaceID === workspaceID && delivered.sessionID === sessionID &&
-        !hasVisibleConversationChange(delivered.conversation, receiptConversation)) {
-      syncedMessageAt = delivered.timestamp;
-    }
+    syncedMessageAt = confirmedMarker(repo, workspaceID, sessionID, documentVersion(handle.doc));
     let latestTurn;
     let capability;
     const publish = async () => {
@@ -117,6 +146,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
           next = projectConversation(sessionID, entries);
           latestTurn = latestUserTurn(entries);
         }
+        const projectedVersion = documentVersion(handle.doc);
         historyChanged = false;
         if (subtasksChanged) {
           subtasksChanged = false;
@@ -149,9 +179,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         await emit(update);
         if (stopped) return;
         if (update.lastMessageAt !== null) {
-          deliveredReceipts.set(handle.doc, {
-            workspaceID, sessionID, timestamp: update.lastMessageAt, conversation: next,
-          });
+          rememberMarker(repo, workspaceID, sessionID, projectedVersion, update.lastMessageAt);
         }
         previous = next;
       } catch {

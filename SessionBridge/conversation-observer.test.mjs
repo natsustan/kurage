@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LoroDoc } from 'loro-crdt';
-import { conversationPatch, observeConversation } from './conversation-observer.mjs';
+import { conversationPatch, observeConversation, readSyncedConversation } from './conversation-observer.mjs';
 
 function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}) {
   const doc = new LoroDoc();
@@ -443,3 +443,64 @@ test('cancelling a pending receipt sync releases observation without publishing'
   assert.deepEqual(h.updates, []);
   assert.equal(h.releases(), 2);
 });
+
+
+test('search sync evidence survives unloading and is scoped to repo, workspace, session and version', async () => {
+  const h = harness({ meta: { lastMessageAt: 100 } });
+  h.repo.sync = async () => {
+    h.doc.getList('history').push({ id: 'new', role: 'assistant', items: [{ type: 'text', text: 'Latest' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
+  const preloaded = await readSyncedConversation({ repo: h.repo, workspaceID: 'ws', sessionID: 'abc',
+    doc: h.doc, signal: h.controller.signal });
+  assert.deepEqual(preloaded.turns.map(turn => turn.id), ['new']);
+  assert.equal(preloaded.lastMessageAt, undefined);
+  assert.deepEqual(h.updates, []);
+  const snapshot = h.doc.export({ mode: 'snapshot' });
+  h.repo.sync = async () => ({ ok: true });
+  for (const scenario of ['matching', 'workspace', 'session', 'repo', 'version', 'newer-marker']) {
+    const doc = new LoroDoc();
+    doc.import(snapshot);
+    if (scenario === 'version') {
+      doc.getList('history').push({ id: 'other', role: 'assistant', items: [{ type: 'text', text: 'Other' }] });
+      doc.commit();
+    }
+    const open = h.repo.openPersistedDoc;
+    h.repo.openPersistedDoc = async () => ({ ...(await open()), doc });
+    const repo = scenario === 'repo' ? { ...h.repo } : h.repo;
+    if (scenario === 'newer-marker') repo.getDocMeta = async () => ({ meta: { lastMessageAt: 200 } });
+    const controller = new AbortController();
+    const updates = [];
+    await observeConversation({ repo, workspaceID: scenario === 'workspace' ? 'other' : 'ws',
+      sessionID: scenario === 'session' ? 'other' : 'abc', signal: controller.signal,
+      emit: async update => updates.push(update) });
+    assert.equal(updates[0].lastMessageAt, scenario === 'matching' ? 100 : null, scenario);
+    controller.abort();
+  }
+});
+
+for (const scenario of ['unchanged', 'failed', 'cancelled']) {
+  test(`search ${scenario} sync cannot establish receipt evidence`, async () => {
+    const h = harness({ meta: { lastMessageAt: 100 } });
+    h.doc.getList('history').push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Old' }] });
+    h.doc.commit();
+    const controller = new AbortController();
+    h.repo.sync = async () => {
+      if (scenario !== 'unchanged') {
+        h.doc.getList('history').push({ id: 'new', role: 'assistant', items: [{ type: 'text', text: 'New' }] });
+        h.doc.commit();
+      }
+      if (scenario === 'cancelled') controller.abort();
+      return { ok: scenario !== 'failed' };
+    };
+    const read = readSyncedConversation({ repo: h.repo, workspaceID: 'ws', sessionID: 'abc',
+      doc: h.doc, signal: controller.signal });
+    if (scenario === 'unchanged') await read;
+    else await assert.rejects(read);
+    h.repo.sync = async () => ({ ok: true });
+    await h.start();
+    assert.equal(h.updates[0].lastMessageAt, null);
+    h.controller.abort();
+  });
+}
