@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { projectSubtasks } from './conversation-subtasks.mjs';
 import {
   deleteArchivedSession,
   readLocalProjectState,
@@ -47,6 +48,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     decompressZstd: async (bytes) => bytes,
     createNativeFetch: () => ({ fetch: async () => {}, receive: async () => {} }),
     projectConversation: () => ({}),
+    projectSubtasks,
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
     cancelSession: cancel,

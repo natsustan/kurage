@@ -23,17 +23,24 @@ final class FixtureLodyClient: LodyClient {
     private var failStartAndArchiveProjectOnce: Bool
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
+    private let sendDelay: Duration?
+    private var failSendOnce: Bool
+    private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
     init(
         startsSignedIn: Bool = false,
         records: [SessionRecord] = SessionRecord.samples,
         archivedIDs: Set<SessionSummary.ID>? = nil,
         failingConversationIDsOnce: Set<String> = [],
-        failStartAndArchiveProjectOnce: Bool = false
+        failStartAndArchiveProjectOnce: Bool = false,
+        sendDelay: Duration? = nil,
+        failSendOnce: Bool = false
     ) {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
+        self.sendDelay = sendDelay
+        self.failSendOnce = failSendOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -67,6 +74,7 @@ final class FixtureLodyClient: LodyClient {
 
     func signOut() {
         pendingStarts = [:]
+        pendingSends = [:]
         account = nil
     }
 
@@ -79,7 +87,7 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         return records
-            .filter { !archivedSessionIDs.contains($0.summary.id) }
+            .filter { !archivedSessionIDs.contains($0.summary.id) && $0.parentSessionID == nil }
             .map(\.summary)
     }
 
@@ -91,13 +99,19 @@ final class FixtureLodyClient: LodyClient {
         return Conversation(
             sessionID: record.summary.id,
             turns: record.turns,
-            permission: record.permission
+            permission: record.permission,
+            fileChanges: record.fileChanges,
+            subtasks: records.filter { $0.parentSessionID == sessionID }.map {
+                ConversationSubtask(id: $0.summary.id, title: $0.summary.title, agentName: $0.summary.agentName,
+                                    status: archivedSessionIDs.contains($0.summary.id) ? .archived :
+                                        $0.summary.activity == .running ? .running : .idle)
+            }
         )
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
-        let update = ConversationUpdate(conversation: snapshot, activity: nil, syncState: .live,
+        let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
                                         runConfig: try record(sessionID).runConfig,
                                         contextWindowUsage: try record(sessionID).contextWindowUsage)
         return AsyncThrowingStream { continuation in
@@ -106,10 +120,16 @@ final class FixtureLodyClient: LodyClient {
         }
     }
 
+    func pendingTextSend(sessionID: String, workspaceID: String) -> PendingTextSend? {
+        guard account != nil, workspaceID == "ws-demo" else { return nil }
+        return pendingSends[sessionID]?.message
+    }
+
     @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {
@@ -117,21 +137,36 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
+        let pending = pendingSends[sessionID]
+        if let pending, pending.message.text != trimmed {
+            throw LodyClientError.previousSendPending(pending.message.text)
+        }
+        let effectiveTurnID = pending?.message.turnID ?? turnID
+        let effectiveRunConfig = if let pending { pending.runConfig } else { runConfig }
+        if failSendOnce {
+            failSendOnce = false
+            pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID), effectiveRunConfig)
+            throw LodyClientError.deliveryUnconfirmed
+        }
+        if let sendDelay { try await Task.sleep(for: sendDelay) }
+        try requireAccount()
+        try requireWorkspace(workspaceID)
 
         try update(sessionID) { record in
-            if let runConfig {
+            if let runConfig = effectiveRunConfig {
                 guard let current = record.runConfig,
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
             }
-            let turn = ConversationTurn(id: makeTurnID(), author: .user, text: trimmed)
+            let turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed)
             record.turns.append(turn)
             record.summary.preview = trimmed
         }
         if let index = records.firstIndex(where: { $0.summary.id == sessionID }) {
             records.insert(records.remove(at: index), at: 0)
         }
-        return runConfig
+        pendingSends.removeValue(forKey: sessionID)
+        return effectiveRunConfig
     }
 
     func newSessionOptions(
@@ -368,7 +403,9 @@ struct SessionRecord: Equatable, Sendable {
     var permission: PermissionPrompt?
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
+    var fileChanges: [ConversationFileChangeGroup]? = nil
     var canRestore: Bool = true
+    var parentSessionID: String? = nil
 }
 
 extension SessionRunConfig {
@@ -468,7 +505,8 @@ extension SessionRecord {
             },
             permission: nil,
             runConfig: .fixtureReasoning,
-            contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000)
+            contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000),
+            fileChanges: [.fixture]
         ),
         SessionRecord(
             summary: SessionSummary(
@@ -539,4 +577,39 @@ extension SessionRecord {
             permission: nil
         ),
     ]
+}
+
+
+extension ConversationFileChangeGroup {
+    static let fixture = ConversationFileChangeGroup(id: "long-agent-20", turnNumber: 20, files: [
+        ConversationFileChange(path: "KurageApp/Features/Conversation/ConversationView.swift",
+                               additions: 2, deletions: 1, edits: [
+            ConversationFileEdit(id: "edit-1", oldText: "struct ConversationView {\n    let title = \"Chat\"\n}\n",
+                                 newText: "struct ConversationView {\n    let title = \"Conversation\"\n    let showsChanges = true\n}\n"),
+        ]),
+        ConversationFileChange(path: "KurageTests/ConversationChangesTests.swift",
+                               additions: 12, deletions: 0, edits: []),
+    ])
+}
+
+
+extension SessionRecord {
+    static var samplesWithSubtasks: [SessionRecord] {
+        samples + [
+            SessionRecord(
+                summary: SessionSummary(id: "review-reuse", title: "Review code reuse", agentName: "codex",
+                                        activity: .idle, preview: ""),
+                turns: [ConversationTurn(id: "reuse-task", author: .user, text: "Check reuse opportunities"),
+                        ConversationTurn(id: "reuse-result", author: .agent, text: "Reuse review finished.")],
+                permission: nil, parentSessionID: "session-long"
+            ),
+            SessionRecord(
+                summary: SessionSummary(id: "review-quality", title: "Review correctness", agentName: "codex",
+                                        activity: .running, preview: ""),
+                turns: [ConversationTurn(id: "quality-task", author: .user, text: "Check correctness"),
+                        ConversationTurn(id: "quality-result", author: .agent, text: "Checking state isolation.")],
+                permission: nil, parentSessionID: "session-long"
+            ),
+        ]
+    }
 }

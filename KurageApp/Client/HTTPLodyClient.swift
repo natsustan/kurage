@@ -497,10 +497,18 @@ final class HTTPLodyClient: LodyClient {
         return bridge.observeConversation(sessionID: sessionID, workspaceID: workspaceID, access: access)
     }
 
+    func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? {
+        guard let userID = account?.id,
+              let pending = pendingSends[SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)]
+        else { return nil }
+        return PendingTextSend(text: pending.text, turnID: pending.turnID)
+    }
+
     @discardableResult
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice? {
@@ -514,7 +522,7 @@ final class HTTPLodyClient: LodyClient {
         }
         // A retry resumes the original turn, including the configuration it was authored with.
         let pending = pendingSends[key] ?? PendingSend(
-            text: trimmed, turnID: UUID().uuidString.lowercased(), runConfig: runConfig
+            text: trimmed, turnID: turnID, runConfig: runConfig
         )
         let turnID = pending.turnID
         pendingSends[key] = pending

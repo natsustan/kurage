@@ -1,6 +1,7 @@
 import { LoroRepo } from 'loro-repo';
 import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
+import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
@@ -298,7 +299,10 @@ window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, opera
       });
       controller.signal.throwIfAborted();
       if (!report.ok) throw new Error('Session history sync failed');
-      return JSON.stringify(projectConversation(sessionID, handle.doc.getList('history').toJSON()));
+      return JSON.stringify({
+        ...projectConversation(sessionID, handle.doc.getList('history').toJSON()),
+        subtasks: projectSubtasks(sessionID, await repo.listDoc()),
+      });
     } finally {
       // Search reads every transcript. Keep only documents used by a pending
       // or active observation; unloading those would invalidate its handle.

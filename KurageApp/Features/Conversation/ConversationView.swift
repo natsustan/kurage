@@ -5,17 +5,24 @@ struct ConversationView: View {
     let sessionID: SessionSummary.ID
     let title: String
     let model: AppModel
+    var isReadOnly = false
 
     var body: some View {
         ConversationContent(sessionID: sessionID, title: title, model: model,
-                            workspaceGeneration: model.workspaceGeneration)
-            .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration))
+                            workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly)
+            .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly))
     }
+}
+
+private struct FileChangesSelection: Identifiable {
+    let turnNumber: Int?
+    var id: String { turnNumber.map { "turn-\($0)" } ?? "conversation" }
 }
 
 private struct ConversationScope: Hashable {
     let sessionID: String
     let workspaceGeneration: Int
+    let isReadOnly: Bool
 }
 
 // Scope the owner of all transient state, not just its layout subtree.
@@ -24,6 +31,7 @@ private struct ConversationContent: View {
     let title: String
     let model: AppModel
     let workspaceGeneration: Int
+    let isReadOnly: Bool
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
     private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
@@ -35,6 +43,7 @@ private struct ConversationContent: View {
     @State private var conversation: Conversation?
     @State private var draft = ""
     @State private var isSending = false
+    @State private var pendingTurns: [ConversationTurn] = []
     @State private var isCancelling = false
     @State private var scrollRequestID = 0
     @State private var isLoading = true
@@ -47,6 +56,9 @@ private struct ConversationContent: View {
     @State private var runConfigState = ConversationRunConfigState()
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
+    @State private var changesSelection: FileChangesSelection?
+    @State private var selectedSubtask: ConversationSubtask?
+    @State private var observedActivity: SessionActivity?
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -55,9 +67,18 @@ private struct ConversationContent: View {
         return model.cachedConversation(sessionID: sessionID)
     }
 
+    private var displayedTurns: [ConversationTurn] {
+        let turns = displayedConversation?.turns ?? []
+        guard !pendingTurns.isEmpty else { return turns }
+        let receivedIDs = Set(turns.map(\.id))
+        return turns + pendingTurns.filter { !receivedIDs.contains($0.id) }
+    }
+
     var body: some View {
         ConversationLayout(
-            turns: displayedConversation?.turns ?? [],
+            turns: displayedTurns,
+            fileChanges: displayedConversation?.fileChanges ?? [],
+            onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
             scrollRequestID: scrollRequestID,
             loadImage: { image, variant in
@@ -68,16 +89,20 @@ private struct ConversationContent: View {
         ) {
             ConversationFooter(
                 permission: displayedConversation?.permission,
+                fileChanges: displayedConversation?.fileChanges ?? [],
+                onOpenChanges: { changesSelection = FileChangesSelection(turnNumber: nil) },
+                subtasks: displayedConversation?.subtasks ?? [],
+                onOpenSubtasks: { selectedSubtask = $0 },
                 draft: $draft,
                 isSending: isSending,
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
                 banner: banner,
                 connectionMessage: showsConnectionMessage ? connectionStatus : nil,
-                supportsTextSending: model.supportsTextSending,
+                supportsTextSending: !isReadOnly && model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
-                supportsSessionCancellation: model.supportsSessionCancellation,
-                supportsPermissionResponses: model.supportsPermissionResponses,
+                supportsSessionCancellation: !isReadOnly && model.supportsSessionCancellation,
+                supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
                 onSend: sendDraft,
@@ -99,6 +124,14 @@ private struct ConversationContent: View {
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             }
         }
+        .sheet(item: $selectedSubtask) { subtask in
+            ConversationSubtaskSheet(subtask: subtask, model: model)
+        }
+        .sheet(item: $changesSelection) { selection in
+            ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
+                                    latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
+                                    initialTurnNumber: selection.turnNumber)
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 ConversationNavigationTitle(
@@ -107,7 +140,7 @@ private struct ConversationContent: View {
                     connectionStatus: showsConnectionIndicator ? connectionStatus : nil
                 )
             }
-            if model.sessions.first(where: { $0.id == sessionID })?.activity == .running {
+            if (observedActivity ?? session?.activity) == .running {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProgressView()
                         .controlSize(.small)
@@ -139,6 +172,14 @@ private struct ConversationContent: View {
 
     private func observe() async {
         guard isCurrentWorkspace else { return }
+        // Restore only when this scoped view first opens; reconnecting must preserve edits.
+        if observedSessionID == nil, !isReadOnly,
+           let pending = model.pendingTextSend(sessionID: sessionID) {
+            previousPendingText = pending.text
+            previousPendingWorkspaceID = model.selectedWorkspaceID
+            if draft.isEmpty { draft = pending.text }
+            banner = "Send could not be confirmed. Retry to resume the same message."
+        }
         observedWorkspaceID = model.selectedWorkspaceID
         observedSessionID = sessionID
         conversation = model.cachedConversation(sessionID: sessionID)
@@ -149,7 +190,8 @@ private struct ConversationContent: View {
             do {
                 try await model.observeConversation(sessionID: sessionID) { update in
                     guard isCurrentWorkspace else { return }
-                    conversation = update.conversation
+                    receiveConversation(update.conversation)
+                    observedActivity = update.activity
                     runConfigState.receive(update.runConfig)
                     contextWindowUsage = update.contextWindowUsage
                     isLoading = false
@@ -187,49 +229,92 @@ private struct ConversationContent: View {
         showsConnectionMessage = true
     }
 
+    private func receiveConversation(_ latest: Conversation) {
+        conversation = latest
+        guard !pendingTurns.isEmpty else { return }
+        let receivedIDs = Set(latest.turns.map(\.id))
+        pendingTurns.removeAll { receivedIDs.contains($0.id) }
+    }
+
+    private func addPendingTurn(id: ConversationTurn.ID?, text: String) {
+        guard let id, !displayedTurns.contains(where: { $0.id == id }) else { return }
+        pendingTurns.append(ConversationTurn(id: id, author: .user, text: text))
+    }
+
+    private func removePendingTurn(id: ConversationTurn.ID?) {
+        guard let id else { return }
+        pendingTurns.removeAll { $0.id == id }
+    }
+
     private func sendDraft() {
-        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
         let text = draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let pending = model.pendingTextSend(sessionID: sessionID)
+        let turnID: ConversationTurn.ID
+        if let pending, pending.text == trimmed {
+            turnID = pending.turnID
+        } else {
+            turnID = UUID().uuidString.lowercased()
+        }
         let choice = runConfigState.choice
         draft = ""
         scrollRequestID += 1
         banner = nil
         isSending = true
+        // A different unconfirmed message must be retried before this one can be authored.
+        if pending == nil || pending?.text == trimmed { addPendingTurn(id: turnID, text: trimmed) }
         Task {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, runConfig: choice, sessionID: sessionID)
+                let sentChoice = try await model.send(text, runConfig: choice, turnID: turnID,
+                                                       sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 runConfigState.didSend(sentChoice)
                 if let latest = try? await model.conversation(sessionID: sessionID) {
-                    conversation = latest
+                    receiveConversation(latest)
                 }
             } catch LodyClientError.deliveryUnconfirmed {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 draft = text
+                previousPendingText = trimmed
+                previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Send could not be confirmed. Retry to resume the same message."
             } catch LodyClientError.previousSendPending(let previousText) {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = previousText
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "An earlier send is unconfirmed. Retry it before sending different text."
             } catch LodyClientError.sendSuperseded {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 draft = text
                 banner = "Wait for the current reply before sending."
             } catch is CancellationError {
+                removePendingTurn(id: turnID)
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 draft = text
+                previousPendingText = trimmed
+                previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Could not confirm send. Retry to resume the same message."
             }
         }
@@ -241,7 +326,7 @@ private struct ConversationContent: View {
     }
 
     private func cancelSession() {
-        guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
               model.sessions.first(where: { $0.id == sessionID })?.activity == .running else { return }
         isCancelling = true
         banner = nil
@@ -259,40 +344,51 @@ private struct ConversationContent: View {
     }
 
     private func retryPreviousSend() {
-        guard isCurrentWorkspace, !isSending, let text = previousPendingText,
+        guard !isReadOnly, isCurrentWorkspace, !isSending, let text = previousPendingText,
               previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
+        let pending = model.pendingTextSend(sessionID: sessionID)
+        let turnID = pending?.text == text ? pending?.turnID : nil
         isSending = true
+        addPendingTurn(id: turnID, text: text)
         banner = nil
         Task {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, sessionID: sessionID)
+                let sentChoice = try await model.send(text,
+                    turnID: turnID ?? UUID().uuidString.lowercased(), sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
-                banner = "Earlier message confirmed. Review your draft before sending."
+                if draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
+                banner = draft.isEmpty ? nil : "Earlier message confirmed. Review your draft before sending."
                 if let latest = try? await model.conversation(sessionID: sessionID) {
-                    conversation = latest
+                    receiveConversation(latest)
                 }
             } catch LodyClientError.sendSuperseded {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message was replaced. You can send your draft as a new message."
             } catch is CancellationError {
+                removePendingTurn(id: turnID)
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
+                removePendingTurn(id: turnID)
                 banner = "Earlier send is still unconfirmed. Retry it before sending different text."
             }
         }
     }
 
     private func respond(_ decision: PermissionDecision, requestID: PermissionPrompt.ID) {
+        guard !isReadOnly else { return }
         Task {
             do {
                 try await model.respond(decision, requestID: requestID, sessionID: sessionID)
-                conversation = try await model.conversation(sessionID: sessionID)
+                receiveConversation(try await model.conversation(sessionID: sessionID))
                 banner = nil
             } catch {
                 banner = "Could not save the permission."
@@ -402,6 +498,9 @@ struct TurnRow: View {
     let turn: ConversationTurn
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreviewImage: (ConversationImage) -> Void
+    var fileChanges: ConversationFileChangeGroup? = nil
+    var onOpenChanges: (Int) -> Void = { _ in }
+    var onToggleChanges: (TimeInterval) -> Void = { _ in }
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
@@ -418,6 +517,12 @@ struct TurnRow: View {
                         onPreview: onPreviewImage
                     )
                 }
+            }
+            if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
+                TurnFileChangesCard(group: fileChanges,
+                                    onOpen: { onOpenChanges(fileChanges.turnNumber) },
+                                    onToggle: onToggleChanges)
+                    .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: turn.author == .user ? .trailing : .leading)
@@ -447,6 +552,10 @@ struct TurnRow: View {
 
 private struct ConversationFooter: View {
     let permission: PermissionPrompt?
+    let fileChanges: [ConversationFileChangeGroup]
+    let onOpenChanges: () -> Void
+    let subtasks: [ConversationSubtask]
+    let onOpenSubtasks: (ConversationSubtask) -> Void
     @Binding var draft: String
     let isSending: Bool
     let isCancelling: Bool
@@ -467,51 +576,66 @@ private struct ConversationFooter: View {
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if isSending {
-                Text("Sending…")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        GlassEffectContainer(spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let banner {
+                    Text(banner)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if let connectionMessage {
+                    Text(connectionMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("conversation-connection-message")
+                }
+                if canRetryPrevious {
+                    Button("Retry earlier message", action: onRetryPrevious)
+                        .font(.footnote)
+                        .disabled(isSending)
+                }
+                if let permission, supportsPermissionResponses {
+                    PermissionCard(permission: permission, onDecision: onDecision)
+                }
+                if !subtasks.isEmpty || !fileChanges.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { conversationHUDs }
+                        VStack(spacing: 8) { conversationHUDs }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                if supportsTextSending || supportsSessionCancellation && isSessionRunning {
+                    SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
+                                    isSessionRunning: isSessionRunning,
+                                    supportsTextSending: supportsTextSending,
+                                    supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
+                                    supportsSessionCancellation: supportsSessionCancellation,
+                                    runConfig: runConfig?.menu,
+                                    contextWindowUsage: contextWindowUsage,
+                                    onSend: onSend, onCancel: onCancel,
+                                    onChooseRunConfig: { _, value in onChooseRunConfig(value) })
+                } else {
+                    Label("Read-only conversation", systemImage: "lock")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            if let banner {
-                Text(banner)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-            }
-            if let connectionMessage {
-                Text(connectionMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("conversation-connection-message")
-            }
-            if canRetryPrevious {
-                Button("Retry earlier message", action: onRetryPrevious)
-                    .font(.footnote)
-                    .disabled(isSending)
-            }
-            if let permission, supportsPermissionResponses {
-                PermissionCard(permission: permission, onDecision: onDecision)
-            }
-            if supportsTextSending || supportsSessionCancellation && isSessionRunning {
-                SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
-                                isSessionRunning: isSessionRunning,
-                                supportsTextSending: supportsTextSending,
-                                supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
-                                supportsSessionCancellation: supportsSessionCancellation,
-                                runConfig: runConfig?.menu,
-                                contextWindowUsage: contextWindowUsage,
-                                onSend: onSend, onCancel: onCancel,
-                                onChooseRunConfig: { _, value in onChooseRunConfig(value) })
-            } else {
-                Label("Read-only conversation", systemImage: "lock")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private var conversationHUDs: some View {
+        if !fileChanges.isEmpty {
+            ConversationChangesHUD(summary: FileChangeSummary(fileChanges), compact: !subtasks.isEmpty,
+                                   onOpen: onOpenChanges)
+        }
+        if !subtasks.isEmpty {
+            ConversationSubtasksButton(subtasks: subtasks, onOpen: onOpenSubtasks)
+        }
     }
 }
 

@@ -178,10 +178,29 @@ struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
     var detail: String
 }
 
+struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable {
+    enum Status: String, Codable, Sendable {
+        case starting, running, waitingForInput, idle, archived
+    }
+
+    let id: String
+    var title: String
+    var agentName: String
+    var status: Status
+}
+
 struct Conversation: Codable, Equatable, Sendable {
     var sessionID: SessionSummary.ID
     var turns: [ConversationTurn]
     var permission: PermissionPrompt?
+    var fileChanges: [ConversationFileChangeGroup]? = nil
+    var latestTurnNumber: Int? = nil
+    var subtasks: [ConversationSubtask]? = nil
+
+    var lastTurnNumber: Int {
+        latestTurnNumber ?? max(1, turns.filter { $0.author == .user }.count,
+                                fileChanges?.map(\.turnNumber).max() ?? 1)
+    }
 }
 
 /// Latest context usage reported in the session's Lody metadata.
@@ -374,6 +393,11 @@ struct ConversationPatch: Decodable {
     let order: [String]
     let changed: [ConversationTurn]
     let permission: PermissionPrompt?
+    var replacesFileChanges: Bool? = nil
+    var replacesSubtasks: Bool? = nil
+    var fileChanges: [ConversationFileChangeGroup]? = nil
+    var latestTurnNumber: Int? = nil
+    var subtasks: [ConversationSubtask]? = nil
     let activity: String
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
@@ -390,7 +414,10 @@ struct ConversationPatch: Decodable {
             return turn
         }
         return ConversationUpdate(
-            conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission),
+            conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission,
+                                       fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges,
+                                       latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
+                                       subtasks: replacesSubtasks == true ? subtasks : previous.subtasks),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage
         )

@@ -2,6 +2,234 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testSubtasksOpenReadOnlyAndReturnToParentDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        XCTAssertFalse(app.descendants(matching: .any)["session-review-reuse"].exists)
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep parent draft")
+        let subtasks = app.buttons["conversation-subtasks"]
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["turn-changes-toggle-long-agent-20"].isHittable)
+        attachScreen(app, name: "Parent subtask summary")
+        tap(subtasks)
+        let reuse = app.buttons["subtask-review-reuse"]
+        XCTAssertTrue(reuse.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["subtask-review-quality"].exists)
+        attachScreen(app, name: "Subtasks with states")
+        tap(reuse)
+        XCTAssertTrue(app.staticTexts["Reuse review finished."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Read-only conversation"].exists)
+        let child = app.descendants(matching: .any)["subtask-transcript"]
+        XCTAssertTrue(child.waitForExistence(timeout: 5))
+        XCTAssertFalse(child.buttons["send-follow-up"].exists)
+        XCTAssertFalse(child.descendants(matching: .any)["follow-up-field"].exists)
+        attachScreen(app, name: "Read-only subtask transcript")
+        tap(app.buttons["close-subtask"])
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        tap(subtasks)
+        tap(app.buttons["subtask-review-quality"])
+        XCTAssertTrue(app.staticTexts["Checking state isolation."].waitForExistence(timeout: 5))
+        XCTAssertFalse(child.buttons["pause-session"].exists)
+        tap(app.buttons["close-subtask"])
+        XCTAssertEqual(field.value as? String, "Keep parent draft")
+        XCTAssertTrue(subtasks.exists)
+        attachScreen(app, name: "Parent draft after subtask")
+    }
+
+    @MainActor
+    func testRecordedFileChangesHUDAndDetails() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let hud = app.buttons["conversation-changes-hud"]
+        XCTAssertTrue(hud.waitForExistence(timeout: 5))
+        let turnToggle = app.buttons["turn-changes-toggle-long-agent-20"]
+        XCTAssertTrue(turnToggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(turnToggle.value as? String, "Expanded")
+        tap(turnToggle)
+        XCTAssertEqual(turnToggle.value as? String, "Collapsed")
+        tap(turnToggle)
+        let inlineFile = app.buttons["turn-changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        XCTAssertTrue(inlineFile.waitForExistence(timeout: 5))
+        attachScreen(app, name: "This turn inline file changes")
+        tap(inlineFile)
+        XCTAssertTrue(app.buttons["file-changes-title"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["file-changes-title"].label, "This turn")
+        tap(app.buttons["close-file-changes"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep this draft")
+        XCTAssertLessThan(hud.frame.maxY, field.frame.minY)
+        let keyboardCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        keyboardCapture.name = "Changes HUD above composer"
+        keyboardCapture.lifetime = .keepAlways
+        add(keyboardCapture)
+        tap(hud)
+        let scope = app.buttons["file-changes-title"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "Last turn")
+        tap(scope)
+        tap(app.buttons["All turns"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
+        XCTAssertTrue(app.staticTexts["Turn 20"].exists)
+        tap(scope)
+        tap(app.buttons["Last turn"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "Last turn", timeout: 5))
+        let resize = app.buttons["resize-file-changes"]
+        let expandedHeaderY = scope.frame.minY
+        tap(resize)
+        XCTAssertTrue(resize.wait(for: \.label, toEqual: "Expand drawer", timeout: 5))
+        XCTAssertGreaterThan(scope.frame.minY, expandedHeaderY)
+        attachScreen(app, name: "Compact file changes drawer")
+        tap(resize)
+        XCTAssertTrue(resize.wait(for: \.label, toEqual: "Collapse drawer", timeout: 5))
+        let file = app.descendants(matching: .any)["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        attachScreen(app, name: "File changes before expanding")
+        if !file.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(file.isHittable)
+        XCTAssertEqual(file.value as? String, "Collapsed")
+        tap(file)
+        XCTAssertEqual(file.value as? String, "Expanded")
+        let changedLine = app.staticTexts["    let showsChanges = true"]
+        XCTAssertTrue(changedLine.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !changedLine.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(changedLine.isHittable)
+        let diffCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        diffCapture.name = "Recorded code difference"
+        diffCapture.lifetime = .keepAlways
+        add(diffCapture)
+        tap(app.buttons["close-file-changes"])
+        XCTAssertEqual(field.value as? String, "Keep this draft")
+    }
+
+    @MainActor
+    func testRetryClearsConfirmedDraftAndPreservesEditedDraft() {
+        for editDraft in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--fixture", "--fixture-send-unconfirmed"]
+            app.launch()
+            tap(app.buttons["sign-in-button"])
+            tap(app.descendants(matching: .any)["session-session-tests"])
+            let field = app.descendants(matching: .any)["follow-up-field"]
+            tap(field)
+            field.typeText("Retry this message")
+            tap(app.buttons["send-follow-up"])
+            let retry = app.buttons["Retry earlier message"]
+            XCTAssertTrue(retry.waitForExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, "Retry this message")
+            if editDraft { tap(field); field.typeText(" edited") }
+            tap(retry)
+            XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(field.value as? String, editDraft ? "Retry this message edited" : "Send a follow-up")
+            XCTAssertEqual(app.staticTexts.matching(identifier: "Retry this message").count, 1)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testUnconfirmedSendRestoresAfterReopeningConversation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-send-unconfirmed"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Restore this message")
+        tap(app.buttons["send-follow-up"])
+        let retry = app.buttons["Retry earlier message"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-long"])
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        XCTAssertFalse(retry.exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Restore this message")
+
+        tap(field)
+        field.typeText(" edited")
+        let editedDraft = field.value as? String
+        XCTAssertTrue(editedDraft?.contains(" edited") == true)
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, editedDraft)
+        tap(retry)
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, editedDraft)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Restore this message").count, 1)
+
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertFalse(retry.exists)
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+    }
+
+    @MainActor
+    func testLatestTurnWithoutChangesShowsEmptyScope() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Explain without editing")
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(app.buttons["send-follow-up"].wait(for: \.label, toEqual: "Send", timeout: 5))
+        tap(app.buttons["conversation-changes-hud"])
+        XCTAssertTrue(app.staticTexts["No recorded changes"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Latest turn has no changes")
+        tap(app.buttons["file-changes-title"])
+        tap(app.buttons["All turns"])
+        XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testSendShowsBubbleBeforeDeliveryAndKeepsOneTurn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-slow-send"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Instant bubble")
+        let send = app.buttons["send-follow-up"]
+        tap(send)
+
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Sending", timeout: 2))
+        let message = app.staticTexts["Instant bubble"]
+        XCTAssertTrue(message.waitForExistence(timeout: 2))
+        XCTAssertEqual(field.value as? String, "Send a follow-up")
+        XCTAssertFalse(app.staticTexts["Sending…"].exists)
+        attachScreen(app, name: "optimistic-send")
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Instant bubble").count, 1)
+    }
+
+    @MainActor
     func testSessionListModesAndMoreMenu() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -560,9 +788,29 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     private func assertMessageAboveComposer(_ message: XCUIElement, field: XCUIElement,
                                            file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(message.isHittable, file: file, line: line)
-        XCTAssertLessThanOrEqual(message.frame.maxY, field.frame.minY, file: file, line: line)
-        XCTAssertLessThan(field.frame.minY - message.frame.maxY, 100, file: file, line: line)
+        let app = XCUIApplication()
+        let hud = app.buttons["conversation-changes-hud"]
+        let boundary = hud.exists ? hud : field
+        // File cards belong to the message row and sit below its text.
+        // A tall row may exceed the space above a multiline composer on small
+        // screens. Its bottom must remain visible; require its text when it fits.
+        let transcript = app.tables["conversation-transcript"]
+        let row = transcript.cells
+            .containing(.staticText, identifier: message.label).firstMatch
+        let settled = NSPredicate { _, _ in
+            row.exists && row.isHittable
+                && (row.frame.height > boundary.frame.minY - transcript.frame.minY || message.isHittable)
+                && row.frame.maxY <= boundary.frame.minY
+                && boundary.frame.minY - row.frame.maxY < 100
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: settled, object: message)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, file: file, line: line)
+        XCTAssertTrue(row.isHittable, file: file, line: line)
+        if row.frame.height <= boundary.frame.minY - transcript.frame.minY {
+            XCTAssertTrue(message.isHittable, file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(message.frame.maxY, boundary.frame.minY, file: file, line: line)
+        XCTAssertLessThan(boundary.frame.minY - row.frame.maxY, 100, file: file, line: line)
     }
 
     @MainActor

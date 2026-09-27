@@ -405,11 +405,19 @@ final class AppModel {
         return conversationCache[workspaceID]?[sessionID]
     }
 
+    func pendingTextSend(sessionID: SessionSummary.ID) -> PendingTextSend? {
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     @discardableResult
-    func send(_ text: String, runConfig: RunConfigChoice? = nil, sessionID: SessionSummary.ID) async throws -> RunConfigChoice? {
+    func send(_ text: String, runConfig: RunConfigChoice? = nil,
+              turnID: ConversationTurn.ID = UUID().uuidString.lowercased(),
+              sessionID: SessionSummary.ID) async throws -> RunConfigChoice? {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
-        let sentChoice = try await client.send(text, runConfig: runConfig, sessionID: sessionID, workspaceID: workspaceID)
+        let sentChoice = try await client.send(text, runConfig: runConfig, turnID: turnID,
+                                               sessionID: sessionID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
             throw CancellationError()
         }

@@ -8,6 +8,11 @@ struct PendingSessionStart: Identifiable, Equatable {
     let text: String
 }
 
+struct PendingTextSend: Equatable {
+    let text: String
+    let turnID: ConversationTurn.ID
+}
+
 /// App-facing seam for one Lody account.
 ///
 /// The fixture implements this in memory. The HTTP client uses Lody's device
@@ -35,6 +40,8 @@ protocol LodyClient: AnyObject {
     func workspaces() async throws -> [WorkspaceSummary]
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
+    /// The turn ID reserved for an in-flight or unconfirmed text send.
+    func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     /// Returns the choice used to author the turn, including on retries.
     /// `nil` means the turn inherited its configuration without an explicit choice.
@@ -43,6 +50,7 @@ protocol LodyClient: AnyObject {
     func send(
         _ text: String,
         runConfig: RunConfigChoice?,
+        turnID: ConversationTurn.ID,
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice?
@@ -89,6 +97,8 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? { nil }
+
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
         return AsyncThrowingStream { continuation in
@@ -99,7 +109,15 @@ extension LodyClient {
 
     @discardableResult
     func send(_ text: String, sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
-        try await send(text, runConfig: nil, sessionID: sessionID, workspaceID: workspaceID)
+        try await send(text, runConfig: nil, turnID: UUID().uuidString.lowercased(),
+                       sessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    @discardableResult
+    func send(_ text: String, runConfig: RunConfigChoice?, sessionID: SessionSummary.ID,
+              workspaceID: WorkspaceSummary.ID) async throws -> RunConfigChoice? {
+        try await send(text, runConfig: runConfig, turnID: UUID().uuidString.lowercased(),
+                       sessionID: sessionID, workspaceID: workspaceID)
     }
 
     var cachedSession: SessionCache? { nil }

@@ -74,6 +74,27 @@ struct ConversationLayoutTests {
         expectAtBottom(table)
     }
 
+    @Test(arguments: ["Done", ""]) func fileChangesRefreshWithoutChangingMessageText(text: String) throws {
+        let (controller, window) = try makeController()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        let turns = [ConversationTurn(id: "long-agent-20", author: .agent, text: text)]
+        update(controller, turns: turns)
+        let table = try transcript(in: controller.view)
+        let originalHeight = table.rectForRow(at: IndexPath(row: 0, section: 0)).height
+        controller.update(turns: turns, fileChanges: [.fixture], isLoading: false,
+                          scrollRequestID: 0, footer: TestFooter(), onRefresh: {})
+        controller.view.layoutIfNeeded()
+        #expect(table.numberOfRows(inSection: 0) == 1)
+        #expect(table.rectForRow(at: IndexPath(row: 0, section: 0)).height > originalHeight + 80)
+        expectAtBottom(table)
+        update(controller, turns: turns)
+        #expect(abs(table.rectForRow(at: IndexPath(row: 0, section: 0)).height - originalHeight) < 1)
+        expectAtBottom(table)
+    }
+
     private func makeController() throws -> (ConversationLayoutController<TestFooter>, UIWindow) {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let controller = ConversationLayoutController(footer: TestFooter())
