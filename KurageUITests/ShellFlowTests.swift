@@ -2,6 +2,78 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testRecordedFileChangesHUDAndDetails() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let hud = app.buttons["conversation-changes-hud"]
+        XCTAssertTrue(hud.waitForExistence(timeout: 5))
+        let turnToggle = app.buttons["turn-changes-toggle-long-agent-20"]
+        XCTAssertTrue(turnToggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(turnToggle.value as? String, "Expanded")
+        tap(turnToggle)
+        XCTAssertEqual(turnToggle.value as? String, "Collapsed")
+        tap(turnToggle)
+        let inlineFile = app.buttons["turn-changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        XCTAssertTrue(inlineFile.waitForExistence(timeout: 5))
+        attachScreen(app, name: "This turn inline file changes")
+        tap(inlineFile)
+        XCTAssertTrue(app.buttons["file-changes-title"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["file-changes-title"].label, "This turn")
+        tap(app.buttons["close-file-changes"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep this draft")
+        XCTAssertLessThan(hud.frame.maxY, field.frame.minY)
+        let keyboardCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        keyboardCapture.name = "Changes HUD above composer"
+        keyboardCapture.lifetime = .keepAlways
+        add(keyboardCapture)
+        tap(hud)
+        let scope = app.buttons["file-changes-title"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "Last turn")
+        tap(scope)
+        tap(app.buttons["All turns"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
+        XCTAssertTrue(app.staticTexts["Turn 20"].exists)
+        tap(scope)
+        tap(app.buttons["Last turn"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "Last turn", timeout: 5))
+        let resize = app.buttons["resize-file-changes"]
+        let expandedHeaderY = scope.frame.minY
+        tap(resize)
+        XCTAssertTrue(resize.wait(for: \.label, toEqual: "Expand drawer", timeout: 5))
+        XCTAssertGreaterThan(scope.frame.minY, expandedHeaderY)
+        attachScreen(app, name: "Compact file changes drawer")
+        tap(resize)
+        XCTAssertTrue(resize.wait(for: \.label, toEqual: "Collapse drawer", timeout: 5))
+        let file = app.descendants(matching: .any)["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        attachScreen(app, name: "File changes before expanding")
+        if !file.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(file.isHittable)
+        XCTAssertEqual(file.value as? String, "Collapsed")
+        tap(file)
+        XCTAssertEqual(file.value as? String, "Expanded")
+        let changedLine = app.staticTexts["    let showsChanges = true"]
+        XCTAssertTrue(changedLine.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !changedLine.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(changedLine.isHittable)
+        let diffCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        diffCapture.name = "Recorded code difference"
+        diffCapture.lifetime = .keepAlways
+        add(diffCapture)
+        tap(app.buttons["close-file-changes"])
+        XCTAssertEqual(field.value as? String, "Keep this draft")
+    }
+
+    @MainActor
     func testSendShowsBubbleBeforeDeliveryAndKeepsOneTurn() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-slow-send"]
@@ -13,16 +85,16 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         tap(field)
         field.typeText("Instant bubble")
-        tap(app.buttons["send-follow-up"])
+        let send = app.buttons["send-follow-up"]
+        tap(send)
 
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Sending", timeout: 2))
         let message = app.staticTexts["Instant bubble"]
         XCTAssertTrue(message.waitForExistence(timeout: 2))
-        XCTAssertFalse(app.descendants(matching: .any)["sending-turn"].exists)
         XCTAssertEqual(field.value as? String, "Send a follow-up")
         XCTAssertFalse(app.staticTexts["Sending…"].exists)
         attachScreen(app, name: "optimistic-send")
-        // The fixture takes three seconds to confirm delivery; the bubble is already visible.
-        Thread.sleep(forTimeInterval: 4)
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 10))
         app.navigationBars.buttons.firstMatch.tap()
         tap(app.descendants(matching: .any)["session-session-tests"])
         XCTAssertTrue(message.waitForExistence(timeout: 5))
@@ -588,9 +660,18 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     private func assertMessageAboveComposer(_ message: XCUIElement, field: XCUIElement,
                                            file: StaticString = #filePath, line: UInt = #line) {
+        let hud = XCUIApplication().buttons["conversation-changes-hud"]
+        let boundary = hud.exists ? hud : field
+        let settled = NSPredicate { _, _ in
+            message.isHittable
+                && message.frame.maxY <= boundary.frame.minY
+                && boundary.frame.minY - message.frame.maxY < 100
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: settled, object: message)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, file: file, line: line)
         XCTAssertTrue(message.isHittable, file: file, line: line)
-        XCTAssertLessThanOrEqual(message.frame.maxY, field.frame.minY, file: file, line: line)
-        XCTAssertLessThan(field.frame.minY - message.frame.maxY, 100, file: file, line: line)
+        XCTAssertLessThanOrEqual(message.frame.maxY, boundary.frame.minY, file: file, line: line)
+        XCTAssertLessThan(boundary.frame.minY - message.frame.maxY, 100, file: file, line: line)
     }
 
     @MainActor

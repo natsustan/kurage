@@ -94,7 +94,8 @@ final class FixtureLodyClient: LodyClient {
         return Conversation(
             sessionID: record.summary.id,
             turns: record.turns,
-            permission: record.permission
+            permission: record.permission,
+            fileChanges: record.fileChanges
         )
     }
 
@@ -122,6 +123,8 @@ final class FixtureLodyClient: LodyClient {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw LodyClientError.emptyMessage }
         if let sendDelay { try await Task.sleep(for: sendDelay) }
+        try requireAccount()
+        try requireWorkspace(workspaceID)
 
         try update(sessionID) { record in
             if let runConfig {
@@ -373,6 +376,7 @@ struct SessionRecord: Equatable, Sendable {
     var permission: PermissionPrompt?
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
+    var fileChanges: [ConversationFileChangeGroup]? = nil
     var canRestore: Bool = true
 }
 
@@ -473,7 +477,8 @@ extension SessionRecord {
             },
             permission: nil,
             runConfig: .fixtureReasoning,
-            contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000)
+            contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000),
+            fileChanges: [.fixture]
         ),
         SessionRecord(
             summary: SessionSummary(
@@ -544,4 +549,17 @@ extension SessionRecord {
             permission: nil
         ),
     ]
+}
+
+
+extension ConversationFileChangeGroup {
+    static let fixture = ConversationFileChangeGroup(id: "long-agent-20", turnNumber: 20, files: [
+        ConversationFileChange(path: "KurageApp/Features/Conversation/ConversationView.swift",
+                               additions: 2, deletions: 1, edits: [
+            ConversationFileEdit(id: "edit-1", oldText: "struct ConversationView {\n    let title = \"Chat\"\n}\n",
+                                 newText: "struct ConversationView {\n    let title = \"Conversation\"\n    let showsChanges = true\n}\n"),
+        ]),
+        ConversationFileChange(path: "KurageTests/ConversationChangesTests.swift",
+                               additions: 12, deletions: 0, edits: []),
+    ])
 }

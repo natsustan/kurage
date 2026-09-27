@@ -13,6 +13,11 @@ struct ConversationView: View {
     }
 }
 
+private struct FileChangesSelection: Identifiable {
+    let turnNumber: Int?
+    var id: String { turnNumber.map { "turn-\($0)" } ?? "conversation" }
+}
+
 private struct ConversationScope: Hashable {
     let sessionID: String
     let workspaceGeneration: Int
@@ -44,11 +49,11 @@ private struct ConversationContent: View {
     @State private var showsConnectionIndicator = false
     @State private var showsConnectionMessage = false
     @State private var previousPendingText: String?
-    @State private var previousPendingTurnID: ConversationTurn.ID?
     @State private var previousPendingWorkspaceID: String?
     @State private var runConfigState = ConversationRunConfigState()
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
+    @State private var changesSelection: FileChangesSelection?
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -67,6 +72,8 @@ private struct ConversationContent: View {
     var body: some View {
         ConversationLayout(
             turns: displayedTurns,
+            fileChanges: displayedConversation?.fileChanges ?? [],
+            onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
             scrollRequestID: scrollRequestID,
             loadImage: { image, variant in
@@ -77,6 +84,8 @@ private struct ConversationContent: View {
         ) {
             ConversationFooter(
                 permission: displayedConversation?.permission,
+                fileChanges: displayedConversation?.fileChanges ?? [],
+                onOpenChanges: { changesSelection = FileChangesSelection(turnNumber: nil) },
                 draft: $draft,
                 isSending: isSending,
                 isCancelling: isCancelling,
@@ -107,6 +116,9 @@ private struct ConversationContent: View {
             ConversationImagePreview(image: image) { image, variant in
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             }
+        }
+        .sheet(item: $changesSelection) { selection in
+            ConversationChangesView(groups: displayedConversation?.fileChanges ?? [], initialTurnNumber: selection.turnNumber)
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -203,6 +215,16 @@ private struct ConversationContent: View {
         pendingTurns.removeAll { receivedIDs.contains($0.id) }
     }
 
+    private func addPendingTurn(id: ConversationTurn.ID?, text: String) {
+        guard let id, !displayedTurns.contains(where: { $0.id == id }) else { return }
+        pendingTurns.append(ConversationTurn(id: id, author: .user, text: text))
+    }
+
+    private func removePendingTurn(id: ConversationTurn.ID?) {
+        guard let id else { return }
+        pendingTurns.removeAll { $0.id == id }
+    }
+
     private func sendDraft() {
         guard isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
@@ -210,10 +232,10 @@ private struct ConversationContent: View {
         let text = draft
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let turnID: String
-        if previousPendingText == trimmed, previousPendingWorkspaceID == model.selectedWorkspaceID,
-           let previousPendingTurnID {
-            turnID = previousPendingTurnID
+        let pending = model.pendingTextSend(sessionID: sessionID)
+        let turnID: ConversationTurn.ID
+        if let pending, pending.text == trimmed {
+            turnID = pending.turnID
         } else {
             turnID = UUID().uuidString.lowercased()
         }
@@ -222,9 +244,8 @@ private struct ConversationContent: View {
         scrollRequestID += 1
         banner = nil
         isSending = true
-        if !displayedTurns.contains(where: { $0.id == turnID }) {
-            pendingTurns.append(ConversationTurn(id: turnID, author: .user, text: trimmed))
-        }
+        // A different unconfirmed message must be retried before this one can be authored.
+        if pending == nil || pending?.text == trimmed { addPendingTurn(id: turnID, text: trimmed) }
         Task {
             guard isCurrentWorkspace else { return }
             defer { isSending = false }
@@ -233,7 +254,6 @@ private struct ConversationContent: View {
                                                        sessionID: sessionID)
                 guard isCurrentWorkspace else { return }
                 previousPendingText = nil
-                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 runConfigState.didSend(sentChoice)
                 if let latest = try? await model.conversation(sessionID: sessionID) {
@@ -241,42 +261,38 @@ private struct ConversationContent: View {
                 }
             } catch LodyClientError.deliveryUnconfirmed {
                 guard isCurrentWorkspace else { return }
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = trimmed
-                previousPendingTurnID = turnID
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Send could not be confirmed. Retry to resume the same message."
             } catch LodyClientError.previousSendPending(let previousText) {
                 guard isCurrentWorkspace else { return }
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = previousText
-                if previousText != trimmed { previousPendingTurnID = nil }
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "An earlier send is unconfirmed. Retry it before sending different text."
             } catch LodyClientError.sendSuperseded {
                 guard isCurrentWorkspace else { return }
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = nil
-                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
                 guard isCurrentWorkspace else { return }
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 draft = text
                 banner = "Wait for the current reply before sending."
             } catch is CancellationError {
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 return
             } catch {
                 guard isCurrentWorkspace else { return }
-                pendingTurns.removeAll { $0.id == turnID }
+                removePendingTurn(id: turnID)
                 draft = text
                 previousPendingText = trimmed
-                previousPendingTurnID = turnID
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Could not confirm send. Retry to resume the same message."
             }
@@ -309,11 +325,10 @@ private struct ConversationContent: View {
     private func retryPreviousSend() {
         guard isCurrentWorkspace, !isSending, let text = previousPendingText,
               previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
-        let turnID = previousPendingTurnID
+        let pending = model.pendingTextSend(sessionID: sessionID)
+        let turnID = pending?.text == text ? pending?.turnID : nil
         isSending = true
-        if let turnID, !displayedTurns.contains(where: { $0.id == turnID }) {
-            pendingTurns.append(ConversationTurn(id: turnID, author: .user, text: text))
-        }
+        addPendingTurn(id: turnID, text: text)
         banner = nil
         Task {
             guard isCurrentWorkspace else { return }
@@ -324,7 +339,6 @@ private struct ConversationContent: View {
                 guard isCurrentWorkspace else { return }
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
-                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message confirmed. Review your draft before sending."
                 if let latest = try? await model.conversation(sessionID: sessionID) {
@@ -332,17 +346,16 @@ private struct ConversationContent: View {
                 }
             } catch LodyClientError.sendSuperseded {
                 guard isCurrentWorkspace else { return }
-                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
+                removePendingTurn(id: turnID)
                 previousPendingText = nil
-                previousPendingTurnID = nil
                 previousPendingWorkspaceID = nil
                 banner = "Earlier message was replaced. You can send your draft as a new message."
             } catch is CancellationError {
-                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
+                removePendingTurn(id: turnID)
                 return
             } catch {
                 guard isCurrentWorkspace else { return }
-                if let turnID { pendingTurns.removeAll { $0.id == turnID } }
+                removePendingTurn(id: turnID)
                 banner = "Earlier send is still unconfirmed. Retry it before sending different text."
             }
         }
@@ -352,7 +365,7 @@ private struct ConversationContent: View {
         Task {
             do {
                 try await model.respond(decision, requestID: requestID, sessionID: sessionID)
-                conversation = try await model.conversation(sessionID: sessionID)
+                receiveConversation(try await model.conversation(sessionID: sessionID))
                 banner = nil
             } catch {
                 banner = "Could not save the permission."
@@ -462,6 +475,9 @@ struct TurnRow: View {
     let turn: ConversationTurn
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreviewImage: (ConversationImage) -> Void
+    var fileChanges: ConversationFileChangeGroup? = nil
+    var onOpenChanges: (Int) -> Void = { _ in }
+    var onToggleChanges: (TimeInterval) -> Void = { _ in }
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
@@ -478,6 +494,12 @@ struct TurnRow: View {
                         onPreview: onPreviewImage
                     )
                 }
+            }
+            if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
+                TurnFileChangesCard(group: fileChanges,
+                                    onOpen: { onOpenChanges(fileChanges.turnNumber) },
+                                    onToggle: onToggleChanges)
+                    .padding(.top, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: turn.author == .user ? .trailing : .leading)
@@ -507,6 +529,8 @@ struct TurnRow: View {
 
 private struct ConversationFooter: View {
     let permission: PermissionPrompt?
+    let fileChanges: [ConversationFileChangeGroup]
+    let onOpenChanges: () -> Void
     @Binding var draft: String
     let isSending: Bool
     let isCancelling: Bool
@@ -527,46 +551,51 @@ private struct ConversationFooter: View {
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let banner {
-                Text(banner)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
+        GlassEffectContainer(spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let banner {
+                    Text(banner)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                }
+                if let connectionMessage {
+                    Text(connectionMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("conversation-connection-message")
+                }
+                if canRetryPrevious {
+                    Button("Retry earlier message", action: onRetryPrevious)
+                        .font(.footnote)
+                        .disabled(isSending)
+                }
+                if let permission, supportsPermissionResponses {
+                    PermissionCard(permission: permission, onDecision: onDecision)
+                }
+                if !fileChanges.isEmpty {
+                    ConversationChangesHUD(summary: FileChangeSummary(fileChanges), onOpen: onOpenChanges)
+                }
+                if supportsTextSending || supportsSessionCancellation && isSessionRunning {
+                    SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
+                                    isSessionRunning: isSessionRunning,
+                                    supportsTextSending: supportsTextSending,
+                                    supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
+                                    supportsSessionCancellation: supportsSessionCancellation,
+                                    runConfig: runConfig?.menu,
+                                    contextWindowUsage: contextWindowUsage,
+                                    onSend: onSend, onCancel: onCancel,
+                                    onChooseRunConfig: { _, value in onChooseRunConfig(value) })
+                } else {
+                    Label("Read-only conversation", systemImage: "lock")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            if let connectionMessage {
-                Text(connectionMessage)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("conversation-connection-message")
-            }
-            if canRetryPrevious {
-                Button("Retry earlier message", action: onRetryPrevious)
-                    .font(.footnote)
-                    .disabled(isSending)
-            }
-            if let permission, supportsPermissionResponses {
-                PermissionCard(permission: permission, onDecision: onDecision)
-            }
-            if supportsTextSending || supportsSessionCancellation && isSessionRunning {
-                SessionComposer(draft: $draft, isSending: isSending, isCancelling: isCancelling,
-                                isSessionRunning: isSessionRunning,
-                                supportsTextSending: supportsTextSending,
-                                supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
-                                supportsSessionCancellation: supportsSessionCancellation,
-                                runConfig: runConfig?.menu,
-                                contextWindowUsage: contextWindowUsage,
-                                onSend: onSend, onCancel: onCancel,
-                                onChooseRunConfig: { _, value in onChooseRunConfig(value) })
-            } else {
-                Label("Read-only conversation", systemImage: "lock")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .padding(.horizontal, 18)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
     }
 }
 

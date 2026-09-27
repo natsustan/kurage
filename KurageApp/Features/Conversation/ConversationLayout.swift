@@ -4,6 +4,8 @@ import UIKit
 /// UIKit owns keyboard avoidance and scrolling; SwiftUI owns message and composer content.
 struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     let turns: [ConversationTurn]
+    var fileChanges: [ConversationFileChangeGroup] = []
+    var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
     let scrollRequestID: Int
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
@@ -18,7 +20,8 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: ConversationLayoutController<Footer>, context: Context) {
         controller.loadImage = loadImage
         controller.onPreviewImage = onPreviewImage
-        controller.update(turns: turns, isLoading: isLoading, scrollRequestID: scrollRequestID,
+        controller.onOpenTurnChanges = onOpenTurnChanges
+        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, scrollRequestID: scrollRequestID,
                           footer: footer(), onRefresh: onRefresh)
     }
 }
@@ -31,6 +34,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private let emptyHost = UIHostingController(rootView: ConversationEmptyState(isLoading: true))
     private var dataSource: UITableViewDiffableDataSource<Int, ConversationTurn.ID>!
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
+    private var changesByID: [String: ConversationFileChangeGroup] = [:]
+    var onOpenTurnChanges: (Int) -> Void = { _ in }
     private var turnIDs: [ConversationTurn.ID] = []
     private var scrollRequestID = 0
     private struct ReadingAnchor {
@@ -42,6 +47,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var followsOutput = true
     private var isUserScrolling = false
     private var isAdjustingLayout = false
+    private var pendingCardResize: (height: CGFloat, duration: TimeInterval)?
     private var onRefresh: (() -> Void)?
     var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
     var onPreviewImage: ((ConversationImage) -> Void)?
@@ -100,8 +106,17 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                 throw LodyClientError.notConnected
             }
             let onPreviewImage = self?.onPreviewImage ?? { _ in }
+            let changes = self?.changesByID[id]
+            let onOpenChanges = self?.onOpenTurnChanges ?? { _ in }
             cell.contentConfiguration = UIHostingConfiguration {
-                TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage)
+                TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage,
+                        fileChanges: changes, onOpenChanges: onOpenChanges,
+                        onToggleChanges: { [weak self] duration in
+                            guard let self else { return }
+                            pendingCardResize = (tableView.contentSize.height, duration)
+                        })
+                    // Keep the message anchored to the cell top as its disclosure resizes.
+                    .frame(maxHeight: .infinity, alignment: .top)
             }
             .margins(.horizontal, 20)
             .margins(.vertical, 14)
@@ -146,7 +161,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         host.didMove(toParent: self)
     }
 
-    func update(turns: [ConversationTurn], isLoading: Bool, scrollRequestID: Int,
+    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, scrollRequestID: Int,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
         self.onRefresh = onRefresh
@@ -163,11 +178,13 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             followsOutput = true
             readingAnchor = nil
         }
+        let updatedChanges = Dictionary(uniqueKeysWithValues: fileChanges.map { ($0.id, $0) })
         let updatedIDs = turns.map(\.id)
         let changedIDs: [ConversationTurn.ID] = turns.compactMap { turn in
-            guard let previous = turnsByID[turn.id], previous != turn else { return nil }
+            guard let previous = turnsByID[turn.id], previous != turn || changesByID[turn.id] != updatedChanges[turn.id] else { return nil }
             return turn.id
         }
+        changesByID = updatedChanges
         if turnIDs != updatedIDs || !changedIDs.isEmpty {
             turnsByID = Dictionary(uniqueKeysWithValues: turns.map { ($0.id, $0) })
             var snapshot: NSDiffableDataSourceSnapshot<Int, ConversationTurn.ID>
@@ -209,6 +226,14 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         if tableView.verticalScrollIndicatorInsets != indicatorInsets {
             tableView.verticalScrollIndicatorInsets = indicatorInsets
         }
+        // Hosting configuration reports its final height before SwiftUI finishes the
+        // disclosure animation. Move the viewport with that animation, not ahead of it.
+        var resizeDuration: TimeInterval = 0
+        if let resize = pendingCardResize,
+           abs(tableView.contentSize.height - resize.height) > 0.5 {
+            resizeDuration = resize.duration
+            pendingCardResize = nil
+        }
         // Only gesture callbacks change the reading intent. Keyboard/layout updates never do.
         guard !isUserScrolling else { return }
         let target: CGFloat
@@ -223,7 +248,14 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             return
         }
         if abs(tableView.contentOffset.y - target) > 0.5 {
-            tableView.contentOffset.y = target
+            if resizeDuration > 0 {
+                UIView.animate(withDuration: resizeDuration, delay: 0,
+                               options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]) {
+                    self.tableView.contentOffset.y = target
+                }
+            } else {
+                tableView.contentOffset.y = target
+            }
         }
     }
 
@@ -240,6 +272,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         isUserScrolling = true
+        pendingCardResize = nil
         followsOutput = false
         captureReadingAnchor()
     }

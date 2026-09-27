@@ -36,11 +36,22 @@ struct HTTPLodyClientTests {
         log.install { _ in (503, Data()) }
 
         await #expect(throws: LodyClientError.unreachable) {
-            try await client.send("First", sessionID: "chat", workspaceID: "work")
+            try await client.send(" First ", runConfig: nil, turnID: "original-turn",
+                                  sessionID: "chat", workspaceID: "work")
         }
+        #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work") ==
+                PendingTextSend(text: "First", turnID: "original-turn"))
+        #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "other") == nil)
         await #expect(throws: LodyClientError.previousSendPending("First")) {
             try await client.send("Edited", sessionID: "chat", workspaceID: "work")
         }
+        await #expect(throws: LodyClientError.unreachable) {
+            try await client.send("First", runConfig: nil, turnID: "new-view-turn",
+                                  sessionID: "chat", workspaceID: "work")
+        }
+        #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work")?.turnID == "original-turn")
+        client.signOut()
+        #expect(client.pendingTextSend(sessionID: "chat", workspaceID: "work") == nil)
     }
 
     @Test func changedTextCannotAbandonAnUnconfirmedSessionStart() async throws {

@@ -259,7 +259,7 @@ struct SessionComposer: View {
                 }
                 .disabled(!canSend)
                 .buttonStyle(.plain)
-                .accessibilityLabel("Send")
+                .accessibilityLabel(isSending ? Text("Sending") : Text("Send"))
                 .accessibilityIdentifier(identifiers.send)
             }
         }

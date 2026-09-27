@@ -179,3 +179,25 @@ test('patch transmits an image added to an unchanged text turn', () => {
   assert.deepEqual(conversationPatch(previous, next).changed, [after]);
   assert.deepEqual(conversationPatch(next, next).changed, []);
 });
+
+
+test('file-only history updates replace summaries and removal clears them while subscribed', async () => {
+  const h = harness();
+  const history = h.doc.getList('history');
+  const turn = { id: 'a', role: 'assistant', items: [], fileDiff: [{ filePath: 'a.swift', add: 1, del: 0 }] };
+  history.push(turn);
+  h.doc.commit();
+  await h.start();
+  assert.equal(h.updates[0].fileChanges[0].files[0].additions, 1);
+  assert.deepEqual(h.updates[0].order, []);
+  history.delete(0, 1);
+  history.push({ ...turn, fileDiff: [{ filePath: 'a.swift', add: 4, del: 2 }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).fileChanges[0].files[0].additions, 4);
+  history.delete(0, 1);
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).fileChanges, null);
+  h.controller.abort();
+});

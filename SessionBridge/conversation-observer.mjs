@@ -13,6 +13,8 @@ export function conversationPatch(previous, next) {
         JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []);
     }),
     permission: next.permission,
+    ...(!previous || JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null)
+      ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),
   };
 }
 

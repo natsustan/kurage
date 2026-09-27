@@ -497,6 +497,13 @@ final class HTTPLodyClient: LodyClient {
         return bridge.observeConversation(sessionID: sessionID, workspaceID: workspaceID, access: access)
     }
 
+    func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? {
+        guard let userID = account?.id,
+              let pending = pendingSends[SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)]
+        else { return nil }
+        return PendingTextSend(text: pending.text, turnID: pending.turnID)
+    }
+
     @discardableResult
     func send(
         _ text: String,

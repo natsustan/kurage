@@ -405,6 +405,11 @@ final class AppModel {
         return conversationCache[workspaceID]?[sessionID]
     }
 
+    func pendingTextSend(sessionID: SessionSummary.ID) -> PendingTextSend? {
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     @discardableResult
     func send(_ text: String, runConfig: RunConfigChoice? = nil,
               turnID: ConversationTurn.ID = UUID().uuidString.lowercased(),

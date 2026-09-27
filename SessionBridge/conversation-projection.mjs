@@ -1,3 +1,5 @@
+import { projectFileChanges } from './file-changes.mjs';
+
 // Project ordinary chat text and session images. Tool results, thoughts, files,
 // and other item types need their own UI; rendering them as prose would
 // misrepresent them.
@@ -83,5 +85,6 @@ export function projectConversation(sessionID, history) {
       parts,
     });
   }
-  return { sessionID, turns, permission: null };
+  const fileChanges = projectFileChanges(history);
+  return { sessionID, turns, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };
 }

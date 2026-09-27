@@ -182,6 +182,7 @@ struct Conversation: Codable, Equatable, Sendable {
     var sessionID: SessionSummary.ID
     var turns: [ConversationTurn]
     var permission: PermissionPrompt?
+    var fileChanges: [ConversationFileChangeGroup]? = nil
 }
 
 /// Latest context usage reported in the session's Lody metadata.
@@ -374,6 +375,8 @@ struct ConversationPatch: Decodable {
     let order: [String]
     let changed: [ConversationTurn]
     let permission: PermissionPrompt?
+    var replacesFileChanges: Bool? = nil
+    var fileChanges: [ConversationFileChangeGroup]? = nil
     let activity: String
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
@@ -390,7 +393,8 @@ struct ConversationPatch: Decodable {
             return turn
         }
         return ConversationUpdate(
-            conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission),
+            conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission,
+                                       fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage
         )
