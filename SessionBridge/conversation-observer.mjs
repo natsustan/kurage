@@ -3,6 +3,10 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
 
+// Only reuse markers whose conversation was successfully delivered. Weak keys
+// keep this evidence scoped to the actual document instance and its lifetime.
+const deliveredReceipts = new WeakMap();
+
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
   return {
@@ -78,6 +82,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
+    receiptConversation = projectConversation(sessionID, handle.doc.getList('history').toJSON());
+    const delivered = deliveredReceipts.get(handle.doc);
+    if (delivered?.workspaceID === workspaceID && delivered.sessionID === sessionID &&
+        !hasVisibleConversationChange(delivered.conversation, receiptConversation)) {
+      syncedMessageAt = delivered.timestamp;
+    }
     let latestTurn;
     let capability;
     const publish = async () => {
@@ -137,6 +147,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         });
         update.syncState = rooms.length === 2 && rooms.every(room => room.status === 'joined') ? 'live' : 'connecting';
         await emit(update);
+        if (stopped) return;
+        if (update.lastMessageAt !== null) {
+          deliveredReceipts.set(handle.doc, {
+            workspaceID, sessionID, timestamp: update.lastMessageAt, conversation: next,
+          });
+        }
         previous = next;
       } catch {
         if (!stopped) {

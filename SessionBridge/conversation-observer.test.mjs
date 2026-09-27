@@ -46,6 +46,79 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
     metadataChanged: () => metaListener?.(), releases: () => releases };
 }
 
+test('initial cached history cannot acknowledge a newer marker until content arrives', async () => {
+  const h = harness({ meta: { status: { type: 'idle' }, lastMessageAt: 200 } });
+  const history = h.doc.getList('history');
+  history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Old' }] });
+  h.doc.commit();
+  await h.start();
+  assert.deepEqual(h.updates[0].order, ['old']);
+  assert.equal(h.updates[0].lastMessageAt, null);
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  history.push({ id: 'new', role: 'assistant', items: [{ type: 'text', text: 'New' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  h.controller.abort();
+});
+
+test('initial room restoration counts as content arriving after the local baseline', async () => {
+  const h = harness({ meta: { lastMessageAt: 200 }, waitFor: async () => {
+    if (h.doc.getList('history').length === 0) {
+      h.doc.getList('history').push({ id: 'new', role: 'assistant', items: [{ type: 'text', text: 'New' }] });
+      h.doc.commit();
+    }
+    return { status: 'complete' };
+  } });
+  await h.start();
+  assert.equal(h.updates[0].lastMessageAt, 200);
+  h.controller.abort();
+});
+
+test('initial receipt waits through non-visible updates and accepts same-turn growth', async () => {
+  const h = harness({ meta: { lastMessageAt: 200 } });
+  const history = h.doc.getList('history');
+  history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Partial' }] });
+  h.doc.commit();
+  await h.start();
+  h.doc.getMap('acpRuntimeConfig').set('modelId', 'model');
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  history.delete(0, 1);
+  history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Partial completed' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  assert.deepEqual(h.updates.at(-1).order, ['old']);
+  h.controller.abort();
+});
+
+test('reopening delivered history reuses only its confirmed marker and workspace', async () => {
+  const meta = { lastMessageAt: 100 };
+  const h = harness({ meta });
+  h.repo.sync = async () => {
+    h.doc.getList('history').push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
+  await h.start();
+  assert.equal(h.updates[0].lastMessageAt, 100);
+  h.controller.abort();
+  h.repo.sync = async () => ({ ok: true });
+  for (const [workspaceID, timestamp, expected] of [['ws', 100, 100], ['ws', 200, null], ['other', 100, null]]) {
+    meta.lastMessageAt = timestamp;
+    const controller = new AbortController();
+    const updates = [];
+    await observeConversation({ repo: h.repo, workspaceID, sessionID: 'abc', signal: controller.signal,
+      emit: async update => updates.push(update) });
+    assert.equal(updates[0].lastMessageAt, expected);
+    controller.abort();
+  }
+});
+
 test('initial history, same-turn growth, deletion and reconnect status remain coherent', async () => {
   const h = harness();
   const history = h.doc.getList('history');
@@ -274,9 +347,13 @@ test('a metadata update cannot publish its read timestamp before history sync co
   const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
   const h = harness({ meta });
   const history = h.doc.getList('history');
-  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
-  h.doc.commit();
+  h.repo.sync = async () => {
+    history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
   await h.start();
+  h.repo.sync = async () => ({ ok: true });
   const syncing = Promise.withResolvers();
   h.repo.sync = async () => {
     await syncing.promise;
@@ -299,9 +376,13 @@ test('a synced marker stays unread until the visible conversation catches up', a
   const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
   const h = harness({ meta });
   const history = h.doc.getList('history');
-  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
-  h.doc.commit();
+  h.repo.sync = async () => {
+    history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
   await h.start();
+  h.repo.sync = async () => ({ ok: true });
   meta.lastMessageAt = 200;
   h.metadataChanged();
   await h.flush();
@@ -319,9 +400,13 @@ test('history that arrives before metadata still advances the read timestamp', a
   const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
   const h = harness({ meta });
   const history = h.doc.getList('history');
-  history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
-  h.doc.commit();
+  h.repo.sync = async () => {
+    history.push({ id: 'first', role: 'assistant', items: [{ type: 'text', text: 'First' }] });
+    h.doc.commit();
+    return { ok: true };
+  };
   await h.start();
+  h.repo.sync = async () => ({ ok: true });
   history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
   h.doc.commit();
   await h.flush();
