@@ -39,6 +39,11 @@ struct SessionActionPresenter: ViewModifier {
     @State private var task: Task<Void, Never>?
     @State private var generation = 0
 
+    private var canSaveTitle: Bool {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.utf16.count <= 200
+    }
+
     func body(content: Content) -> some View {
         content
             .onChange(of: request?.id) { _, _ in
@@ -61,9 +66,10 @@ struct SessionActionPresenter: ViewModifier {
                     TextField("Session title", text: $title)
                         .accessibilityIdentifier("session-title-field")
                     Button("Save") { if let request { execute(request) } }
-                        .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || title.utf16.count > 200)
+                        .disabled(!canSaveTitle)
                 } else {
                     Button("Archive", role: .destructive) { if let request { execute(request) } }
+                        .accessibilityIdentifier("archive-confirm")
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {

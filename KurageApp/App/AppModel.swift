@@ -522,11 +522,16 @@ final class AppModel {
 
     var supportsSessionMetadataEditing: Bool { client.supportsSessionMetadataEditing }
 
-    func sessionURL(sessionID: String) -> URL? {
+    var canCopySessionURL: Bool { selectedWorkspaceWebURL != nil }
+
+    private var selectedWorkspaceWebURL: URL? {
         guard let workspace = workspaces.first(where: { $0.id == selectedWorkspaceID }),
               !workspace.slug.isEmpty else { return nil }
-        return URL(string: LodyEndpoints.webOrigin)?
-            .appendingPathComponent(workspace.slug)
+        return URL(string: LodyEndpoints.webOrigin)?.appendingPathComponent(workspace.slug)
+    }
+
+    func sessionURL(sessionID: String) -> URL? {
+        selectedWorkspaceWebURL?
             .appendingPathComponent("sessions")
             .appendingPathComponent(sessionID)
     }

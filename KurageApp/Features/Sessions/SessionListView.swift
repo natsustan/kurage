@@ -18,7 +18,6 @@ struct SessionListView: View {
     let model: AppModel
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
-    @State private var archiveFailed = false
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
     @State private var navigation = SessionNavigation()
@@ -32,7 +31,7 @@ struct SessionListView: View {
             SessionList(
                 sessions: model.sessions,
                 canEdit: model.supportsSessionMetadataEditing,
-                canCopyURL: model.sessionURL(sessionID: "") != nil,
+                canCopyURL: model.canCopySessionURL,
                 onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
                 mode: listMode,
                 supportsConversations: model.supportsConversations,
@@ -48,8 +47,7 @@ struct SessionListView: View {
                 searchBody: { model.sessionSearchBody(sessionID: $0) },
                 canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
                 onOpen: { navigation.path.append(.conversation($0)) },
-                onNewSession: startNewSession,
-                onArchive: { session in Task { await archive(session) } }
+                onNewSession: startNewSession
             )
             .task(id: isSearchActive) {
                 if isSearchActive {
@@ -141,12 +139,6 @@ struct SessionListView: View {
             }
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest))
-        .onChange(of: model.workspaceGeneration) { _, _ in
-            archiveFailed = false
-        }
-        .alert("Could not archive this session.", isPresented: $archiveFailed) {
-            Button("OK", role: .cancel) {}
-        }
         .sheet(isPresented: $showArchivedSessions) {
             ArchivedSessionsView(model: model)
                 .presentationDetents([.large])
@@ -163,18 +155,6 @@ struct SessionListView: View {
             templateSessionID: template.id,
             workspaceGeneration: model.workspaceGeneration
         )))
-    }
-
-    private func archive(_ session: SessionSummary) async {
-        let generation = model.workspaceGeneration
-        do {
-            try await model.archiveSession(sessionID: session.id)
-        } catch is CancellationError {
-            return
-        } catch {
-            guard model.workspaceGeneration == generation else { return }
-            archiveFailed = true
-        }
     }
 }
 
@@ -203,7 +183,6 @@ private struct SessionList: View {
     let canCreateSession: (String) -> Bool
     let onOpen: (SessionSummary.ID) -> Void
     let onNewSession: (String) -> Void
-    let onArchive: (SessionSummary) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
 
     private var trimmedQuery: String {
@@ -218,6 +197,7 @@ private struct SessionList: View {
     }
 
     var body: some View {
+        let visible = visibleSessions
         // Keep the search overlay alive when results switch to an empty state.
         ZStack(alignment: .top) {
             if sessions.isEmpty {
@@ -227,7 +207,7 @@ private struct SessionList: View {
                     systemImage: "bubble.left.and.bubble.right",
                     description: statusNote?.text ?? "No sessions in this workspace."
                 )
-            } else if !trimmedQuery.isEmpty && visibleSessions.isEmpty {
+            } else if !trimmedQuery.isEmpty && visible.isEmpty {
                 emptyState(
                     loading: isIndexingSearch,
                     title: "No matching sessions",
@@ -237,7 +217,7 @@ private struct SessionList: View {
                 )
             } else {
                 SessionBrowser(
-                    rows: rows,
+                    rows: rows(for: visible),
                     canEdit: canEdit,
                     canCopyURL: canCopyURL,
                     onAction: onAction,
@@ -246,8 +226,7 @@ private struct SessionList: View {
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
                     onOpen: onOpen,
                     onToggleProject: toggleProject,
-                    onNewSession: onNewSession,
-                    onArchive: onArchive
+                    onNewSession: onNewSession
                 )
                 .ignoresSafeArea(.container, edges: .bottom)
             }
@@ -279,7 +258,7 @@ private struct SessionList: View {
     /// Capsule height plus the gap under it, so the last row can scroll clear of the floating field.
     private static let floatingSearchClearance: CGFloat = 72
 
-    private var rows: [SessionBrowserRow] {
+    private func rows(for visible: [SessionSummary]) -> [SessionBrowserRow] {
         var rows: [SessionBrowserRow] = []
         if let statusNote {
             rows.append(.note(text: statusNote.text, failure: statusNote.tone == .failure))
@@ -287,8 +266,15 @@ private struct SessionList: View {
         if !supportsConversations {
             rows.append(.banner("Only the session list is available. Conversations are not supported yet."))
         }
-        let pinned = visibleSessions.filter { $0.isPinned == true }
-        let unpinned = visibleSessions.filter { $0.isPinned != true }
+        var pinned: [SessionSummary] = []
+        var unpinned: [SessionSummary] = []
+        for session in visible {
+            if session.isPinned == true {
+                pinned.append(session)
+            } else {
+                unpinned.append(session)
+            }
+        }
         if !pinned.isEmpty {
             rows.append(.title("Pinned"))
             rows.append(contentsOf: sessionRows(pinned))
@@ -299,7 +285,7 @@ private struct SessionList: View {
         if mode == .byProject {
             // Keep local project headers available for New session even when all
             // their sessions have moved into Pinned.
-            for group in SessionProjectGroup.make(from: visibleSessions) {
+            for group in SessionProjectGroup.make(from: visible) {
                 let groupSessions = group.sessions.filter { $0.isPinned != true }
                 guard !groupSessions.isEmpty || canCreateSession(group.id) else { continue }
                 let collapsed = trimmedQuery.isEmpty && collapsedProjectIDs.contains(group.id)
@@ -387,7 +373,6 @@ private struct SessionBrowser: UIViewControllerRepresentable {
     var onOpen: (SessionSummary.ID) -> Void
     var onToggleProject: (String) -> Void
     var onNewSession: (String) -> Void
-    var onArchive: (SessionSummary) -> Void
 
     func makeUIViewController(context: Context) -> SessionBrowserController {
         SessionBrowserController()
@@ -401,7 +386,6 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.onOpen = onOpen
         controller.onToggleProject = onToggleProject
         controller.onNewSession = onNewSession
-        controller.onArchive = onArchive
         controller.bottomContentInset = bottomContentInset
         controller.refreshAction = context.environment.refresh
         controller.render(rows: rows, canArchive: canArchive, opensSessions: opensSessions)
@@ -414,7 +398,6 @@ private struct SessionBrowser: UIViewControllerRepresentable {
 
 /// UITableView swipe actions, matching FlowDown's conversation list.
 /// `completion(false)` closes the swipe and leaves the row's height alone.
-/// The confirmation is presented by this controller, not by rebuilding the list.
 private final class SessionBrowserController: UIViewController, UITableViewDelegate {
     var canEdit = false
     var canCopyURL = false
@@ -424,7 +407,6 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     var onOpen: ((SessionSummary.ID) -> Void)?
     var onToggleProject: ((String) -> Void)?
     var onNewSession: ((String) -> Void)?
-    var onArchive: ((SessionSummary) -> Void)?
     private var canArchive = false
     private var opensSessions = false
     var bottomContentInset: CGFloat = 0 {
@@ -531,7 +513,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         let action = UIContextualAction(style: .destructive, title: "Archive") { [weak self] _, _, completion in
             completion(false)
             Task { @MainActor in
-                self?.confirmArchive(session)
+                self?.onAction?(session, .archive)
             }
         }
         action.image = UIImage(systemName: "archivebox")
@@ -567,29 +549,6 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
             }
             return UIMenu(children: actions)
         }
-    }
-
-    private func confirmArchive(_ session: SessionSummary) {
-        guard presentedViewController == nil else { return }
-        let alert = UIAlertController(
-            title: "Archive \"\(session.title)\"?",
-            message: "This removes the task from the remote task list.",
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-        alert.addAction(UIAlertAction(title: "OK", style: .destructive) { [weak self] _ in
-            self?.onArchive?(session)
-        })
-        present(alert, animated: true) {
-            Self.identifyConfirmButton(in: alert.view)
-        }
-    }
-
-    private static func identifyConfirmButton(in view: UIView) {
-        if view.accessibilityLabel == "OK" {
-            view.accessibilityIdentifier = "archive-confirm"
-        }
-        view.subviews.forEach(identifyConfirmButton)
     }
 }
 

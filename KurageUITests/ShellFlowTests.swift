@@ -736,7 +736,7 @@ final class ShellFlowTests: XCTestCase {
 
         let alert = app.alerts.firstMatch
         XCTAssertTrue(alert.waitForExistence(timeout: 2))
-        XCTAssertTrue(alert.staticTexts["This removes the task from the remote task list."].exists)
+        XCTAssertTrue(alert.staticTexts["This archives the session and its child sessions."].exists)
         tap(alert.buttons["Cancel"])
         XCTAssertTrue(session.waitForExistence(timeout: 2))
 
@@ -1001,7 +1001,7 @@ extension ShellFlowTests {
         XCTAssertTrue(session.exists)
         session.press(forDuration: 1)
         tap(app.buttons["Archive"])
-        tap(app.alerts.buttons["Archive"])
+        tap(app.buttons.matching(identifier: "archive-confirm").firstMatch)
         XCTAssertTrue(session.waitForNonExistence(timeout: 5))
     }
 
@@ -1046,7 +1046,7 @@ extension ShellFlowTests {
         tap(app.buttons["Archive"])
         XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 3))
         attachScreen(app, name: "Conversation archive confirmation")
-        tap(app.alerts.buttons["Archive"])
+        tap(app.buttons.matching(identifier: "archive-confirm").firstMatch)
         XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 5))
         XCTAssertTrue(session.waitForNonExistence(timeout: 5))
     }
