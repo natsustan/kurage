@@ -1,4 +1,3 @@
-import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
@@ -70,6 +69,7 @@ export function conversationPatch(previous, next) {
         JSON.stringify(before.timing ?? null) !== JSON.stringify(turn.timing ?? null);
     }),
     permission: next.permission,
+    questions: next.questions ?? [],
     latestTurnNumber: next.latestTurnNumber,
     ...(!previous || (previous.subtasks !== next.subtasks &&
       JSON.stringify(previous.subtasks ?? []) !== JSON.stringify(next.subtasks ?? []))
@@ -106,8 +106,6 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let stopped = signal.aborted;
   let ready = false;
   let historyChanged = true;
-  let subtasksChanged = true;
-  let subtasks = [];
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -156,12 +154,6 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         }
         const projectedVersion = documentVersion(handle.doc);
         historyChanged = false;
-        if (subtasksChanged) {
-          subtasksChanged = false;
-          subtasks = projectSubtasks(sessionID, await repo.listDoc());
-          if (stopped) return;
-        }
-        next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
         // Unchanged cached history is still readable. Lody does not bind activity
         // markers to history versions (child activity can update the parent too).
@@ -202,7 +194,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
     });
     if (stopped) return;
-    const watch = repo.watch(() => { subtasksChanged = true; queue(); }, {
+    const watch = repo.watch(queue, {
+      docIds: [docID],
       kinds: ['doc-metadata', 'doc-existence-changed'],
     });
     own(() => watch.unsubscribe());

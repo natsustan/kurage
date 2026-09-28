@@ -69,6 +69,41 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         }
     }
 
+    func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: String,
+                         access: StreamsAccess) async throws -> [MentionSession] {
+        let operationID = UUID().uuidString
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageMentionSessions(workspaceID, baseURL, sessionID, projectID, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID ?? NSNull(), "projectID": projectID, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        return try JSONDecoder().decode(MentionSessionSnapshot.self, from: Data(json.utf8)).sessions
+    }
+
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, userID: String,
+                       workspaceID: String, access: StreamsAccess) async throws -> [MentionSkill] {
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageMentionSkills(workspaceID, baseURL, templateSessionID, agentConfigID, userID, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
+                            "userID": userID, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        return try JSONDecoder().decode(MentionSkillSnapshot.self, from: Data(json.utf8)).skills
+    }
+
     func conversation(
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID,
@@ -150,6 +185,25 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
             access: access,
             arguments: ["sessionID": sessionID]
         )
+    }
+
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
+        let encoded: Any = try answers.map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) } ?? NSNull()
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageRespondQuestion(workspaceID, sessionID, baseURL, turnID, requestID, answers, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "turnID": request.turnID, "requestID": request.requestID,
+                            "answers": encoded, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
     }
 
     func updateSessionMetadata(sessionID: String, workspaceID: String, access: StreamsAccess,
@@ -417,6 +471,14 @@ private struct SessionMetadata: Decodable {
 
 private struct SessionSnapshot: Decodable {
     let sessions: [SessionMetadata]
+}
+
+private struct MentionSessionSnapshot: Decodable {
+    let sessions: [MentionSession]
+}
+
+private struct MentionSkillSnapshot: Decodable {
+    let skills: [MentionSkill]
 }
 
 private struct ArchivedSessionItem: Decodable {

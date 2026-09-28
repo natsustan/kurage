@@ -10,6 +10,15 @@ final class HTTPLodyClient: LodyClient {
     let supportsSessionCancellation = true
     let supportsSessionArchiving = true
 
+    private struct QuestionKey: Hashable {
+        let generation: Int
+        let workspaceID: String
+        let sessionID: String
+        let requestID: String
+        let turnID: String
+    }
+    private var questionOperations: Set<QuestionKey> = []
+
     private struct SendKey: Hashable {
         let userID: String
         let workspaceID: String
@@ -379,6 +388,33 @@ final class HTTPLodyClient: LodyClient {
         return sessions
     }
 
+    func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.mentionSessions(projectID: projectID, excluding: sessionID,
+                                                      workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return result
+    }
+
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.mentionSkills(templateSessionID: templateSessionID, agentConfigID: agentConfigID,
+                                                    userID: userID, workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account?.id == userID else { throw LodyClientError.signedOut }
+        return result
+    }
+
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         try Task.checkCancellation()
         let generation = authenticationGeneration
@@ -723,6 +759,32 @@ final class HTTPLodyClient: LodyClient {
         guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
         if pendingStarts[key]?.sessionID == pending.sessionID { pendingStarts.removeValue(forKey: key) }
         return pending.sessionID
+    }
+
+    var supportsQuestionResponses: Bool { true }
+
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceID: String) async throws {
+        guard account != nil else { throw LodyClientError.signedOut }
+        let generation = authenticationGeneration
+        let key = QuestionKey(generation: generation, workspaceID: workspaceID, sessionID: sessionID,
+                              requestID: request.requestID, turnID: request.turnID)
+        guard questionOperations.insert(key).inserted else { throw LodyClientError.deliveryUnconfirmed }
+        defer { questionOperations.remove(key) }
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.respondToQuestion(request, answers: answers, sessionID: sessionID,
+                                                       workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        switch result {
+        case "answered": return
+        case "resolved", "unavailable": throw LodyClientError.permissionMissing
+        default: throw LodyClientError.deliveryUnconfirmed
+        }
     }
 
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws {

@@ -124,6 +124,7 @@ struct SessionComposer: View {
     }
 
     @Binding var draft: String
+    @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
@@ -141,10 +142,22 @@ struct SessionComposer: View {
     /// Blocks sending while prerequisites load, without blocking typing.
     var canSubmit = true
     var focusesOnAppear = false
+    var mentionSourceID = ""
+    var loadMentionSessions: (@MainActor () async throws -> [MentionSession])? = nil
+    var loadMentionSkills: (@MainActor () async throws -> [MentionSkill])? = nil
     let onSend: () -> Void
     let onCancel: () -> Void
     let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
+    @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 64
     @FocusState private var isFocused: Bool
+    @State private var selection: TextSelection?
+    @State private var mentionSessions: [MentionSession] = []
+    @State private var mentionSkills: [MentionSkill] = []
+    @State private var sessionsLoaded = false
+    @State private var skillsLoaded = false
+    @State private var mentionLoadFailed = false
+    @State private var mentionRetry = 0
+    @State private var loadedMentionSourceID = ""
     @State private var showsRunConfig = false
     @State private var showsAdvanced = false
     @State private var gaugeProgress: Double?
@@ -156,7 +169,13 @@ struct SessionComposer: View {
         Binding(
             get: { draft },
             set: { value in
-                if !isSending { draft = value }
+                guard !isSending else { return }
+                mentions.reconcile(draft)
+                let edit = mentions.edit(value)
+                draft = edit.text
+                if let caret = edit.caret {
+                    selection = TextSelection(insertionPoint: String.Index(utf16Offset: caret, in: edit.text))
+                }
             }
         )
     }
@@ -170,27 +189,44 @@ struct SessionComposer: View {
             !isLoadingAttachments && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
+    private var mentionQuery: ComposerMentionQuery? {
+        guard isFocused, let query = ComposerMentionQuery.active(in: draft, selection: selection) else { return nil }
+        let start = query.range.lowerBound.utf16Offset(in: draft)
+        let end = query.range.upperBound.utf16Offset(in: draft)
+        guard !mentions.ranges.contains(where: { $0.start < end && $0.end > start }) else { return nil }
+        return query
+    }
+
+    private var mentionLoadID: String {
+        "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentionRetry)"
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            if !attachments.isEmpty || isLoadingAttachments {
-                ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
+        VStack(spacing: 8) {
+            if let query = mentionQuery {
+                mentionMenu(query)
             }
-            TextField(placeholder, text: editableDraft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...5)
-                .fixedSize(horizontal: false, vertical: true)
-                .submitLabel(.send)
-                .focused($isFocused)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-                .accessibilityIdentifier(identifiers.field)
-            actionRow
-        }
+            VStack(spacing: 0) {
+                if !attachments.isEmpty || isLoadingAttachments {
+                    ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
+                }
+                TextField(placeholder, text: editableDraft, selection: $selection, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .submitLabel(.send)
+                    .focused($isFocused)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier(identifiers.field)
+                actionRow
+            }
             .padding(8)
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(identifiers.container)
+        }
             .alert("Attachment unavailable", isPresented: Binding(
                 get: { attachmentError != nil },
                 set: { if !$0 { attachmentError = nil } }
@@ -223,12 +259,137 @@ struct SessionComposer: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { showsRunConfig = false }
             }
+            .onChange(of: draft) { _, text in mentions.reconcile(text) }
+            .task(id: mentionLoadID) { await loadMentions() }
             .sheet(isPresented: $showsAdvanced, onDismiss: updateGauge) {
                 RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .onAppear { isFocused = false }
             }
+    }
+
+    private func loadMentions() async {
+        guard let query = mentionQuery else { return }
+        if loadedMentionSourceID != mentionSourceID {
+            mentionSessions = []
+            mentionSkills = []
+            sessionsLoaded = false
+            skillsLoaded = false
+            loadedMentionSourceID = mentionSourceID
+        }
+        mentionLoadFailed = false
+        if query.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
+            do {
+                let loaded = try await loadMentionSessions()
+                try Task.checkCancellation()
+                mentionSessions = loaded
+                sessionsLoaded = true
+            } catch is CancellationError { return }
+            catch { mentionLoadFailed = true }
+        }
+        if !skillsLoaded, let loadMentionSkills {
+            do {
+                let loaded = try await loadMentionSkills()
+                try Task.checkCancellation()
+                mentionSkills = loaded
+                skillsLoaded = true
+            } catch is CancellationError { return }
+            catch { mentionLoadFailed = true }
+        }
+    }
+
+    private func mentionMenu(_ query: ComposerMentionQuery) -> some View {
+        let term = query.term.lowercased()
+        let sessions = query.trigger == .combined ? mentionSessions.filter {
+            term.isEmpty || $0.title.localizedStandardContains(term)
+        }.prefix(25) : []
+        let skills = mentionSkills.filter {
+            term.isEmpty || $0.token.localizedStandardContains(term) ||
+                $0.name.localizedStandardContains(term) || $0.description.localizedStandardContains(term)
+        }.prefix(25)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(sessions) { session in
+                    Button { chooseSession(session, query: query) } label: {
+                        mentionRow(icon: "bubble.left.and.text.bubble.right", title: session.title,
+                                   subtitle: "Session", detail: nil)
+                    }
+                    .accessibilityIdentifier("mention-session-\(session.id)")
+                }
+                ForEach(skills) { skill in
+                    Button { chooseSkill(skill, query: query) } label: {
+                        mentionRow(icon: "sparkles", title: skill.name,
+                                   subtitle: "Skill", detail: skill.description)
+                    }
+                    .accessibilityIdentifier("mention-skill-\(skill.token)")
+                }
+                if mentionLoadFailed && (!sessions.isEmpty || !skills.isEmpty) {
+                    Button("Some suggestions unavailable. Retry") { mentionRetry += 1 }
+                        .padding(16)
+                        .accessibilityIdentifier("mention-retry")
+                }
+                if sessions.isEmpty && skills.isEmpty {
+                    if mentionLoadFailed {
+                        Button("Could not load suggestions. Retry") { mentionRetry += 1 }
+                            .padding(16)
+                            .accessibilityIdentifier("mention-retry")
+                    } else if !skillsLoaded || query.trigger == .combined && !sessionsLoaded {
+                        ProgressView("Loading suggestions")
+                            .padding(16)
+                    } else {
+                        Text("No matches")
+                            .foregroundStyle(.secondary)
+                            .padding(16)
+                    }
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        // Three rows at most; the rest remain reachable by scrolling. Keeping
+        // the viewport stable also avoids a loading/results height jump.
+        .frame(height: mentionRowHeight * 3)
+        .clipped()
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("mention-suggestions")
+    }
+
+    private func mentionRow(icon: String, title: String, subtitle: String, detail: String?) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 24)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.body).lineLimit(1)
+                if let detail, !detail.isEmpty {
+                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: mentionRowHeight)
+        .contentShape(Rectangle())
+    }
+
+    private func chooseSession(_ session: MentionSession, query: ComposerMentionQuery) {
+        let base = session.title.split(whereSeparator: \.isWhitespace).joined(separator: "-")
+        let slug = String((base.isEmpty ? session.id : base).prefix(40))
+        let token = "@\(slug)"
+        insertMention(token, kind: .session(id: session.id, title: session.title), query: query)
+    }
+
+    private func chooseSkill(_ skill: MentionSkill, query: ComposerMentionQuery) {
+        insertMention("$\(skill.token)", kind: .skill(token: skill.token, path: skill.path), query: query)
+    }
+
+    private func insertMention(_ token: String, kind: ComposerMentionState.Kind, query: ComposerMentionQuery) {
+        let (text, caretOffset) = mentions.insert(token, kind: kind, replacing: query.range, in: draft)
+        draft = text
+        selection = TextSelection(insertionPoint: String.Index(utf16Offset: caretOffset, in: text))
+        isFocused = true
     }
 
     private func updateGauge() {

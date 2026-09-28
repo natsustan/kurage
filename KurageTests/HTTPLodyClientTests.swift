@@ -1151,7 +1151,8 @@ struct StreamFetchHandlerTests {
         if case .success = await task.result { Issue.record("Cancelled options unexpectedly completed") }
     }
 
-    @Test(.timeLimit(.minutes(1))) func cancellingMetadataEditStopsTheNativeBridgeRequest() async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func cancellingSessionWriteStopsTheNativeBridgeRequest(question: Bool) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
         let requestBox = StreamingRequestBox()
@@ -1170,8 +1171,14 @@ struct StreamFetchHandlerTests {
         let bridge = SessionSyncBridge(session: session) { _, _ in access }
         defer { bridge.close() }
         let task = Task {
-            try await bridge.updateSessionMetadata(sessionID: "chat", workspaceID: "workspace",
-                                                   access: access, change: .pin(true))
+            if question {
+                let request = ConversationQuestionRequest(id: "question", turnID: "turn", requestID: "request",
+                                                          questions: [], answerOptionID: "answer", skipOptionID: "skip")
+                return try await bridge.respondToQuestion(request, answers: ["q": .text("test")], sessionID: "chat",
+                                                           workspaceID: "workspace", access: access)
+            }
+            return try await bridge.updateSessionMetadata(sessionID: "chat", workspaceID: "workspace",
+                                                          access: access, change: .pin(true))
         }
         var requests = started.makeAsyncIterator()
         _ = await requests.next()
@@ -1179,7 +1186,7 @@ struct StreamFetchHandlerTests {
         task.cancel()
         var cancellations = stopped.makeAsyncIterator()
         _ = await cancellations.next()
-        if case .success = await task.result { Issue.record("Cancelled metadata edit unexpectedly completed") }
+        if case .success = await task.result { Issue.record("Cancelled session write unexpectedly completed") }
     }
 
     @Test(.timeLimit(.minutes(1))) func forwardsPOSTBodyThroughNativeProxy() async throws {

@@ -13,6 +13,7 @@ const STEP_KINDS = {
 
 const isToolCall = item => item?.type === 'tool_call';
 
+// Tasks are projected separately into the agents panel, not inline prose.
 export function isHiddenAssistantItem(item) {
   return item?.type === 'subagent_task' || item?.type === 'available_commands' ||
     (isToolCall(item) && item.activityKind === 'codex_retry' &&

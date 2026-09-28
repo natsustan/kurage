@@ -32,6 +32,22 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
+struct MentionSession: Codable, Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let projectID: String?
+    let lastActivityAt: Double
+}
+
+struct MentionSkill: Codable, Identifiable, Equatable, Sendable {
+    let token: String
+    let name: String
+    let description: String
+    let path: String
+
+    var id: String { token }
+}
+
 struct ArchivedSessionSummary: Identifiable, Equatable, Sendable {
     let id: String
     var title: String
@@ -378,13 +394,19 @@ struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
 
 struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable {
     enum Status: String, Codable, Sendable {
-        case starting, running, waitingForInput, idle, archived
+        case pending, running = "in_progress", completed, failed
     }
 
     let id: String
     var title: String
     var agentName: String
     var status: Status
+    var summary: String? = nil
+    var error: String? = nil
+    var lastToolName: String? = nil
+    var modelID: String? = nil
+    var totalTokens: Int? = nil
+    var toolUses: Int? = nil
 }
 
 struct Conversation: Codable, Equatable, Sendable {
@@ -394,6 +416,7 @@ struct Conversation: Codable, Equatable, Sendable {
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var latestTurnNumber: Int? = nil
     var subtasks: [ConversationSubtask]? = nil
+    var questions: [ConversationQuestionRequest]? = nil
 
     var lastTurnNumber: Int {
         latestTurnNumber ?? max(1, turns.filter { $0.author == .user }.count,
@@ -597,6 +620,7 @@ struct ConversationPatch: Decodable {
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var latestTurnNumber: Int? = nil
     var subtasks: [ConversationSubtask]? = nil
+    var questions: [ConversationQuestionRequest]? = nil
     let activity: String
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
@@ -617,7 +641,8 @@ struct ConversationPatch: Decodable {
             conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission,
                                        fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges,
                                        latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
-                                       subtasks: replacesSubtasks == true ? subtasks : previous.subtasks),
+                                       subtasks: replacesSubtasks == true ? subtasks : previous.subtasks,
+                                       questions: questions),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt
         )

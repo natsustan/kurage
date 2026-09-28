@@ -2,6 +2,156 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testLongMentionMenusStayAboveKeyboard() {
+        verifyLongMentionMenu(newSession: false)
+    }
+
+    @MainActor
+    func testNewSessionLongMentionMenusStayAboveKeyboard() {
+        verifyLongMentionMenu(newSession: true)
+    }
+
+    @MainActor
+    private func verifyLongMentionMenu(newSession: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        if newSession {
+            tap(app.buttons["new-session-local:machine-1:prism"])
+        } else {
+            tap(app.descendants(matching: .any)["session-session-long"])
+        }
+        let field = app.descendants(matching: .any)[newSession ? "new-session-field" : "follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("$")
+        let menu = app.scrollViews["mention-suggestions"]
+        XCTAssertTrue(app.buttons["mention-skill-review-and-simplify-changes"].waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: newSession)
+        attachScreen(app, name: "Long skills menu top \(newSession ? "new" : "existing")")
+        let first = app.buttons["mention-skill-review-and-simplify-changes"]
+        XCTAssertTrue(first.isHittable)
+        tap(first)
+        XCTAssertTrue((field.value as? String)?.contains("$review-and-simplify-changes") == true)
+        field.typeText(" $")
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        let last = app.buttons["mention-skill-sample-skill-12"]
+        for _ in 0..<10 {
+            if last.isHittable && last.frame.maxY <= menu.frame.maxY { break }
+            menu.swipeUp()
+        }
+        XCTAssertTrue(last.isHittable)
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: newSession)
+        attachScreen(app, name: "Long skills menu bottom \(newSession ? "new" : "existing")")
+        tap(last)
+        field.typeText(" @")
+        XCTAssertTrue(app.buttons[newSession ? "mention-session-session-pr" : "mention-session-session-tests"].waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: newSession)
+        attachScreen(app, name: "Combined mentions menu \(newSession ? "new" : "existing")")
+        for _ in 0..<10 {
+            if last.isHittable && last.frame.maxY <= menu.frame.maxY { break }
+            menu.swipeUp()
+        }
+        XCTAssertTrue(last.isHittable)
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: newSession)
+        attachScreen(app, name: "Combined mentions bottom \(newSession ? "new" : "existing")")
+    }
+
+    @MainActor
+    private func assertMentionMenuGeometry(_ app: XCUIApplication, field: XCUIElement,
+                                           menu: XCUIElement, newSession: Bool,
+                                           file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(menu.waitForExistence(timeout: 5), file: file, line: line)
+        let send = app.buttons[newSession ? "new-session-send" : "send-follow-up"]
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(field.isHittable, file: file, line: line)
+        XCTAssertTrue(send.isHittable, file: file, line: line)
+        XCTAssertGreaterThan(menu.frame.height, 0, file: file, line: line)
+        let row = menu.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
+                                                     "mention-skill-", "mention-session-")).firstMatch
+        XCTAssertGreaterThan(row.frame.height, 0, file: file, line: line)
+        XCTAssertLessThanOrEqual(menu.frame.height, row.frame.height * 3 + 0.5, file: file, line: line)
+        XCTAssertLessThanOrEqual(menu.frame.maxY, field.frame.minY, file: file, line: line)
+        XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY, file: file, line: line)
+        XCTAssertLessThanOrEqual(send.frame.maxY, keyboard.frame.minY, file: file, line: line)
+    }
+
+    @MainActor
+    func testSelectedMentionsDeleteAsWholeTokens() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        for (query, candidate) in [("$review", "mention-skill-review-and-simplify-changes"),
+                                    ("@fix", "mention-session-session-tests")] {
+            field.typeText(query)
+            let suggestion = app.buttons[candidate]
+            XCTAssertTrue(suggestion.waitForExistence(timeout: 5))
+            tap(suggestion)
+            field.typeText(XCUIKeyboardKey.delete.rawValue + XCUIKeyboardKey.delete.rawValue)
+            let empty = NSPredicate(format: "value == %@ OR value == %@", "", "Send a follow-up")
+            expectation(for: empty, evaluatedWith: field)
+            waitForExpectations(timeout: 3)
+            XCTAssertFalse(app.buttons["send-follow-up"].isEnabled)
+        }
+        field.typeText("Still editable")
+        XCTAssertEqual(field.value as? String, "Still editable")
+    }
+
+    @MainActor
+    func testComposerSkillAndCurrentProjectSessionMentions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("$review")
+        let skill = app.buttons["mention-skill-review-and-simplify-changes"]
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["mention-session-session-pr"].exists)
+        tap(skill)
+        XCTAssertTrue((field.value as? String)?.contains("$review-and-simplify-changes") == true)
+
+        field.typeText(" @fix")
+        let session = app.buttons["mention-session-session-tests"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+        XCTAssertTrue((field.value as? String)?.contains("@fix-flaky-tests") == true)
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "session://session-tests"))
+            .firstMatch.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testNewSessionComposerOffersProjectMentions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("$review")
+        let skill = app.buttons["mention-skill-review-and-simplify-changes"]
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        tap(skill)
+        field.typeText(" @review")
+        let session = app.buttons["mention-session-session-pr"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["mention-session-session-tests"].exists)
+        tap(session)
+        XCTAssertTrue((field.value as? String)?.contains("@review-the-PR") == true)
+    }
+
+    @MainActor
     func testConversationRetryDoesNotShowEmptyState() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-search-failure", "--fixture-slow-conversation"]
@@ -59,7 +209,7 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "Subtasks with states")
         tap(reuse)
         XCTAssertTrue(app.staticTexts["Reuse review finished."].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Read-only conversation"].exists)
+        XCTAssertTrue(app.staticTexts["Completed"].exists)
         let child = app.descendants(matching: .any)["subtask-transcript"]
         XCTAssertTrue(child.waitForExistence(timeout: 5))
         XCTAssertFalse(child.buttons["send-follow-up"].exists)
@@ -589,7 +739,7 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testKeyboardAndMultilineComposerKeepLatestMessageVisible() {
+    func testKeyboardAndMultilineComposerKeepLatestMessageVisible() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
         app.launch()
@@ -626,6 +776,8 @@ final class ShellFlowTests: XCTestCase {
         let sent = app.staticTexts["First line\nSecond line\nThird line\nFourth line\nFifth line"]
         XCTAssertTrue(sent.waitForExistence(timeout: 5))
         XCTAssertTrue(sent.wait(for: \.frame.isEmpty, toEqual: false, timeout: 5))
+        try XCTSkipIf(!app.frame.intersects(app.keyboards.firstMatch.frame),
+                      "The simulator software keyboard is offscreen; keyboard visibility needs device verification.")
         XCTAssertTrue(app.keyboards.firstMatch.wait(for: \.isHittable, toEqual: true, timeout: 5))
         XCTAssertGreaterThan(sent.frame.height, 70)
         XCTAssertGreaterThan(sent.frame.minY, app.navigationBars.firstMatch.frame.maxY)
@@ -1175,5 +1327,64 @@ extension ShellFlowTests {
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count))
         field.typeText(title)
         XCTAssertEqual(field.value as? String, title)
+    }
+}
+
+extension ShellFlowTests {
+    @MainActor
+    func testQuestionAnswersPreserveDraftsAndSubmit() {
+        let app = openQuestionFixture()
+        let card = app.descendants(matching: .any)["question-card"].firstMatch
+        let reply = app.descendants(matching: .any)["question-reply"].firstMatch
+        let next = app.buttons["question-next"]
+        XCTAssertFalse(next.isEnabled)
+        attachScreen(app, name: "Question first page")
+        tap(reply)
+        reply.typeText("Review the question demo session")
+        XCTAssertTrue(next.isEnabled)
+        XCTAssertTrue(next.isHittable)
+        attachScreen(app, name: "Question focused draft")
+        tap(next)
+        let codeDiff = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Code diff")).firstMatch
+        XCTAssertTrue(codeDiff.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["question-send"].isEnabled)
+        tap(codeDiff)
+        XCTAssertTrue(codeDiff.isSelected)
+        XCTAssertTrue(app.buttons["question-send"].isEnabled)
+        attachScreen(app, name: "Question selected choice")
+        tap(app.buttons["question-previous"])
+        XCTAssertEqual(reply.value as? String, "Review the question demo session")
+        tap(next)
+        XCTAssertTrue(codeDiff.isSelected)
+        tap(app.buttons["question-send"])
+        XCTAssertTrue(card.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Answer received."].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Question answer delivered")
+    }
+
+    @MainActor
+    func testQuestionSkipAndCloseResolveRequest() {
+        for action in ["question-skip", "question-close"] {
+            let app = openQuestionFixture()
+            tap(app.buttons[action])
+            XCTAssertTrue(app.descendants(matching: .any)["question-card"].firstMatch.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Question skipped."].waitForExistence(timeout: 5))
+            attachScreen(app, name: "Question resolved by \(action)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    private func openQuestionFixture() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-questions"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-question"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+        XCTAssertTrue(app.descendants(matching: .any)["question-card"].firstMatch.waitForExistence(timeout: 5))
+        return app
     }
 }

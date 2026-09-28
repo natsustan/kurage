@@ -11,6 +11,9 @@ importers:
       '@loro-dev/flock-wasm':
         specifier: 0.4.3
         version: 0.4.3
+      '@loro-dev/streams-client':
+        specifier: 0.7.0
+        version: 0.7.0
       '@loro-dev/streams-crdt':
         specifier: 0.15.1
         version: 0.15.1(@loro-dev/flock-wasm@0.4.3)(loro-crdt@1.15.1)

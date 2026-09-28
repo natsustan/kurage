@@ -54,6 +54,7 @@ struct NewSessionView: View {
     @State private var configuration = NewSessionConfiguration()
     @State private var request = LoadRequest()
     @State private var draft = ""
+    @State private var mentions = ComposerMentionState()
     @State private var attachments: [ComposerAttachment] = []
     @State private var isStarting = false
     @State private var banner: String?
@@ -92,7 +93,8 @@ struct NewSessionView: View {
         .safeAreaInset(edge: .bottom) {
             if pendingStart == nil {
                 SessionComposer(
-                    draft: $draft, attachments: $attachments, isSending: isStarting, isCancelling: false, isSessionRunning: false,
+                    draft: $draft, mentions: $mentions, attachments: $attachments,
+                    isSending: isStarting, isCancelling: false, isSessionRunning: false,
                     supportsTextSending: true, supportsTextSendingWhileRunning: false,
                     supportsSessionCancellation: false,
                     runConfig: configuration.menu,
@@ -101,6 +103,12 @@ struct NewSessionView: View {
                                        send: "new-session-send"),
                     canSubmit: isCurrentWorkspace && pendingStart == nil && options != nil && !isLoading && !loadFailed,
                     focusesOnAppear: true,
+                    mentionSourceID: "\(route.workspaceGeneration):\(route.templateSessionID):\(options?.agentConfigID ?? "")",
+                    loadMentionSessions: { try await model.mentionSessions(projectID: route.projectID) },
+                    loadMentionSkills: {
+                        try await model.mentionSkills(templateSessionID: route.templateSessionID,
+                                                      agentConfigID: options?.agentConfigID)
+                    },
                     onSend: start, onCancel: {}, onChooseRunConfig: choose
                 )
                 .padding(.horizontal, 18)
@@ -185,7 +193,7 @@ struct NewSessionView: View {
     private func start() {
         guard isCurrentWorkspace, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
-        let text = draft
+        let text = mentions.expanded(draft)
         let sentAttachments = attachments
         let selections = runConfig?.selections ?? []
         performStart {
@@ -215,6 +223,7 @@ struct NewSessionView: View {
                 banner = "The session was not created. Review the refreshed agent settings and try again."
             } catch LodyClientError.previousSendPending(let previousText) {
                 draft = previousText
+                mentions.clear()
                 banner = "An earlier start is unconfirmed. Use Retry earlier start to resume it."
             } catch is CancellationError {
                 return

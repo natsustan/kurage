@@ -27,7 +27,7 @@ struct ConversationSubtasksButton: View {
             }
             .presentationCompactAdaptation(.popover)
             .onDisappear {
-                // Present the transcript after the task picker has dismissed.
+                // Present the task details after the task picker has dismissed.
                 if let selection = pendingSelection {
                     pendingSelection = nil
                     onOpen(selection)
@@ -49,7 +49,7 @@ private struct ConversationSubtasksPopover: View {
     @State private var contentHeight: CGFloat = 240
 
     private var groups: [(status: ConversationSubtask.Status, tasks: [ConversationSubtask])] {
-        [ConversationSubtask.Status.starting, .running, .waitingForInput, .idle, .archived].compactMap { status in
+        [ConversationSubtask.Status.running, .pending, .failed, .completed].compactMap { status in
             let tasks = subtasks.filter { $0.status == status }
             return tasks.isEmpty ? nil : (status, tasks)
         }
@@ -111,13 +111,33 @@ private struct ConversationSubtasksPopover: View {
 }
 
 struct ConversationSubtaskSheet: View {
-    let subtask: ConversationSubtask
-    let model: AppModel
+    let subtask: ConversationSubtask?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            ConversationView(sessionID: subtask.id, title: subtask.title, model: model, isReadOnly: true)
+            ScrollView {
+                if let subtask {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(subtask.title).font(.headline)
+                        Label(subtask.status.label, systemImage: "circle.fill")
+                            .foregroundStyle(subtask.status.color)
+                        Text(subtask.agentName).foregroundStyle(.secondary)
+                        if let summary = subtask.summary { Text(summary).textSelection(.enabled) }
+                        if let error = subtask.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+                        if let tool = subtask.lastToolName { Text("Latest tool: \(tool)") }
+                        if let model = subtask.modelID { Text("Model: \(model)") }
+                        if let tokens = subtask.totalTokens { Text("\(tokens) tokens") }
+                        if let tools = subtask.toolUses { Text("\(tools) tool uses") }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                } else {
+                    ContentUnavailableView("Task unavailable", systemImage: "person.crop.circle.badge.questionmark")
+                }
+            }
+                .navigationTitle("Agent task")
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Close", systemImage: "xmark") { dismiss() }
@@ -136,19 +156,18 @@ struct ConversationSubtaskSheet: View {
 private extension ConversationSubtask.Status {
     var label: LocalizedStringKey {
         switch self {
-        case .starting: "Starting"
+        case .pending: "Pending"
         case .running: "Running"
-        case .waitingForInput: "Waiting for input"
-        case .idle: "Idle"
-        case .archived: "Archived"
+        case .completed: "Completed"
+        case .failed: "Failed"
         }
     }
 
     var color: Color {
         switch self {
-        case .starting, .running: .green
-        case .waitingForInput: .orange
-        case .idle, .archived: .secondary
+        case .pending: .secondary
+        case .running, .completed: .green
+        case .failed: .red
         }
     }
 }
