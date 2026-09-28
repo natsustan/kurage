@@ -86,6 +86,7 @@ final class ShellFlowTests: XCTestCase {
         tap(app.descendants(matching: .any)["session-session-long"])
         let hud = app.buttons["conversation-changes-hud"]
         XCTAssertTrue(hud.waitForExistence(timeout: 5))
+        XCTAssertTrue(hud.label.contains("2 files changed"))
         let turnToggle = app.buttons["turn-changes-toggle-long-agent-20"]
         XCTAssertTrue(turnToggle.waitForExistence(timeout: 5))
         XCTAssertEqual(turnToggle.value as? String, "Expanded")
@@ -110,14 +111,14 @@ final class ShellFlowTests: XCTestCase {
         tap(hud)
         let scope = app.buttons["file-changes-title"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        XCTAssertEqual(scope.label, "Last turn")
-        tap(scope)
-        tap(app.buttons["All turns"])
-        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
+        XCTAssertEqual(scope.label, "All turns")
         XCTAssertTrue(app.staticTexts["Turn 20"].exists)
         tap(scope)
         tap(app.buttons["Last turn"])
         XCTAssertTrue(scope.wait(for: \.label, toEqual: "Last turn", timeout: 5))
+        tap(scope)
+        tap(app.buttons["All turns"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
         let resize = app.buttons["resize-file-changes"]
         let expandedHeaderY = scope.frame.minY
         tap(resize)
@@ -289,7 +290,7 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testLatestTurnWithoutChangesShowsEmptyScope() {
+    func testLatestTurnWithoutChangesCanShowEmptyScope() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
         app.launch()
@@ -301,9 +302,14 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["send-follow-up"])
         XCTAssertTrue(app.buttons["send-follow-up"].wait(for: \.label, toEqual: "Send", timeout: 5))
         tap(app.buttons["conversation-changes-hud"])
+        let scope = app.buttons["file-changes-title"]
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
+        XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
+        tap(scope)
+        tap(app.buttons["Last turn"])
         XCTAssertTrue(app.staticTexts["No recorded changes"].waitForExistence(timeout: 5))
         attachScreen(app, name: "Latest turn has no changes")
-        tap(app.buttons["file-changes-title"])
+        tap(scope)
         tap(app.buttons["All turns"])
         XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
     }

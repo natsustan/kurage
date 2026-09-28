@@ -27,8 +27,22 @@ struct ConversationChangesHUD: View {
 
     @ViewBuilder
     private var fileCount: some View {
-        if compact { Text("\(summary.count) files") }
-        else { Label("\(summary.count) files changed", systemImage: "doc.text") }
+        FileChangeCountText(count: summary.count, compact: compact)
+    }
+}
+
+private struct FileChangeCountText: View {
+    let count: Int
+    var compact = false
+
+    var body: some View {
+        if compact {
+            if count == 1 { Text("1 file") }
+            else { Text("\(count) files") }
+        } else {
+            if count == 1 { Text("1 file changed") }
+            else { Text("\(count) files changed") }
+        }
     }
 }
 
@@ -61,7 +75,14 @@ struct ConversationChangesView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var detent: PresentationDetent = .large
-    @State private var showsAllTurns = false
+    @State private var showsAllTurns: Bool
+
+    init(groups: [ConversationFileChangeGroup], latestTurnNumber: Int, initialTurnNumber: Int? = nil) {
+        self.groups = groups
+        self.latestTurnNumber = latestTurnNumber
+        self.initialTurnNumber = initialTurnNumber
+        _showsAllTurns = State(initialValue: initialTurnNumber == nil)
+    }
 
     private var visibleGroups: [ConversationFileChangeGroup] {
         showsAllTurns ? groups : groups.filter { $0.turnNumber == (initialTurnNumber ?? latestTurnNumber) }
@@ -376,7 +397,7 @@ struct TurnFileChangesCard: View {
             } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
-                        Text("\(group.files.count) files changed").fontWeight(.medium)
+                        FileChangeCountText(count: group.files.count).fontWeight(.medium)
                         counts
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
@@ -388,7 +409,7 @@ struct TurnFileChangesCard: View {
                     }
                     HStack(spacing: 8) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("\(group.files.count) files changed").fontWeight(.medium)
+                            FileChangeCountText(count: group.files.count).fontWeight(.medium)
                             counts
                         }
                         Spacer(minLength: 0)
