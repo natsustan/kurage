@@ -138,6 +138,7 @@ struct FixtureLodyClientTests {
         let json = """
         {"sessionID":"s","order":[],"changed":[],"permission":null,"activity":"idle","syncState":"live",
          "contextWindowUsage":{"size":258000,"used":217000},
+         "lastMessageAt":123456,
          "runConfig":{"model":{"value":"flash","label":"Flash"},"reasoning":null,
            "editable":{"kind":"model","configOptionID":"model","options":[{"value":"flash","label":"Flash"}]}}}
         """
@@ -146,6 +147,7 @@ struct FixtureLodyClientTests {
         #expect(update.runConfig?.model?.label == "Flash")
         #expect(update.runConfig?.reasoning == nil)
         #expect(update.runConfig?.choosing("flash") == RunConfigChoice(configOptionID: "model", value: "flash"))
+        #expect(update.lastMessageAt == 123456)
         #expect(update.contextWindowUsage?.used == 217_000)
         #expect(update.contextWindowUsage?.size == 258_000)
         #expect(update.contextWindowUsage?.usedFraction == 217.0 / 258.0)
@@ -418,6 +420,111 @@ struct AppModelSessionRefreshTests {
         #expect(!model.isRefreshingSessions)
     }
 
+    @Test func receiptRestartsInterruptedRefreshAndRejectsItsStaleResult() async throws {
+        let client = DeferredSessionClient()
+        var old = Self.session("old")
+        old.lastMessageAt = 100
+        client.cachedSession = SessionCache(account: client.account!, workspaces: [
+            WorkspaceSummary(id: "ws-a", name: "A", slug: "a")
+        ], selectedWorkspaceID: "ws-a", sessionsByWorkspace: ["ws-a": [old]])
+        let model = AppModel(client: client)
+        var requests = client.started.makeAsyncIterator()
+        let initial = Task { await model.refreshSessions() }
+        #expect(await requests.next() == "ws-a")
+        let receipt = Task {
+            try await model.markSessionRead(sessionID: "old", lastMessageAt: 100,
+                                            workspaceGeneration: model.workspaceGeneration)
+        }
+        #expect(await requests.next() == "ws-a")
+        #expect(model.sessions.first?.lastReadAt == 100)
+        client.finishNext("ws-a", with: [Self.session("stale")])
+        await initial.value
+        #expect(model.sessions.map(\.id) == ["old"])
+        #expect(model.isRefreshingSessions)
+        old.lastReadAt = 100
+        client.finishNext("ws-a", with: [Self.session("new"), old])
+        try await receipt.value
+        #expect(model.sessions.map(\.id) == ["new", "old"])
+        #expect(model.sessions.last?.lastReadAt == 100)
+        #expect(!model.isRefreshingSessions)
+        try await model.markSessionRead(sessionID: "old", lastMessageAt: 200,
+                                        workspaceGeneration: model.workspaceGeneration)
+        #expect(client.requestedWorkspaceIDs == ["ws-a", "ws-a"])
+    }
+
+    @Test func streamedActivityReordersRecentProjectsAndCache() async throws {
+        let client = DeferredSessionClient()
+        var recent = Self.session("recent")
+        recent.lastActivityAt = 400
+        recent.projectID = "project-a"
+        var middle = Self.session("middle")
+        middle.lastMessageAt = 200
+        middle.projectID = "project-c"
+        var old = Self.session("old")
+        old.lastMessageAt = 100
+        old.projectID = "project-b"
+        client.cachedSession = SessionCache(account: client.account!, workspaces: [
+            WorkspaceSummary(id: "ws-a", name: "A", slug: "a")
+        ], selectedWorkspaceID: "ws-a", sessionsByWorkspace: ["ws-a": [recent, middle, old]])
+        let model = AppModel(client: client)
+        var subscriptions = client.observationsStarted.makeAsyncIterator()
+        let observing = Task { try await model.observeConversation(sessionID: "old") { _ in } }
+        #expect(await subscriptions.next() == "ws-a")
+        client.observation?.yield(ConversationUpdate(
+            conversation: Conversation(sessionID: "old", turns: [], permission: nil),
+            activity: .idle, syncState: .live, lastMessageAt: 300))
+        client.observation?.finish()
+        try await observing.value
+        #expect(model.sessions.map(\.id) == ["recent", "old", "middle"])
+        #expect(SessionProjectGroup.make(from: model.sessions).map(\.id) == ["project-a", "project-b", "project-c"])
+        #expect(client.cachedSession?.sessionsByWorkspace["ws-a"] == model.sessions)
+    }
+
+    @Test func messageTimeNeverRegressesAcrossRefreshAndObservation() async throws {
+        let client = DeferredSessionClient()
+        var session = Self.session("chat")
+        session.lastMessageAt = 100
+        client.cachedSession = SessionCache(account: client.account!, workspaces: [
+            WorkspaceSummary(id: "ws-a", name: "A", slug: "a")
+        ], selectedWorkspaceID: "ws-a", sessionsByWorkspace: ["ws-a": [session]])
+        let model = AppModel(client: client)
+        var requests = client.started.makeAsyncIterator()
+        let refreshing = Task { await model.refreshSessions() }
+        #expect(await requests.next() == "ws-a")
+        var subscriptions = client.observationsStarted.makeAsyncIterator()
+        let (received, signal) = AsyncStream<Void>.makeStream()
+        var updates = received.makeAsyncIterator()
+        let observing = Task { try await model.observeConversation(sessionID: "chat") { _ in signal.yield(()) } }
+        #expect(await subscriptions.next() == "ws-a")
+        func publish(_ timestamp: Double) {
+            client.observation?.yield(ConversationUpdate(
+                conversation: Conversation(sessionID: "chat", turns: [], permission: nil),
+                activity: .idle, syncState: .live, lastMessageAt: timestamp))
+        }
+        publish(300)
+        _ = await updates.next()
+        session.lastMessageAt = 200
+        session.title = "Fresh title"
+        var other = Self.session("other")
+        other.lastMessageAt = 250
+        client.finishNext("ws-a", with: [other, session])
+        await refreshing.value
+        #expect(model.sessions.map(\.id) == ["chat", "other"])
+        #expect(model.sessions.first?.lastMessageAt == 300)
+        #expect(model.sessions.first?.title == "Fresh title")
+        for timestamp in [200.0, Double.nan, Double.infinity] {
+            publish(timestamp)
+            _ = await updates.next()
+            #expect(model.sessions.first?.lastMessageAt == 300)
+        }
+        try await model.markSessionRead(sessionID: "chat", lastMessageAt: 200,
+                                        workspaceGeneration: model.workspaceGeneration)
+        #expect(model.sessions.first?.isUnread == true)
+        #expect(client.cachedSession?.sessionsByWorkspace["ws-a"]?.first?.lastMessageAt == 300)
+        client.observation?.finish()
+        try await observing.value
+    }
+
     @Test func workspaceFailureSurvivesSuccessfulSessionRefresh() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)
@@ -449,6 +556,13 @@ struct AppModelSessionRefreshTests {
 @MainActor
 private final class DeferredSessionClient: LodyClient {
     private(set) var account: Account? = Account(email: "demo@example.com")
+    var cachedSession: SessionCache?
+    func saveSessionCache(_ cache: SessionCache) { cachedSession = cache }
+    var supportsSessionMetadataEditing: Bool { true }
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws {}
+    func finishNext(_ workspaceID: String, with sessions: [SessionSummary]) {
+        pending[workspaceID]?.removeFirst().resume(returning: sessions)
+    }
     var workspaceError: LodyClientError?
     private(set) var requestedWorkspaceIDs: [String] = []
     private var pending: [String: [CheckedContinuation<[SessionSummary], Error>]] = [:]

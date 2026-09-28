@@ -95,6 +95,72 @@ struct ConversationLayoutTests {
         expectAtBottom(table)
     }
 
+    @Test func receiptsWaitForLayoutAndResumeOnlyAfterReturningToBottom() async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var receipts: [Double?] = []
+        controller.onBottomMessage = { receipts.append($0) }
+        var turns = sampleTurns()
+        controller.update(turns: turns, isLoading: false, scrollRequestID: 0, messageTimestamp: 100,
+                          footer: TestFooter(), onRefresh: {})
+        #expect(receipts.isEmpty)
+        await settle(controller)
+        #expect(receipts.last == .some(100))
+        let table = try transcript(in: controller.view)
+        controller.scrollViewWillBeginDragging(table)
+        table.contentOffset.y = 100
+        controller.scrollViewDidEndDragging(table, willDecelerate: false)
+        await settle(controller)
+        #expect(receipts.last == .some(nil))
+        turns.append(ConversationTurn(id: "new", author: .agent, text: "New output"))
+        controller.update(turns: turns, isLoading: false, scrollRequestID: 0, messageTimestamp: 200,
+                          footer: TestFooter(), onRefresh: {})
+        controller.view.frame.size.height = 450
+        await settle(controller)
+        #expect(!receipts.contains(.some(200)))
+        controller.scrollViewWillBeginDragging(table)
+        table.contentOffset.y = max(-table.contentInset.top,
+            table.contentSize.height + table.contentInset.bottom - table.bounds.height)
+        controller.scrollViewDidEndDragging(table, willDecelerate: true)
+        await settle(controller)
+        #expect(!receipts.contains(.some(200)))
+        // Self-sizing can revise the bottom while decelerating; simulate the
+        // gesture reaching the final measured offset before it ends.
+        table.contentOffset.y = max(-table.contentInset.top,
+            table.contentSize.height + table.contentInset.bottom - table.bounds.height)
+        controller.scrollViewDidEndDecelerating(table)
+        await settle(controller)
+        #expect(receipts.last == .some(200))
+        expectAtBottom(table)
+        controller.view.frame.size.height = 700
+        await settle(controller)
+        #expect(receipts.last == .some(200))
+    }
+
+    @Test func queuedBottomNotificationCannotAcknowledgeNewContentWhileDragging() async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var receipts: [Double?] = []
+        controller.onBottomMessage = { receipts.append($0) }
+        controller.update(turns: sampleTurns(), isLoading: false, scrollRequestID: 0, messageTimestamp: 100,
+                          footer: TestFooter(), onRefresh: {})
+        controller.view.layoutIfNeeded()
+        let table = try transcript(in: controller.view)
+        controller.scrollViewWillBeginDragging(table)
+        await settle(controller)
+        #expect(receipts.isEmpty)
+    }
+
+    private func settle(_ controller: ConversationLayoutController<TestFooter>) async {
+        for _ in 0..<3 {
+            controller.view.setNeedsLayout()
+            controller.view.layoutIfNeeded()
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { continuation.resume() }
+            }
+        }
+    }
+
     private func makeController() throws -> (ConversationLayoutController<TestFooter>, UIWindow) {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let controller = ConversationLayoutController(footer: TestFooter())

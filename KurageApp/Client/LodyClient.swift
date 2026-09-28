@@ -3,6 +3,7 @@ import Foundation
 enum SessionMetadataChange: Sendable {
     case pin(Bool)
     case rename(String)
+    case read(Double)
 }
 
 /// A process-local creation that must resume its existing session and first turn.

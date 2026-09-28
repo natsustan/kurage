@@ -114,7 +114,8 @@ final class FixtureLodyClient: LodyClient {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
         let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
                                         runConfig: try record(sessionID).runConfig,
-                                        contextWindowUsage: try record(sessionID).contextWindowUsage)
+                                        contextWindowUsage: try record(sessionID).contextWindowUsage,
+                                        lastMessageAt: try record(sessionID).summary.lastMessageAt)
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
             continuation.finish()
@@ -325,6 +326,8 @@ final class FixtureLodyClient: LodyClient {
         switch change {
         case .pin(let value): records[index].summary.isPinned = value
         case .rename(let title): records[index].summary.title = title
+        case .read(let timestamp):
+            records[index].summary.lastReadAt = max(records[index].summary.lastReadAt ?? timestamp, timestamp)
         }
     }
 
@@ -522,7 +525,9 @@ extension SessionRecord {
                 preview: "Latest reply in long conversation",
                 projectID: "local:machine-1:kurage",
                 projectName: "kurage",
-                machineName: "spike@mac"
+                machineName: "spike@mac",
+                lastMessageAt: 1_000,
+                lastReadAt: 900
             ),
             turns: (1...20).flatMap { number in
                 [

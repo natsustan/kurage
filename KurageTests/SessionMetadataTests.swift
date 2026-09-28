@@ -4,6 +4,37 @@ import Testing
 
 @MainActor
 struct SessionMetadataTests {
+    @Test func unreadComparisonAndOldCache() throws {
+        let data = Data(#"{"id":"old","title":"Old","agentName":"codex","activity":"idle","preview":""}"#.utf8)
+        var session = try JSONDecoder().decode(SessionSummary.self, from: data)
+        #expect(!session.isUnread)
+        session.lastMessageAt = 100
+        #expect(session.isUnread)
+        session.lastReadAt = 99
+        #expect(session.isUnread)
+        session.lastReadAt = 100
+        #expect(!session.isUnread)
+        session.lastReadAt = 101
+        #expect(!session.isUnread)
+    }
+
+    @Test func readReceiptPersistsWithoutMarkingNewerMessagesRead() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        #expect(model.sessions.first { $0.id == "session-long" }?.isUnread == true)
+        let generation = model.workspaceGeneration
+        try await model.markSessionRead(sessionID: "session-long", lastMessageAt: 950, workspaceGeneration: generation)
+        #expect(model.sessions.first { $0.id == "session-long" }?.isUnread == true)
+        try await model.markSessionRead(sessionID: "session-long", lastMessageAt: 1_000, workspaceGeneration: generation)
+        await model.refreshSessions()
+        #expect(model.sessions.first { $0.id == "session-long" }?.isUnread == false)
+        await #expect(throws: CancellationError.self) {
+            try await model.markSessionRead(sessionID: "session-long", lastMessageAt: 2_000, workspaceGeneration: generation - 1)
+        }
+        #expect(model.sessions.first { $0.id == "session-long" }?.lastReadAt == 1_000)
+    }
+
     @Test func metadataEditsPersistAcrossRefreshAndPreserveConversation() async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
         let model = AppModel(client: client)

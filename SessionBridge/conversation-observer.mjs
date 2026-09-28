@@ -3,6 +3,61 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
 
+// Evidence survives document unloads, but never outlives its workspace repo.
+// Keep only one compact version per session, never the search transcripts.
+const syncedReceipts = new WeakMap();
+const receiptKey = (workspaceID, sessionID) => JSON.stringify([workspaceID, sessionID]);
+const documentVersion = doc => Array.from(doc.version().encode()).join(',');
+
+function confirmedMarker(repo, workspaceID, sessionID, version) {
+  const receipt = syncedReceipts.get(repo)?.get(receiptKey(workspaceID, sessionID));
+  return receipt?.version === version ? receipt.timestamp : null;
+}
+
+function rememberMarker(repo, workspaceID, sessionID, version, timestamp) {
+  let receipts = syncedReceipts.get(repo);
+  if (!receipts) syncedReceipts.set(repo, receipts = new Map());
+  const key = receiptKey(workspaceID, sessionID);
+  receipts.set(key, { version, timestamp });
+}
+
+const messageTimestamp = metadata => Number.isFinite(metadata?.meta?.lastMessageAt)
+  ? metadata.meta.lastMessageAt : null;
+
+// Metadata and history travel independently. Do not consume the comparison
+// baseline until a document pull is bracketed by the same activity marker.
+async function syncStableHistory(repo, docID, metadata, signal) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    signal.throwIfAborted();
+    const timestamp = messageTimestamp(metadata);
+    const report = await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal });
+    signal.throwIfAborted();
+    if (!report.ok) throw new Error('Session history sync failed');
+    metadata = await repo.getDocMeta(docID);
+    signal.throwIfAborted();
+    if (metadata?.deleted) throw new Error('Session was removed');
+    if (messageTimestamp(metadata) === timestamp) return metadata;
+  }
+  // Let the existing retry/reconnect path handle sustained activity rather
+  // than publishing an unverified marker or spinning without a bound.
+  throw new Error('Session activity changed during history sync');
+}
+
+// Search preloads establish sync evidence without authoring a read receipt.
+export async function readSyncedConversation({ repo, workspaceID, sessionID, doc, signal }) {
+  signal.throwIfAborted();
+  const baseline = projectConversation(sessionID, doc.getList('history').toJSON());
+  const metadata = await repo.getDocMeta(`session-${sessionID}`);
+  signal.throwIfAborted();
+  const syncedMetadata = await syncStableHistory(repo, `session-${sessionID}`, metadata, signal);
+  const timestamp = messageTimestamp(syncedMetadata);
+  const next = projectConversation(sessionID, doc.getList('history').toJSON());
+  if (Number.isFinite(timestamp) && hasVisibleConversationChange(baseline, next)) {
+    rememberMarker(repo, workspaceID, sessionID, documentVersion(doc), timestamp);
+  }
+  return next;
+}
+
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
   return {
@@ -22,6 +77,14 @@ export function conversationPatch(previous, next) {
       JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null))
       ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),
   };
+}
+
+function hasVisibleConversationChange(previous, next) {
+  if (!previous) return next.turns.length > 0;
+  const patch = conversationPatch(previous, next);
+  return patch.changed.length > 0 || patch.replacesFileChanges === true ||
+    patch.order.length !== previous.turns.length ||
+    patch.order.some((id, index) => id !== previous.turns[index].id);
 }
 
 async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, changed }) {
@@ -52,6 +115,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let historyChanged = true;
   let subtasksChanged = true;
   let subtasks = [];
+  let syncedMessageAt = null;
+  let receiptConversation;
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -68,6 +133,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
+    receiptConversation = projectConversation(sessionID, handle.doc.getList('history').toJSON());
+    syncedMessageAt = confirmedMarker(repo, workspaceID, sessionID, documentVersion(handle.doc));
     let latestTurn;
     let capability;
     const publish = async () => {
@@ -77,15 +144,24 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       publishing = true;
       dirty = false;
       try {
-        const meta = await repo.getDocMeta(docID);
+        let meta = await repo.getDocMeta(docID);
         if (stopped) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
+        let lastMessageAt = messageTimestamp(meta);
+        if (lastMessageAt !== null && lastMessageAt !== syncedMessageAt) {
+          meta = await syncStableHistory(repo, docID, meta, signal);
+          if (stopped) return;
+          if (!meta || meta.deleted) throw new Error('Session was removed');
+          lastMessageAt = messageTimestamp(meta);
+          historyChanged = true;
+        }
         let next = previous;
         if (historyChanged || !previous) {
           const entries = handle.doc.getList('history').toJSON();
           next = projectConversation(sessionID, entries);
           latestTurn = latestUserTurn(entries);
         }
+        const projectedVersion = documentVersion(handle.doc);
         historyChanged = false;
         if (subtasksChanged) {
           subtasksChanged = false;
@@ -94,7 +170,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         }
         next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
+        // A synced marker alone does not show that its new content reached the UI.
+        if (lastMessageAt === null) {
+          syncedMessageAt = null;
+          receiptConversation = next;
+        } else if (lastMessageAt !== syncedMessageAt &&
+                   hasVisibleConversationChange(receiptConversation, next)) {
+          syncedMessageAt = lastMessageAt;
+          receiptConversation = next;
+        }
         update.activity = projectSessionActivity(meta.meta.status);
+        update.lastMessageAt = lastMessageAt === syncedMessageAt ? syncedMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
         update.contextWindowUsage = usage && Number.isSafeInteger(usage.size) && usage.size > 0 &&
           Number.isSafeInteger(usage.used) && usage.used >= 0
@@ -106,6 +192,10 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         });
         update.syncState = rooms.length === 2 && rooms.every(room => room.status === 'joined') ? 'live' : 'connecting';
         await emit(update);
+        if (stopped) return;
+        if (update.lastMessageAt !== null) {
+          rememberMarker(repo, workspaceID, sessionID, projectedVersion, update.lastMessageAt);
+        }
         previous = next;
       } catch {
         if (!stopped) {

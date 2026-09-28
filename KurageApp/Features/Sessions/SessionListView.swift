@@ -569,6 +569,7 @@ private final class SessionBrowserCell: UITableViewCell {
     private let icon = UIImageView()
     private let leadingSlot = UIView()
     private let spinner = UIActivityIndicatorView(style: .medium)
+    private let unreadDot = UIView()
     private let titleLabel = UILabel()
     private let snippetLabel = UILabel()
     private let textStack = UIStackView()
@@ -600,6 +601,11 @@ private final class SessionBrowserCell: UITableViewCell {
         spinner.isAccessibilityElement = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         leadingSlot.addSubview(spinner)
+        unreadDot.backgroundColor = .systemBlue
+        unreadDot.layer.cornerRadius = 4
+        unreadDot.isAccessibilityElement = false
+        unreadDot.translatesAutoresizingMaskIntoConstraints = false
+        leadingSlot.addSubview(unreadDot)
         leadingSlot.setContentHuggingPriority(.required, for: .horizontal)
         titleLabel.font = .preferredFont(forTextStyle: .body)
         titleLabel.numberOfLines = 1
@@ -622,6 +628,10 @@ private final class SessionBrowserCell: UITableViewCell {
         rowStack.addArrangedSubview(newSessionButton)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
+            unreadDot.widthAnchor.constraint(equalToConstant: 8),
+            unreadDot.heightAnchor.constraint(equalToConstant: 8),
+            unreadDot.centerXAnchor.constraint(equalTo: leadingSlot.centerXAnchor),
+            unreadDot.centerYAnchor.constraint(equalTo: leadingSlot.centerYAnchor),
             leadingSlot.widthAnchor.constraint(equalToConstant: 20),
             leadingSlot.heightAnchor.constraint(equalToConstant: 20),
             spinner.centerXAnchor.constraint(equalTo: leadingSlot.centerXAnchor),
@@ -645,6 +655,7 @@ private final class SessionBrowserCell: UITableViewCell {
         accessibilityHint = nil
         accessibilityValue = nil
         spinner.stopAnimating()
+        unreadDot.isHidden = true
         leadingSlot.isHidden = true
         icon.isHidden = true
         newSessionButton.isHidden = true
@@ -706,13 +717,14 @@ private final class SessionBrowserCell: UITableViewCell {
                 snippetLabel.isHidden = false
             }
             leadingSlot.isHidden = false
+            unreadDot.isHidden = !session.isUnread || session.activity == .running
             if session.activity == .running {
                 spinner.startAnimating()
             }
             accessibilityIdentifier = "session-\(session.id)"
             contentView.alpha = dimmed ? 0.45 : 1
             accessibilityLabel = snippet.map { "\(session.title). \($0)" } ?? session.title
-            accessibilityValue = session.activity == .running ? "Running" : "Idle"
+            accessibilityValue = "\(session.activity == .running ? "Running" : "Idle"), \(session.isUnread ? "Unread" : "Read")"
         }
     }
 }

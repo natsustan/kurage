@@ -279,8 +279,23 @@ final class AppModel {
             guard isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            sessions = loaded
-            sessionsByWorkspace[workspaceID] = loaded
+            // A list request can finish after a newer conversation update.
+            // Merge only the monotonic message clock; keep fresh server fields.
+            let known = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.lastMessageAt) })
+            var merged = loaded
+            var preservesNewerActivity = false
+            for index in merged.indices {
+                if let timestamp = known[merged[index].id] ?? nil, timestamp.isFinite,
+                   timestamp > (merged[index].lastMessageAt ?? -.infinity) {
+                    merged[index].lastMessageAt = timestamp
+                    preservesNewerActivity = true
+                }
+            }
+            if preservesNewerActivity {
+                merged.sort { ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0) }
+            }
+            sessions = merged
+            sessionsByWorkspace[workspaceID] = merged
             let ids = Set(loaded.map(\.id))
             searchBodies[workspaceID] = searchBodies[workspaceID]?.filter { ids.contains($0.key) }
             dirtySearchBodies[workspaceID] = dirtySearchBodies[workspaceID]?.intersection(ids)
@@ -373,6 +388,14 @@ final class AppModel {
             if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
                sessions[index].activity != activity {
                 sessions[index].activity = activity
+            }
+            if let timestamp = update.lastMessageAt, timestamp.isFinite,
+               let index = sessions.firstIndex(where: { $0.id == sessionID }),
+               timestamp > (sessions[index].lastMessageAt ?? -.infinity) {
+                sessions[index].lastMessageAt = timestamp
+                sessions.sort { ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0) }
+                sessionsByWorkspace[workspaceID] = sessions
+                persistSession()
             }
             onUpdate(update)
         }
@@ -544,6 +567,9 @@ final class AppModel {
         let normalized: SessionMetadataChange
         switch change {
         case .pin: normalized = change
+        case .read(let timestamp):
+            guard timestamp.isFinite else { throw LodyClientError.deliveryUnconfirmed }
+            normalized = change
         case .rename(let title):
             let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty, title.utf16.count <= 200 else { throw LodyClientError.deliveryUnconfirmed }
@@ -553,16 +579,27 @@ final class AppModel {
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection,
               selectedWorkspaceID == workspaceID else { throw CancellationError() }
+        let interruptedRefresh = sessionRefreshTask != nil
         cancelSessionRefresh()
         if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
             switch normalized {
             case .pin(let value): sessions[index].isPinned = value
             case .rename(let title): sessions[index].title = title
+            case .read(let timestamp):
+                sessions[index].lastReadAt = max(sessions[index].lastReadAt ?? timestamp, timestamp)
             }
         }
         sessionsByWorkspace[workspaceID] = sessions
         persistSession()
+        if case .read = normalized, !interruptedRefresh { return }
         await refreshSessions(restart: true)
+    }
+
+    func markSessionRead(sessionID: String, lastMessageAt: Double, workspaceGeneration: Int) async throws {
+        guard self.workspaceGeneration == workspaceGeneration else { throw CancellationError() }
+        if let session = sessions.first(where: { $0.id == sessionID }),
+           let readAt = session.lastReadAt, readAt >= lastMessageAt { return }
+        try await updateSessionMetadata(.read(lastMessageAt), sessionID: sessionID)
     }
 
     func archiveSession(sessionID: SessionSummary.ID) async throws {

@@ -62,6 +62,17 @@ private struct ConversationContent: View {
     @State private var changesSelection: FileChangesSelection?
     @State private var selectedSubtask: ConversationSubtask?
     @State private var observedActivity: SessionActivity?
+    @State private var isVisible = false
+    @State private var bottomMessageAt: Double?
+    @State private var loadedMessageAt: Double?
+
+    private var readReceiptTimestamp: Double? {
+        guard isVisible, scenePhase == .active, isCurrentWorkspace,
+              connectionStatus == nil, selectedSubtask == nil,
+              previewImage == nil, changesSelection == nil,
+              bottomMessageAt == loadedMessageAt else { return nil }
+        return loadedMessageAt
+    }
 
     private var displayedConversation: Conversation? {
         if observedWorkspaceID == model.selectedWorkspaceID, observedSessionID == sessionID {
@@ -84,6 +95,8 @@ private struct ConversationContent: View {
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
             scrollRequestID: scrollRequestID,
+            messageTimestamp: loadedMessageAt,
+            onBottomMessage: { bottomMessageAt = $0 },
             loadImage: { image, variant in
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             },
@@ -164,6 +177,25 @@ private struct ConversationContent: View {
                 }
             }
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
+        .task(id: readReceiptTimestamp) {
+            guard let timestamp = readReceiptTimestamp else { return }
+            // Keep transient receipt failures separate from conversation delivery.
+            for attempt in 0..<3 {
+                do {
+                    try Task.checkCancellation()
+                    try await model.markSessionRead(sessionID: sessionID, lastMessageAt: timestamp,
+                                                    workspaceGeneration: workspaceGeneration)
+                    return
+                } catch is CancellationError { return }
+                catch {
+                    if attempt < 2 {
+                        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    }
+                }
+            }
+        }
         .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
                                  active: scenePhase == .active, refreshID: refreshID)) {
             guard scenePhase == .active else { return }
@@ -210,6 +242,7 @@ private struct ConversationContent: View {
                     observedActivity = update.activity
                     runConfigState.receive(update.runConfig)
                     contextWindowUsage = update.contextWindowUsage
+                    loadedMessageAt = update.lastMessageAt
                     isLoading = false
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
                     if update.syncState == .live { retryDelay = 1 }

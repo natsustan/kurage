@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { readSyncedConversation } from './conversation-observer.mjs';
 import { projectSubtasks } from './conversation-subtasks.mjs';
 import {
+  activityTime,
   deleteArchivedSession,
   readLocalProjectState,
   restoreArchivedSession,
@@ -51,10 +53,12 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     projectSubtasks,
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
+    readSyncedConversation,
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
     updateSessionMetadata: extras.updateSessionMetadata,
+    activityTime,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
@@ -280,7 +284,7 @@ test('optional machine sync failure still returns sessions with a fallback proje
 
 test('session list includes the machine name and pin from workspace metadata', async () => {
   const rows = [
-    { ...localSession, meta: { ...localSession.meta, isPinned: true } },
+    { ...localSession, meta: { ...localSession.meta, isPinned: true, lastMessageAt: 200, lastReadAt: 100 } },
     { docId: 'machine-machine', meta: { name: 'spike@mac' } },
   ];
   const { window } = makeBridge(async () => ({ ok: true }), rows);
@@ -288,6 +292,8 @@ test('session list includes the machine name and pin from workspace metadata', a
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].machineName, 'spike@mac');
   assert.equal(result.sessions[0].isPinned, true);
+  assert.equal(result.sessions[0].lastMessageAt, 200);
+  assert.equal(result.sessions[0].lastReadAt, 100);
 });
 
 test('cancelling a transcript read releases the queued conversation observation', async () => {
@@ -481,4 +487,14 @@ test('metadata cancellation prevents writes even when initial sync completes suc
   sync.resolve({ outcome: 'synced' });
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(repos[0].destroyed, true);
+});
+
+
+test('session list preserves the creation-time sorting fallback without inventing a message marker', async () => {
+  const { window } = makeBridge(async () => ({ ok: true }), [
+    { ...localSession, meta: { ...localSession.meta, lastMessageAt: undefined, createdAt: '2026-01-01T00:00:00Z' } },
+  ]);
+  const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
+  assert.equal(result.sessions[0].lastMessageAt, null);
+  assert.equal(result.sessions[0].lastActivityAt, Date.parse('2026-01-01T00:00:00Z'));
 });

@@ -7,11 +7,11 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
-import { observeConversation } from './conversation-observer.mjs';
+import { observeConversation, readSyncedConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
-import { archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
+import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
 const nativeFetch = createNativeFetch(
   message => window.webkit.messageHandlers.streamFetch.postMessage(message),
@@ -144,6 +144,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         }
       }
     }
+    visibleSessions.sort((a, b) => activityTime(b.meta) - activityTime(a.meta));
     const projected = visibleSessions.map((row) => {
       const project = row.meta.project;
       const repoName = project?.kind === 'github' ? project.repoFullName
@@ -166,12 +167,13 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         projectID,
         projectName,
         isPinned: row.meta.isPinned === true,
+        lastActivityAt: activityTime(row.meta),
+        lastReadAt: Number.isFinite(row.meta.lastReadAt) ? row.meta.lastReadAt : null,
         machineName: machineNames.get(row.meta.machineId) ?? null,
         lastMessageAt: Number.isFinite(row.meta.lastMessageAt)
-          ? row.meta.lastMessageAt : (Date.parse(row.meta.createdAt ?? '') || 0),
+          ? row.meta.lastMessageAt : null,
       };
-    })
-      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+    });
     return JSON.stringify({ sessions: projected });
   }, true, controller.signal); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }
@@ -296,13 +298,11 @@ window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, opera
     }
     const handle = await repo.openPersistedDoc(docID);
     try {
-      const report = await repo.sync({
-        scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal: controller.signal,
+      const conversation = await readSyncedConversation({
+        repo, workspaceID, sessionID, doc: handle.doc, signal: controller.signal,
       });
-      controller.signal.throwIfAborted();
-      if (!report.ok) throw new Error('Session history sync failed');
       return JSON.stringify({
-        ...projectConversation(sessionID, handle.doc.getList('history').toJSON()),
+        ...conversation,
         subtasks: projectSubtasks(sessionID, await repo.listDoc()),
       });
     } finally {

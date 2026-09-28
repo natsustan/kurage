@@ -80,3 +80,23 @@ test('already cancelled metadata edits do not read or write', async () => {
   controller.abort();
   await assert.rejects(updateSessionMetadata({}, 'chat', { isPinned: true }, controller.signal), { name: 'AbortError' });
 });
+
+test('read receipts advance monotonically and preserve newer unread messages', async () => {
+  const repo = repository({ lastMessageAt: 200, lastReadAt: 50, title: 'Chat' });
+  assert.equal(await updateSessionMetadata(repo, 'chat', { lastReadAt: 100 }), 'updated');
+  assert.equal(repo.row.meta.lastReadAt, 100);
+  assert.equal(repo.row.meta.lastMessageAt, 200);
+  assert.equal(await updateSessionMetadata(repo, 'chat', { lastReadAt: 75 }), 'updated');
+  assert.equal(repo.row.meta.lastReadAt, 100);
+  repo.sync = async () => { repo.row.meta.lastReadAt = 200; return { outcome: 'synced' }; };
+  assert.equal(await updateSessionMetadata(repo, 'chat', { lastReadAt: 150 }), 'updated');
+  assert.equal(repo.row.meta.title, 'Chat');
+});
+
+test('invalid read receipts do not write', async () => {
+  const repo = repository();
+  repo.upsertDocMeta = async () => assert.fail('unexpected write');
+  for (const lastReadAt of [NaN, Infinity, '100', null]) {
+    assert.equal(await updateSessionMetadata(repo, 'chat', { lastReadAt }), 'invalid');
+  }
+});
