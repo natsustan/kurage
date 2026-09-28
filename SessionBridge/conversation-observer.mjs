@@ -21,18 +21,36 @@ function rememberMarker(repo, workspaceID, sessionID, version, timestamp) {
   receipts.set(key, { version, timestamp });
 }
 
+const messageTimestamp = metadata => Number.isFinite(metadata?.meta?.lastMessageAt)
+  ? metadata.meta.lastMessageAt : null;
+
+// Metadata and history travel independently. Do not consume the comparison
+// baseline until a document pull is bracketed by the same activity marker.
+async function syncStableHistory(repo, docID, metadata, signal) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    signal.throwIfAborted();
+    const timestamp = messageTimestamp(metadata);
+    const report = await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal });
+    signal.throwIfAborted();
+    if (!report.ok) throw new Error('Session history sync failed');
+    metadata = await repo.getDocMeta(docID);
+    signal.throwIfAborted();
+    if (metadata?.deleted) throw new Error('Session was removed');
+    if (messageTimestamp(metadata) === timestamp) return metadata;
+  }
+  // Let the existing retry/reconnect path handle sustained activity rather
+  // than publishing an unverified marker or spinning without a bound.
+  throw new Error('Session activity changed during history sync');
+}
+
 // Search preloads establish sync evidence without authoring a read receipt.
 export async function readSyncedConversation({ repo, workspaceID, sessionID, doc, signal }) {
   signal.throwIfAborted();
   const baseline = projectConversation(sessionID, doc.getList('history').toJSON());
   const metadata = await repo.getDocMeta(`session-${sessionID}`);
   signal.throwIfAborted();
-  const timestamp = metadata?.meta?.lastMessageAt;
-  const report = await repo.sync({
-    scope: 'doc', docIds: [`session-${sessionID}`], requireTransports: ['cloud'], signal,
-  });
-  signal.throwIfAborted();
-  if (!report.ok) throw new Error('Session history sync failed');
+  const syncedMetadata = await syncStableHistory(repo, `session-${sessionID}`, metadata, signal);
+  const timestamp = messageTimestamp(syncedMetadata);
   const next = projectConversation(sessionID, doc.getList('history').toJSON());
   if (Number.isFinite(timestamp) && hasVisibleConversationChange(baseline, next)) {
     rememberMarker(repo, workspaceID, sessionID, documentVersion(doc), timestamp);
@@ -126,18 +144,15 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       publishing = true;
       dirty = false;
       try {
-        const meta = await repo.getDocMeta(docID);
+        let meta = await repo.getDocMeta(docID);
         if (stopped) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
-        const lastMessageAt = Number.isFinite(meta.meta.lastMessageAt) ? meta.meta.lastMessageAt : null;
+        let lastMessageAt = messageTimestamp(meta);
         if (lastMessageAt !== null && lastMessageAt !== syncedMessageAt) {
-          // Metadata and history use separate rooms. Pull the cloud history after
-          // seeing a new activity marker before offering it as a read receipt.
-          const report = await repo.sync({
-            scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal,
-          });
+          meta = await syncStableHistory(repo, docID, meta, signal);
           if (stopped) return;
-          if (!report.ok) throw new Error('Session history sync failed');
+          if (!meta || meta.deleted) throw new Error('Session was removed');
+          lastMessageAt = messageTimestamp(meta);
           historyChanged = true;
         }
         let next = previous;

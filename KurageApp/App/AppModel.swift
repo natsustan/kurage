@@ -279,8 +279,23 @@ final class AppModel {
             guard isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            sessions = loaded
-            sessionsByWorkspace[workspaceID] = loaded
+            // A list request can finish after a newer conversation update.
+            // Merge only the monotonic message clock; keep fresh server fields.
+            let known = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.lastMessageAt) })
+            var merged = loaded
+            var preservesNewerActivity = false
+            for index in merged.indices {
+                if let timestamp = known[merged[index].id] ?? nil, timestamp.isFinite,
+                   timestamp > (merged[index].lastMessageAt ?? -.infinity) {
+                    merged[index].lastMessageAt = timestamp
+                    preservesNewerActivity = true
+                }
+            }
+            if preservesNewerActivity {
+                merged.sort { ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0) }
+            }
+            sessions = merged
+            sessionsByWorkspace[workspaceID] = merged
             let ids = Set(loaded.map(\.id))
             searchBodies[workspaceID] = searchBodies[workspaceID]?.filter { ids.contains($0.key) }
             dirtySearchBodies[workspaceID] = dirtySearchBodies[workspaceID]?.intersection(ids)
@@ -374,9 +389,9 @@ final class AppModel {
                sessions[index].activity != activity {
                 sessions[index].activity = activity
             }
-            if let timestamp = update.lastMessageAt,
+            if let timestamp = update.lastMessageAt, timestamp.isFinite,
                let index = sessions.firstIndex(where: { $0.id == sessionID }),
-               sessions[index].lastMessageAt != timestamp {
+               timestamp > (sessions[index].lastMessageAt ?? -.infinity) {
                 sessions[index].lastMessageAt = timestamp
                 sessions.sort { ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0) }
                 sessionsByWorkspace[workspaceID] = sessions

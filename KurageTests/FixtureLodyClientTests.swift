@@ -480,6 +480,51 @@ struct AppModelSessionRefreshTests {
         #expect(client.cachedSession?.sessionsByWorkspace["ws-a"] == model.sessions)
     }
 
+    @Test func messageTimeNeverRegressesAcrossRefreshAndObservation() async throws {
+        let client = DeferredSessionClient()
+        var session = Self.session("chat")
+        session.lastMessageAt = 100
+        client.cachedSession = SessionCache(account: client.account!, workspaces: [
+            WorkspaceSummary(id: "ws-a", name: "A", slug: "a")
+        ], selectedWorkspaceID: "ws-a", sessionsByWorkspace: ["ws-a": [session]])
+        let model = AppModel(client: client)
+        var requests = client.started.makeAsyncIterator()
+        let refreshing = Task { await model.refreshSessions() }
+        #expect(await requests.next() == "ws-a")
+        var subscriptions = client.observationsStarted.makeAsyncIterator()
+        let (received, signal) = AsyncStream<Void>.makeStream()
+        var updates = received.makeAsyncIterator()
+        let observing = Task { try await model.observeConversation(sessionID: "chat") { _ in signal.yield(()) } }
+        #expect(await subscriptions.next() == "ws-a")
+        func publish(_ timestamp: Double) {
+            client.observation?.yield(ConversationUpdate(
+                conversation: Conversation(sessionID: "chat", turns: [], permission: nil),
+                activity: .idle, syncState: .live, lastMessageAt: timestamp))
+        }
+        publish(300)
+        _ = await updates.next()
+        session.lastMessageAt = 200
+        session.title = "Fresh title"
+        var other = Self.session("other")
+        other.lastMessageAt = 250
+        client.finishNext("ws-a", with: [other, session])
+        await refreshing.value
+        #expect(model.sessions.map(\.id) == ["chat", "other"])
+        #expect(model.sessions.first?.lastMessageAt == 300)
+        #expect(model.sessions.first?.title == "Fresh title")
+        for timestamp in [200.0, Double.nan, Double.infinity] {
+            publish(timestamp)
+            _ = await updates.next()
+            #expect(model.sessions.first?.lastMessageAt == 300)
+        }
+        try await model.markSessionRead(sessionID: "chat", lastMessageAt: 200,
+                                        workspaceGeneration: model.workspaceGeneration)
+        #expect(model.sessions.first?.isUnread == true)
+        #expect(client.cachedSession?.sessionsByWorkspace["ws-a"]?.first?.lastMessageAt == 300)
+        client.observation?.finish()
+        try await observing.value
+    }
+
     @Test func workspaceFailureSurvivesSuccessfulSessionRefresh() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)

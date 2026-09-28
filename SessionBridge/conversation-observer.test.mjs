@@ -504,3 +504,61 @@ for (const scenario of ['unchanged', 'failed', 'cancelled']) {
     h.controller.abort();
   });
 }
+
+for (const preload of [false, true]) {
+  test(`marker advancing during ${preload ? 'search' : 'observation'} sync retains the original baseline`, async () => {
+    const meta = { lastMessageAt: 200 };
+    const h = harness({ meta });
+    let pulls = 0;
+    h.repo.sync = async () => {
+      if (++pulls === 1) {
+        meta.lastMessageAt = 300;
+        h.doc.getList('history').push({ id: 'latest', role: 'assistant', items: [{ type: 'text', text: 'Latest' }] });
+        h.doc.commit();
+        h.metadataChanged();
+      }
+      return { ok: true };
+    };
+    if (preload) await readSyncedConversation({ repo: h.repo, workspaceID: 'ws', sessionID: 'abc',
+      doc: h.doc, signal: h.controller.signal });
+    await h.start();
+    assert.equal(pulls, 2);
+    assert.equal(h.updates[0].lastMessageAt, 300);
+    await h.flush();
+    assert.equal(h.updates.at(-1).lastMessageAt, 300);
+    h.controller.abort();
+  });
+}
+
+test('a newer marker requires another successful pull and remains cancellable', async () => {
+  for (const cancel of [false, true]) {
+    const meta = { lastMessageAt: 200 };
+    const h = harness({ meta });
+    let pulls = 0;
+    h.repo.sync = async () => {
+      if (++pulls === 1) {
+        meta.lastMessageAt = 300;
+        h.doc.getList('history').push({ id: 'latest', role: 'assistant', items: [{ type: 'text', text: 'Latest' }] });
+        h.doc.commit();
+        return { ok: true };
+      }
+      if (cancel) h.controller.abort();
+      return { ok: false };
+    };
+    await h.start();
+    assert.equal(pulls, 2);
+    assert.deepEqual(h.updates, cancel ? [] : [{ error: 'Conversation sync failed' }]);
+    h.controller.abort();
+  }
+});
+
+test('continuously advancing metadata bounds the number of sync attempts', async () => {
+  const meta = { lastMessageAt: 200 };
+  const h = harness({ meta });
+  let pulls = 0;
+  h.repo.sync = async () => { pulls++; meta.lastMessageAt++; return { ok: true }; };
+  await h.start();
+  assert.equal(pulls, 5);
+  assert.deepEqual(h.updates, [{ error: 'Conversation sync failed' }]);
+  h.controller.abort();
+});
