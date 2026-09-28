@@ -137,6 +137,9 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     if (stopped) return;
     receiptConversation = projectConversation(sessionID, handle.doc.getList('history').toJSON());
     syncedMessageAt = confirmedMarker(repo, workspaceID, sessionID, documentVersion(handle.doc));
+    // A successful pull and evidence for a read receipt are separate. Waiting
+    // for visible content must not pull the same marker on every stream event.
+    let pulledMessageAt = syncedMessageAt;
     let latestTurn;
     let capability;
     const publish = async () => {
@@ -150,13 +153,15 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         if (stopped) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
         let lastMessageAt = messageTimestamp(meta);
-        if (lastMessageAt !== null && lastMessageAt !== syncedMessageAt) {
+        if (lastMessageAt !== null && lastMessageAt !== pulledMessageAt) {
           meta = await syncStableHistory(repo, docID, meta, signal);
           if (stopped) return;
           if (!meta || meta.deleted) throw new Error('Session was removed');
           lastMessageAt = messageTimestamp(meta);
+          pulledMessageAt = lastMessageAt;
           historyChanged = true;
         }
+        if (lastMessageAt === null) pulledMessageAt = null;
         let next = previous;
         if (historyChanged || !previous) {
           const entries = handle.doc.getList('history').toJSON();

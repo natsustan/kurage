@@ -387,6 +387,45 @@ struct FixtureLodyClientTests {
 
 @MainActor
 struct AppModelSessionRefreshTests {
+    @Test func sessionRefreshDoesNotWaitForWorkspaceDiscovery() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        client.defersWorkspaces = true
+        var requests = client.started.makeAsyncIterator()
+        var discoveries = client.workspaceStarted.stream.makeAsyncIterator()
+        let refresh = Task { await model.refreshContent() }
+        #expect(await requests.next() == "ws-a")
+        _ = await discoveries.next()
+        client.finish("ws-a", with: [Self.session("fresh")])
+        // Join the same list request; workspace discovery is still suspended.
+        await model.refreshSessions()
+        #expect(model.sessions.map(\.id) == ["fresh"])
+        client.workspaceContinuation?.resume(returning: [WorkspaceSummary(id: "ws-a", name: "A", slug: "a")])
+        await refresh.value
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+    }
+
+    @Test func discoveryChangingWorkspaceLoadsReplacementAndRejectsOldRows() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        client.defersWorkspaces = true
+        var requests = client.started.makeAsyncIterator()
+        var discoveries = client.workspaceStarted.stream.makeAsyncIterator()
+        let refresh = Task { await model.refreshContent() }
+        #expect(await requests.next() == "ws-a")
+        _ = await discoveries.next()
+        client.workspaceContinuation?.resume(returning: [WorkspaceSummary(id: "ws-b", name: "B", slug: "b")])
+        client.finish("ws-a", with: [Self.session("stale")])
+        #expect(await requests.next() == "ws-b")
+        #expect(model.sessions.isEmpty)
+        client.finish("ws-b", with: [Self.session("replacement")])
+        await refresh.value
+        #expect(model.selectedWorkspaceID == "ws-b")
+        #expect(model.sessions.map(\.id) == ["replacement"])
+    }
+
     @Test func sharesRefreshAndDiscardsCancelledWorkspaceResult() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)
@@ -588,7 +627,17 @@ private final class DeferredSessionClient: LodyClient {
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws { throw LodyClientError.notConnected }
     func restoreSession() async -> Account? { account }
     func signOut() { account = nil }
+    var defersWorkspaces = false
+    let workspaceStarted = AsyncStream<Void>.makeStream()
+    var workspaceContinuation: CheckedContinuation<[WorkspaceSummary], Error>?
+
     func workspaces() async throws -> [WorkspaceSummary] {
+        if defersWorkspaces {
+            return try await withCheckedThrowingContinuation { continuation in
+                workspaceContinuation = continuation
+                workspaceStarted.continuation.yield(())
+            }
+        }
         if let workspaceError { throw workspaceError }
         return [WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
          WorkspaceSummary(id: "ws-b", name: "B", slug: "b")]

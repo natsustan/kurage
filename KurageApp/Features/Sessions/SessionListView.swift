@@ -470,26 +470,23 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     func render(rows: [SessionBrowserRow], canArchive: Bool, opensSessions: Bool) {
         self.canArchive = canArchive
         self.opensSessions = opensSessions
-        self.rows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
-        let hadRows = !dataSource.snapshot().itemIdentifiers.isEmpty
+        let previousRows = self.rows
+        let nextRows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        let previousIDs = dataSource.snapshot().itemIdentifiers
+        let nextIDs = rows.map(\.id)
+        guard previousIDs != nextIDs || previousRows != nextRows else { return }
+        self.rows = nextRows
         var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
         snapshot.appendSections([0])
-        snapshot.appendItems(rows.map(\.id), toSection: 0)
-        // FlowDown fades the removed row and lets the rows below close the gap.
-        // Reconfiguring every row in the same update cancels that and snaps the list.
-        dataSource.apply(snapshot, animatingDifferences: hadRows)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let visible = tableView.indexPathsForVisibleRows ?? []
-            let visibleIDs = visible.compactMap { dataSource.itemIdentifier(for: $0) }
-            guard !visibleIDs.isEmpty else { return }
-            var refresh = dataSource.snapshot()
-            let current = Set(refresh.itemIdentifiers)
-            let stable = visibleIDs.filter { current.contains($0) }
-            guard !stable.isEmpty else { return }
-            refresh.reconfigureItems(stable)
-            dataSource.apply(refresh, animatingDifferences: true)
-        }
+        snapshot.appendItems(nextIDs, toSection: 0)
+        // Update only changed, retained rows. One snapshot preserves swipe deletion
+        // animations without a second animated pass over every visible cell.
+        snapshot.reconfigureItems(nextIDs.filter { id in
+            previousRows[id] != nil && previousRows[id] != nextRows[id]
+        })
+        let interacting = tableView.isDragging || tableView.isDecelerating ||
+            tableView.refreshControl?.isRefreshing == true
+        dataSource.apply(snapshot, animatingDifferences: !previousIDs.isEmpty && !interacting)
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {

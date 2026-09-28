@@ -10,6 +10,7 @@ struct KurageApp: App {
                 ? SessionRecord.samplesWithSubtasks : SessionRecord.samples,
                 failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
+                conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
                 failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"),
                 sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
                 failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"))

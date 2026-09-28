@@ -105,8 +105,21 @@ final class AppModel {
     }
 
     func refreshContent() async {
-        await refreshWorkspaces()
-        await refreshSessions()
+        guard !Task.isCancelled, account != nil else { return }
+        let generation = authenticationGeneration
+        let workspaceID = selectedWorkspaceID
+        if workspaceID == nil {
+            await refreshWorkspaces()
+        } else {
+            // Cached workspace selection lets the list load without waiting for HTTP discovery.
+            async let workspaceRefresh: Void = refreshWorkspaces()
+            await refreshSessions()
+            await workspaceRefresh
+        }
+        guard !Task.isCancelled, isCurrentAuthentication(generation) else { return }
+        if workspaceID == nil || selectedWorkspaceID != workspaceID {
+            await refreshSessions()
+        }
     }
 
     var workspaceLabel: String {
@@ -131,8 +144,7 @@ final class AppModel {
         }
         account = restored
         guard account != nil else { return }
-        await refreshWorkspaces()
-        await refreshSessions()
+        await refreshContent()
     }
 
     func connect(open: @escaping @MainActor (URL) -> Void) {

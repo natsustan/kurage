@@ -64,6 +64,40 @@ test('initial cached history cannot acknowledge a newer marker until content arr
   h.controller.abort();
 });
 
+test('stream updates reuse a successful pull while receipt evidence is pending', async () => {
+  const meta = { lastMessageAt: 200 };
+  const h = harness({ meta });
+  let pulls = 0;
+  h.repo.sync = async () => { pulls++; return { ok: true }; };
+  const history = h.doc.getList('history');
+  history.push({ id: 'a', role: 'assistant', items: [{ type: 'text', text: 'Partial' }] });
+  h.doc.commit();
+  await h.start();
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  for (let index = 0; index < 3; index++) {
+    h.metadataChanged();
+    h.doc.getMap('acpRuntimeConfig').set('modelId', `model-${index}`);
+    h.doc.commit();
+    await h.flush();
+  }
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  history.delete(0, 1);
+  history.push({ id: 'a', role: 'assistant', items: [{ type: 'text', text: 'Completed' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).changed[0].text, 'Completed');
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  meta.lastMessageAt = 300;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(pulls, 2);
+  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  h.controller.abort();
+});
+
 test('initial room restoration counts as content arriving after the local baseline', async () => {
   const h = harness({ meta: { lastMessageAt: 200 }, waitFor: async () => {
     if (h.doc.getList('history').length === 0) {

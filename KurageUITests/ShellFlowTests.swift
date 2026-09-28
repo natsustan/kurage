@@ -2,6 +2,22 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testConversationRetryDoesNotShowEmptyState() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-search-failure", "--fixture-slow-conversation"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let emptyState = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: app.staticTexts["No messages yet"]
+        )
+        emptyState.isInverted = true
+        wait(for: [emptyState], timeout: 6)
+        XCTAssertTrue(app.staticTexts["Latest reply in long conversation"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testUnreadSessionClearsAfterOpening() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

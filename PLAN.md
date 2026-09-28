@@ -35,6 +35,7 @@
 - Archived sessions 以非全屏弹窗列出已归档且没有 `parentSessionId` 的根会话，按 `lastMessageAt`（没有则用 `createdAt`）倒序。行尾仅提供无底色的 Restore；永久删除入口暂不显示，交互待定。Restore 把该会话和它的直接子 tab 的 `isArchived` 写回 false，并只给被点的会话清掉 `isTabClosed`；由它打开的其它会话仍留在归档里。本地项目若已从机器 Flock 移除或有待删除命令，则拒绝恢复。底层 Delete 实现会先删子 tab 再 `deleteDoc` 根会话，机器通过文档删除标记回收运行时。归档列表刷新成功后清除加载错误，保留独立的恢复操作提示。真实账号的恢复和永久删除尚未验证。
 - `HTTPLodyClient.streamsAccess(workspaceID:)` 按 Lody 的 `/api/loro-streams/token` 协议取得短期令牌，不会把 Streams 令牌写入 Keychain。
 - `SessionSyncBridge` 使用与 Lody 相同版本的 LoroRepo、Flock 和 Streams 库，在本地 WebKit 页面中同步目录与会话文档。原生层通过 URLSession 代理 Streams 请求。
+- 详情加载与实时更新：空状态以是否已取得会话快照为准，首次连接失败/重试继续显示加载占位，已有正文在重连期间保留。同步桥分开记录成功拉取的消息时间戳与可确认已读的时间戳；同一时间戳已拉取成功、但正文尚未变化时，后续流式/配置/状态更新不再重复等待 cloud sync，新时间戳仍需同步验证。已读仍要求可见内容变化与底部布局证据。本轮 160 项 JavaScript 测试、bundle 重建、138 项 Swift 测试通过；iPhone 17 / iOS 27 的首次失败重试不闪空状态与打开详情清除未读两项 UI 回归通过，重试用例追加 fixture 加载延迟后再次通过。真实账号弱网、持续输出的端到端延迟尚未实测。
 - 真实客户端已支持只读会话正文和实时更新：当前详情页通过 `joinRoom()` 订阅 Session 文档与 workspace metadata，持续显示正文和运行状态。投影用户和 Agent 的普通文本，以及 history 里的 `image` / `image_group`（也保留没有 `mimeType` 的图片引用）。图片用当前账号的 Bearer 令牌从 `https://api.lody.ai/api/workspaces/{workspace}/session-images/{session}/{imageId}` 下载；fork 复制的图片用 `storageSessionId` 作为 blob 所在 session。详情里单张图走 `thumbnail?width=768&fit=scale-down&quality=85`，多张图走 320 正方形 cover，失败时回退原图，点按后看原图。工具记录等其他结构化内容不作为消息正文显示；文件修改摘要与可用 diff 在 HUD 详情中单独展示。相同图片请求共享下载，取消单个等待者不影响其它等待者，最后一个等待者退出时取消网络请求。下载先检查响应长度，并在流式累计超过 5 MiB 时中止；多图布局按聊天区域可用宽度缩小方形缩略图。真实账号的图片下载尚未实测。
 - 会话单图外框按实际缩略图比例贴合，最大边 220pt，不放大小图；缺失尺寸时使用 160pt 方形占位，加载后修正尺寸。加载成功后去除灰底和描边，多图继续使用紧凑方形网格。 本次图片 fixture UI 测试在浅色默认字号、深色辅助大字号下均通过，覆盖缺少尺寸的竖图加载后 165×220pt、右对齐、多图方形和预览；真实账号图片尚未复测。
 - 原生网络桥用 `URLSession.bytes(for:)` 将响应头与数据块交给 JS `ReadableStream`，包含背压和 AbortSignal 取消；写请求的请求体也由原生代理发送。Streams 库继续负责 SSE、long-poll 回退与重连。鉴权回调按需续期，401/403 强制重新获取令牌。
@@ -170,3 +171,12 @@
 
 - Worked for 审查修复：桥接投影记录折叠组在可见内容中的插入位置，原生按该位置显示前置附件、工作组与后续正文，避免展开后将前置图片/文件移到工作过程之后。旧缓存缺少位置时默认从开头显示；新增桥接回归覆盖前置图片、文件和多图组，原生覆盖解码与缓存往返，fixture UI 检查文件在折叠和展开时均位于工作组上方。
   本轮 frozen lockfile 安装、156 项 JavaScript 测试及 bundle 重建通过；25 项图片/布局 Swift 测试和 1 项 Worked for fixture UI 测试通过。已核对 iPhone 17 浅色默认字号下折叠与展开截图，前置文件位置正确、标题锚点稳定。真实账号、深色及辅助大字号本轮未复验。
+
+## Session 列表刷新优化（2026-09-28）
+
+- 已有工作区选择时，账号恢复与下拉刷新并行请求工作区和会话列表，列表结果就绪即发布；首次无工作区时仍先发现工作区。发现工作区失效后加载替代工作区，继续使用账号/工作区 generation 拒绝旧结果。
+- 列表只在行内容或顺序改变时提交 diffable snapshot，仅重新配置内容变化的保留行，移除无条件的第二次可见行动画；拖动、惯性滚动和下拉刷新期间不叠加差异动画。
+- 对照本机 FlowDown `a2fd55911720bfa0d11c1d4e354359d4801d9387` 的 `ConversationSelectionView.swift`：其数据订阅合并密集通知，列表使用稳定 ID 的 diffable 更新。Kurage 保留现有原生刷新控件和同步协议，不引入 FlowDown 依赖。
+- 剩余限制：会话列表仍等待 bridge 的 metadata 与机器项目名称文档同步；本轮没有改变后端协议或引入列表实时订阅，真实账号弱网刷新耗时尚未测量。
+- 本轮验证：138 项 Swift 测试、2 项 fixture UI 测试通过，覆盖慢工作区发现不阻塞会话发布、失效工作区替换、搜索空态下拉、列表下拉及左滑归档。未运行 JS 测试（桥接代码未改动）。
+- 已核对本轮 UI 测试截图：刷新后列表、空搜索、标题和正文命中布局正常，底部搜索框未遮挡内容。截图不能验证连续动画手感；归档仅由 UI 断言验证。
