@@ -70,7 +70,7 @@ struct SessionListView: View {
                 }
             }
             .navigationTitle("Kurage")
-            .navigationSubtitle(model.workspaceLabel)
+            .navigationBarTitleDisplayMode(.inline)
             .refreshable { await model.refreshContent() }
             .navigationDestination(for: SessionNavigation.Route.self) { destination in
                 switch destination {
@@ -87,6 +87,17 @@ struct SessionListView: View {
                 }
             }
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        Text("Kurage")
+                            .font(.headline)
+                        Text(model.workspaceLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1)
+                    .accessibilityElement(children: .combine)
+                }
                 if !model.pendingSessionStarts.isEmpty {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
@@ -596,7 +607,7 @@ private final class SessionBrowserCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         var buttonConfiguration = UIButton.Configuration.plain()
         buttonConfiguration.image = UIImage(named: "add")?.withRenderingMode(.alwaysTemplate)
-        buttonConfiguration.baseForegroundColor = .label
+        buttonConfiguration.baseForegroundColor = .secondaryLabel
         buttonConfiguration.contentInsets = .zero
         newSessionButton.configuration = buttonConfiguration
         newSessionButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -650,8 +661,8 @@ private final class SessionBrowserCell: UITableViewCell {
             leadingSlot.heightAnchor.constraint(equalToConstant: 20),
             spinner.centerXAnchor.constraint(equalTo: leadingSlot.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: leadingSlot.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 24),
-            icon.heightAnchor.constraint(equalToConstant: 18),
+            icon.widthAnchor.constraint(equalTo: leadingSlot.widthAnchor),
+            icon.heightAnchor.constraint(equalTo: leadingSlot.heightAnchor),
             newSessionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             newSessionButton.heightAnchor.constraint(equalTo: textStack.heightAnchor),
             rowStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -709,7 +720,7 @@ private final class SessionBrowserCell: UITableViewCell {
             newSessionButton.isHidden = !canCreate
             newSessionButton.accessibilityLabel = "New session in \(name)"
             newSessionButton.accessibilityIdentifier = "new-session-\(id)"
-            titleLabel.font = .preferredFont(forTextStyle: .headline)
+            titleLabel.font = .preferredFont(forTextStyle: .body)
             icon.isHidden = false
             if unassigned {
                 icon.image = UIImage(systemName: collapsed ? "bubble.left" : "bubble.left.fill")
