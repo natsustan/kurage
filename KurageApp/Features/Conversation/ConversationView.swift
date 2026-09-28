@@ -561,22 +561,22 @@ struct TurnRow: View {
     let onPreviewImage: (ConversationImage) -> Void
     var fileChanges: ConversationFileChangeGroup? = nil
     var onOpenChanges: (Int) -> Void = { _ in }
-    var onToggleChanges: (TimeInterval) -> Void = { _ in }
+    var onToggleChanges: () -> Void = {}
     var disclosures = TurnDisclosures()
     var isRunning = false
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
         VStack(alignment: alignment, spacing: 8) {
+            if isRunning, turn.author == .agent, let timing = turn.timing {
+                TurnWorkingLabel(turnID: turn.id, timing: timing)
+            }
             if let work = turn.displayedWork {
                 TurnWorkDisclosure(turnID: turn.id, work: work, disclosures: disclosures) {
                     blocks(work.parts, alignment: alignment)
                 }
             }
             blocks(turn.content, alignment: alignment)
-            if isRunning, turn.author == .agent, let timing = turn.timing {
-                TurnWorkingLabel(turnID: turn.id, timing: timing)
-            }
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
                                     onOpen: { onOpenChanges(fileChanges.turnNumber) },

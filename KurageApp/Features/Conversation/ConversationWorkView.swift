@@ -5,8 +5,8 @@ import SwiftUI
 struct TurnDisclosures {
     /// Read when a disclosure appears, including one nested in a reopened group.
     var isExpanded: @MainActor (String) -> Bool = { _ in false }
-    /// Key, new expanded state, and the animation duration for the row resize.
-    var onToggle: @MainActor (String, Bool, TimeInterval) -> Void = { _, _, _ in }
+    /// Key and new expanded state, recorded before the row begins resizing.
+    var onToggle: @MainActor (String, Bool) -> Void = { _, _ in }
 }
 
 /// "Worked for …" above a finished reply. Expanding reveals the earlier work;
@@ -16,7 +16,6 @@ struct TurnWorkDisclosure<Content: View>: View {
     let work: ConversationWork
     let disclosures: TurnDisclosures
     @ViewBuilder let content: () -> Content
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded: Bool
 
     init(turnID: ConversationTurn.ID, work: ConversationWork, disclosures: TurnDisclosures,
@@ -34,8 +33,8 @@ struct TurnWorkDisclosure<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 let next = !expanded
-                disclosures.onToggle(Self.key(turnID), next, reduceMotion ? 0 : 0.25)
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { expanded = next }
+                disclosures.onToggle(Self.key(turnID), next)
+                expanded = next
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(work.title)
@@ -69,7 +68,6 @@ struct ConversationActivityRow: View {
     let turnID: ConversationTurn.ID
     let activity: ConversationActivity
     let disclosures: TurnDisclosures
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .subheadline) private var iconWidth = 20.0
     @State private var expanded: Bool
 
@@ -89,8 +87,8 @@ struct ConversationActivityRow: View {
             } else {
                 Button {
                     let next = !expanded
-                    disclosures.onToggle("activity:\(turnID):\(activity.id)", next, reduceMotion ? 0 : 0.25)
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { expanded = next }
+                    disclosures.onToggle("activity:\(turnID):\(activity.id)", next)
+                    expanded = next
                 } label: {
                     header(showsChevron: true)
                 }
@@ -141,12 +139,16 @@ struct ConversationActivityRow: View {
 
 private struct DisclosureChevron: View {
     let expanded: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Image(systemName: "chevron.right")
             .font(.caption.weight(.semibold))
             .imageScale(.small)
-            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { image in
+                image.rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .transaction { $0.disablesAnimations = false }
             .accessibilityHidden(true)
     }
 }
@@ -164,23 +166,55 @@ extension ConversationActivity.Kind {
     }
 }
 
-/// Reveal the entire body from the header edge as one block. Preserve its
-/// full height and resolve geometry before passing it to individual text/tool rows.
+/// Reveal the body from its top edge while its contents keep their full size.
+/// The same layout serves work, activity groups, and file changes.
 struct TopAnchoredDisclosure<Content: View>: View {
     let expanded: Bool
     @ViewBuilder var content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if expanded {
                 content()
                     .fixedSize(horizontal: false, vertical: true)
-                    .geometryGroup()
-                    .transition(.move(edge: .top))
+                    .transition(.modifier(active: TopDownReveal(progress: 0),
+                                          identity: TopDownReveal(progress: 1)))
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .clipped()
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: expanded)
+        .transaction { $0.disablesAnimations = false }
+    }
+}
+
+@Animatable
+private struct TopDownReveal: ViewModifier {
+    var progress: CGFloat
+
+    func body(content: Content) -> some View {
+        TopDownDisclosureLayout(progress: progress) {
+            content
+        }
+        .clipped()
+    }
+}
+
+@Animatable
+private struct TopDownDisclosureLayout: Layout {
+    var progress: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let content = subviews.first else { return .zero }
+        let fullSize = content.sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: fullSize.width, height: fullSize.height * progress)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let content = subviews.first else { return }
+        content.place(at: bounds.origin, anchor: .topLeading,
+                      proposal: ProposedViewSize(width: bounds.width, height: nil))
     }
 }
 
@@ -190,13 +224,17 @@ struct TurnWorkingLabel: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1, paused: scenePhase != .active)) { context in
-            Text(timing.title(at: context.date))
-                .font(.subheadline)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                .accessibilityIdentifier("turn-working-\(turnID)")
+        VStack(alignment: .leading, spacing: 0) {
+            TimelineView(.animation(minimumInterval: 1, paused: scenePhase != .active)) { context in
+                Text(timing.title(at: context.date))
+                    .font(.subheadline)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .accessibilityIdentifier("turn-working-\(turnID)")
+            }
+            Divider()
         }
+        .padding(.bottom, 4)
     }
 }

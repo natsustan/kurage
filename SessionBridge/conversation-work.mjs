@@ -86,8 +86,8 @@ export function projectActivity(id, entries) {
   for (const { item, index } of entries) {
     if (isThought(item)) continue;
     const kind = stepKind(item);
-    const paths = toolPaths(item);
     if (kind === 'read' || kind === 'edit') {
+      const paths = toolPaths(item);
       const known = kind === 'read' ? readPaths : editPaths;
       if (paths.length === 0) counts[kind === 'read' ? 'reads' : 'edits'] += 1;
       for (const path of paths) known.add(path);
@@ -124,9 +124,11 @@ export function workDurationMs(entry) {
  * a finished turn with a visible answer, the folded work.
  */
 export function projectAssistantBlocks(entry, projectItem) {
-  const items = (Array.isArray(entry.items) ? entry.items : []).filter(item => !isHiddenAssistantItem(item));
+  const entries = (Array.isArray(entry.items) ? entry.items : [])
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => !isHiddenAssistantItem(item));
   const finished = entry.finished === true;
-  const collapsible = finished ? collapsibleIndexes(items) : new Set();
+  const collapsible = finished ? collapsibleIndexes(entries.map(({ item }) => item)) : new Set();
   const blocks = [];
   let pending = [];
   const flush = () => {
@@ -137,14 +139,14 @@ export function projectAssistantBlocks(entry, projectItem) {
     if (activity) blocks.push({ parts: [activity], work: true });
     pending = [];
   };
-  items.forEach((item, index) => {
+  entries.forEach(({ item, index }, visibleIndex) => {
     if (isActivityItem(item)) {
       pending.push({ item, index });
       return;
     }
     flush();
     const parts = projectItem(item);
-    if (parts.length) blocks.push({ parts, work: collapsible.has(index) });
+    if (parts.length) blocks.push({ parts, work: collapsible.has(visibleIndex) });
   });
   flush();
 

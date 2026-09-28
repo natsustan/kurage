@@ -142,6 +142,9 @@ final class ShellFlowTests: XCTestCase {
         tap(app.descendants(matching: .any)["session-session-tests"])
         let label = app.staticTexts["turn-working-tests-agent"]
         XCTAssertTrue(label.waitForExistence(timeout: 5))
+        let reply = app.staticTexts["Running npm test"]
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(label.frame.maxY, reply.frame.minY)
         let initial = label.label
         XCTAssertTrue(initial.hasPrefix("Working… "))
         let changes = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in label.label != initial }, object: nil)
@@ -189,9 +192,11 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertEqual(toggle.value as? String, "Collapsed")
         XCTAssertEqual(toggle.frame.minY, collapseY, accuracy: 2)
         XCTAssertFalse(app.staticTexts["git status --short"].exists)
-        // Reopening restores the command list the reader had opened.
+        // Reopening restores the command list without moving its header.
         for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        let reopenY = toggle.frame.minY
         tap(toggle)
+        XCTAssertEqual(toggle.frame.minY, reopenY, accuracy: 2)
         XCTAssertTrue(app.staticTexts["git status --short"].waitForExistence(timeout: 5))
     }
 

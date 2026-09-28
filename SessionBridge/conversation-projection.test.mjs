@@ -103,6 +103,21 @@ const finishedTurn = (items, extra = {}) => ({
   timestamp: '2026-09-27T14:00:00.000Z', endedAt: Date.parse('2026-09-27T14:01:27.400Z'), ...extra,
 });
 
+test('hiding a completed retry preserves subsequent activity and step identities', () => {
+  for (const toolCallId of ['read', undefined]) {
+    const project = status => projectConversation('s', [{
+      id: 'a1', role: 'assistant', items: [
+        { type: 'tool_call', activityKind: 'codex_retry', status, toolCallId: 'retry' },
+        { type: 'tool_call', toolCallId, kind: 'read', title: 'Read file' },
+      ],
+    }]).turns[0].parts;
+    const before = project('in_progress');
+    assert.deepEqual(project('completed'), before);
+    assert.equal(before[0].id, `1:${toolCallId ?? ''}`);
+    assert.equal(before[0].steps[0].id, toolCallId ?? '#1');
+  }
+});
+
 test('a finished turn folds earlier work behind its duration and keeps the answer visible', () => {
   const result = projectConversation('s', [finishedTurn([
     { type: 'thought', text: 'private reasoning' },
