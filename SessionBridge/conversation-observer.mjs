@@ -46,13 +46,12 @@ async function syncStableHistory(repo, docID, metadata, signal) {
 // Search preloads establish sync evidence without authoring a read receipt.
 export async function readSyncedConversation({ repo, workspaceID, sessionID, doc, signal }) {
   signal.throwIfAborted();
-  const baseline = projectConversation(sessionID, doc.getList('history').toJSON());
   const metadata = await repo.getDocMeta(`session-${sessionID}`);
   signal.throwIfAborted();
   const syncedMetadata = await syncStableHistory(repo, `session-${sessionID}`, metadata, signal);
   const timestamp = messageTimestamp(syncedMetadata);
   const next = projectConversation(sessionID, doc.getList('history').toJSON());
-  if (Number.isFinite(timestamp) && hasVisibleConversationChange(baseline, next)) {
+  if (Number.isFinite(timestamp)) {
     rememberMarker(repo, workspaceID, sessionID, documentVersion(doc), timestamp);
   }
   return next;
@@ -79,14 +78,6 @@ export function conversationPatch(previous, next) {
       JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null))
       ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),
   };
-}
-
-function hasVisibleConversationChange(previous, next) {
-  if (!previous) return next.turns.length > 0;
-  const patch = conversationPatch(previous, next);
-  return patch.changed.length > 0 || patch.replacesFileChanges === true ||
-    patch.order.length !== previous.turns.length ||
-    patch.order.some((id, index) => id !== previous.turns[index].id);
 }
 
 async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, changed }) {
@@ -117,8 +108,6 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let historyChanged = true;
   let subtasksChanged = true;
   let subtasks = [];
-  let syncedMessageAt = null;
-  let receiptConversation;
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -135,11 +124,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
-    receiptConversation = projectConversation(sessionID, handle.doc.getList('history').toJSON());
-    syncedMessageAt = confirmedMarker(repo, workspaceID, sessionID, documentVersion(handle.doc));
-    // A successful pull and evidence for a read receipt are separate. Waiting
-    // for visible content must not pull the same marker on every stream event.
-    let pulledMessageAt = syncedMessageAt;
+    // Reuse only a successful pull for this exact repo/workspace/document version.
+    let pulledMessageAt = confirmedMarker(repo, workspaceID, sessionID, documentVersion(handle.doc));
     let latestTurn;
     let capability;
     const publish = async () => {
@@ -177,17 +163,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         }
         next = { ...next, subtasks };
         const update = conversationPatch(previous, next);
-        // A synced marker alone does not show that its new content reached the UI.
-        if (lastMessageAt === null) {
-          syncedMessageAt = null;
-          receiptConversation = next;
-        } else if (lastMessageAt !== syncedMessageAt &&
-                   hasVisibleConversationChange(receiptConversation, next)) {
-          syncedMessageAt = lastMessageAt;
-          receiptConversation = next;
-        }
+        // Unchanged cached history is still readable. Lody does not bind activity
+        // markers to history versions (child activity can update the parent too).
+        // A successful stable pull certifies this snapshot; native visibility and
+        // bottom layout decide whether to actually write a receipt.
         update.activity = projectSessionActivity(meta.meta.status);
-        update.lastMessageAt = lastMessageAt === syncedMessageAt ? syncedMessageAt : null;
+        update.lastMessageAt = lastMessageAt === pulledMessageAt ? pulledMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
         update.contextWindowUsage = usage && Number.isSafeInteger(usage.size) && usage.size > 0 &&
           Number.isSafeInteger(usage.used) && usage.used >= 0

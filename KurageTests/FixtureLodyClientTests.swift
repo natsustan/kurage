@@ -387,6 +387,38 @@ struct FixtureLodyClientTests {
 
 @MainActor
 struct AppModelSessionRefreshTests {
+    @Test(arguments: [false, true])
+    func refreshFailureAfterCancellationDoesNotPublishStatus(cancel: Bool) async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let refresh = Task { await model.refreshSessions(cancelWhenCallerCancels: true) }
+        #expect(await requests.next() == "ws-a")
+
+        // A manual caller can join a request originally owned by automatic refresh.
+        let joined = AsyncStream<Void>.makeStream()
+        var joins = joined.stream.makeAsyncIterator()
+        let manual = Task {
+            joined.continuation.yield(())
+            await model.refreshSessions()
+        }
+        _ = await joins.next()
+        if cancel { refresh.cancel() }
+        client.fail("ws-a", with: NSError(domain: "WKErrorDomain", code: 5))
+        await refresh.value
+        await manual.value
+
+        #expect(model.isSignedIn)
+        #expect(!model.isRefreshingSessions)
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+        if cancel {
+            #expect(model.statusNote == nil)
+        } else {
+            #expect(model.statusNote == StatusNote(tone: .failure, text: "Could not refresh sessions."))
+        }
+    }
+
     @Test func visibleListRefreshesRepeatedlyAndStopsWhenCancelled() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)
@@ -699,6 +731,12 @@ private final class DeferredSessionClient: LodyClient {
     func finish(_ workspaceID: String, with sessions: [SessionSummary]) {
         for continuation in pending.removeValue(forKey: workspaceID) ?? [] {
             continuation.resume(returning: sessions)
+        }
+    }
+
+    func fail(_ workspaceID: String, with error: Error) {
+        for continuation in pending.removeValue(forKey: workspaceID) ?? [] {
+            continuation.resume(throwing: error)
         }
     }
 

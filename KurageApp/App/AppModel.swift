@@ -342,21 +342,19 @@ final class AppModel {
             }
         } catch is CancellationError {
             return
-        } catch LodyClientError.signedOut {
-            guard isCurrentSessionRefresh(
-                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
-            ) else { return }
-            signOut()
-        } catch LodyClientError.notConnected {
-            guard isCurrentSessionRefresh(
-                generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
-            ) else { return }
-            currentStatusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
         } catch {
-            guard isCurrentSessionRefresh(
+            // Bridge cancellation can surface as a WebKit error rather than CancellationError.
+            guard !Task.isCancelled, !refreshTask.isCancelled, isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
-            currentStatusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
+            switch error {
+            case LodyClientError.signedOut:
+                signOut()
+            case LodyClientError.notConnected:
+                currentStatusNote = StatusNote(tone: .info, text: "Session sync is not connected yet.")
+            default:
+                currentStatusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
+            }
         }
     }
 
