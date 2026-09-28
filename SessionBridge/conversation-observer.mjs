@@ -67,7 +67,8 @@ export function conversationPatch(previous, next) {
       const before = old.get(turn.id);
       return !before || before.text !== turn.text || before.author !== turn.author ||
         JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []) ||
-        JSON.stringify(before.work ?? null) !== JSON.stringify(turn.work ?? null);
+        JSON.stringify(before.work ?? null) !== JSON.stringify(turn.work ?? null) ||
+        JSON.stringify(before.timing ?? null) !== JSON.stringify(turn.timing ?? null);
     }),
     permission: next.permission,
     latestTurnNumber: next.latestTurnNumber,

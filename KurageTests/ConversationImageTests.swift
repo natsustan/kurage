@@ -6,6 +6,24 @@ import UIKit
 @MainActor
 @Suite(.serialized)
 struct ConversationImageTests {
+    @Test func patchDecodesAndClearsLiveTiming() throws {
+        let previous = Conversation(sessionID: "s", turns: [], permission: nil)
+        let live = try JSONDecoder().decode(ConversationPatch.self, from: Data(#"{"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"","timing":{"startedAtMs":1000,"permissionWaitMs":5000}}],"permission":null,"activity":"running","syncState":"live"}"#.utf8))
+        let conversation = try live.applying(to: previous).conversation
+        #expect(conversation.turns.first?.timing?.title(at: Date(timeIntervalSince1970: 41)) == "Working… 35s")
+        let finished = try JSONDecoder().decode(ConversationPatch.self, from: Data(#"{"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"Done"}],"permission":null,"activity":"idle","syncState":"live"}"#.utf8))
+        #expect(try finished.applying(to: conversation).conversation.turns.first?.timing == nil)
+    }
+
+    @Test func liveTimingUsesWallClockAndRecordedWait() throws {
+        let timing = ConversationTiming(startedAtMs: 1_000, permissionWaitMs: 5_000)
+        #expect(timing.title(at: Date(timeIntervalSince1970: 41)) == "Working… 35s")
+        #expect(timing.title(at: Date(timeIntervalSince1970: 0)) == "Working… 0s")
+        #expect(ConversationTiming().title(at: .now) == "Working…")
+        let turn = ConversationTurn(id: "live", author: .agent, text: "", timing: timing)
+        #expect(try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn)) == turn)
+    }
+
     @Test func cameraPhotoIsBoundedAndKeepsOrientation() async throws {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

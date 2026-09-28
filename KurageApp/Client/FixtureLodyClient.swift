@@ -507,7 +507,8 @@ extension SessionRecord {
             ),
             turns: [
                 ConversationTurn(id: "tests-user", author: .user, text: "Run the tests again"),
-                ConversationTurn(id: "tests-agent", author: .agent, text: "Running npm test"),
+                ConversationTurn(id: "tests-agent", author: .agent, text: "Running npm test",
+                                 timing: ConversationTiming(startedAtMs: Date.now.timeIntervalSince1970 * 1000 - 35_000)),
             ],
             permission: PermissionPrompt(
                 id: "perm-npm-test",

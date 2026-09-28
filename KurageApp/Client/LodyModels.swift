@@ -232,6 +232,21 @@ enum ConversationPart: Equatable, Sendable {
     }
 }
 
+/// Live history timing, in milliseconds since Unix epoch; absent on completed turns.
+struct ConversationTiming: Codable, Equatable, Sendable {
+    var startedAtMs: Double?
+    var permissionWaitMs: Double = 0
+
+    func title(at date: Date) -> String {
+        guard let startedAtMs, startedAtMs.isFinite else { return "Working…" }
+        let now = date.timeIntervalSince1970 * 1000
+        guard now.isFinite else { return "Working…" }
+        let wait = permissionWaitMs.isFinite ? max(0, permissionWaitMs) : 0
+        let elapsed = max(0, now - startedAtMs - wait)
+        return "Working… \(ConversationWork.formatDuration(elapsed))"
+    }
+}
+
 struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     let id: String
     var author: TurnAuthor
@@ -239,13 +254,15 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     var parts: [ConversationPart]
     /// Folded earlier work of a finished agent turn; `parts` then holds its answer.
     var work: ConversationWork?
+    var timing: ConversationTiming?
 
-    init(id: String, author: TurnAuthor, text: String, parts: [ConversationPart] = [], work: ConversationWork? = nil) {
+    init(id: String, author: TurnAuthor, text: String, parts: [ConversationPart] = [], work: ConversationWork? = nil, timing: ConversationTiming? = nil) {
         self.id = id
         self.author = author
         self.text = text
         self.parts = parts
         self.work = work
+        self.timing = timing
     }
 
     /// Ordered chat content. Text-only turns written before image parts still render their text.
@@ -269,6 +286,7 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         parts = try container.decodeIfPresent([PartBox].self, forKey: .parts)?.compactMap(\.part) ?? []
         work = try? container.decodeIfPresent(ConversationWork.self, forKey: .work)
+        timing = try? container.decodeIfPresent(ConversationTiming.self, forKey: .timing)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -278,10 +296,11 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         try container.encode(text, forKey: .text)
         try container.encode(parts.map(PartBox.init), forKey: .parts)
         try container.encodeIfPresent(work, forKey: .work)
+        try container.encodeIfPresent(timing, forKey: .timing)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, author, text, parts, work
+        case id, author, text, parts, work, timing
     }
 }
 

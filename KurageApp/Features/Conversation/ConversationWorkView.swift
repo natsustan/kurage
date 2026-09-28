@@ -48,13 +48,13 @@ struct TurnWorkDisclosure<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("turn-work-toggle-\(turnID)")
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             .accessibilityHint(expanded ? "Hides the work before this reply" : "Shows the work before this reply")
-            if expanded {
+            TopAnchoredDisclosure(expanded: expanded) {
                 VStack(alignment: .leading, spacing: 8) { content() }
                     .padding(.bottom, 12)
-                    .transition(.opacity)
             }
             Divider()
         }
@@ -70,6 +70,7 @@ struct ConversationActivityRow: View {
     let activity: ConversationActivity
     let disclosures: TurnDisclosures
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .subheadline) private var iconWidth = 20.0
     @State private var expanded: Bool
 
     init(turnID: ConversationTurn.ID, activity: ConversationActivity, disclosures: TurnDisclosures) {
@@ -94,10 +95,11 @@ struct ConversationActivityRow: View {
                     header(showsChevron: true)
                 }
                 .buttonStyle(.plain)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("turn-activity-\(activity.id)")
                 .accessibilityValue(expanded ? "Expanded" : "Collapsed")
             }
-            if expanded {
+            TopAnchoredDisclosure(expanded: expanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(activity.steps) { step in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -115,7 +117,6 @@ struct ConversationActivityRow: View {
                 }
                 .padding(.leading, 28)
                 .padding(.bottom, 8)
-                .transition(.opacity)
             }
         }
         .clipped()
@@ -124,7 +125,7 @@ struct ConversationActivityRow: View {
     private func header(showsChevron: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: activity.primaryKind.symbolName)
-                .frame(width: 20)
+                .frame(width: iconWidth)
                 .accessibilityHidden(true)
             Text(activity.summary)
             if showsChevron {
@@ -159,6 +160,43 @@ extension ConversationActivity.Kind {
         case .search: "magnifyingglass"
         case .fetch: "globe"
         case .tool: "wrench.and.screwdriver"
+        }
+    }
+}
+
+/// Reveal the entire body from the header edge as one block. Preserve its
+/// full height and resolve geometry before passing it to individual text/tool rows.
+struct TopAnchoredDisclosure<Content: View>: View {
+    let expanded: Bool
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if expanded {
+                content()
+                    .fixedSize(horizontal: false, vertical: true)
+                    .geometryGroup()
+                    .transition(.move(edge: .top))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .clipped()
+    }
+}
+
+struct TurnWorkingLabel: View {
+    let turnID: ConversationTurn.ID
+    let timing: ConversationTiming
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1, paused: scenePhase != .active)) { context in
+            Text(timing.title(at: context.date))
+                .font(.subheadline)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("turn-working-\(turnID)")
         }
     }
 }

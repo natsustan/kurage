@@ -134,6 +134,24 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkingTimerTicks() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        let label = app.staticTexts["turn-working-tests-agent"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        let initial = label.label
+        XCTAssertTrue(initial.hasPrefix("Working… "))
+        let changes = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in label.label != initial }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [changes], timeout: 4), .completed)
+        attachScreen(app, name: "Working timer")
+        tap(app.buttons["pause-session"])
+        XCTAssertTrue(label.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
     func testWorkedForDisclosureRevealsEarlierWork() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -148,8 +166,10 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["I will check the conversation layout first."].exists)
         attachScreen(app, name: "Worked for collapsed")
 
+        let headerY = toggle.frame.minY
         tap(toggle)
         XCTAssertEqual(toggle.value as? String, "Expanded")
+        XCTAssertEqual(toggle.frame.minY, headerY, accuracy: 2)
         // Expanding at the bottom must not scroll the tapped header away.
         XCTAssertTrue(toggle.isHittable)
         XCTAssertTrue(app.staticTexts["I will check the conversation layout first."].waitForExistence(timeout: 5))
@@ -164,8 +184,10 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "Worked for expanded with commands")
 
         for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        let collapseY = toggle.frame.minY
         tap(toggle)
         XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertEqual(toggle.frame.minY, collapseY, accuracy: 2)
         XCTAssertFalse(app.staticTexts["git status --short"].exists)
         // Reopening restores the command list the reader had opened.
         for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }

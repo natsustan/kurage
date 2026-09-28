@@ -94,6 +94,7 @@ private struct ConversationContent: View {
             fileChanges: displayedConversation?.fileChanges ?? [],
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
+            isRunning: (session?.activity ?? observedActivity) == .running,
             scrollRequestID: scrollRequestID,
             messageTimestamp: loadedMessageAt,
             onBottomMessage: { bottomMessageAt = $0 },
@@ -562,6 +563,7 @@ struct TurnRow: View {
     var onOpenChanges: (Int) -> Void = { _ in }
     var onToggleChanges: (TimeInterval) -> Void = { _ in }
     var disclosures = TurnDisclosures()
+    var isRunning = false
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
@@ -572,6 +574,9 @@ struct TurnRow: View {
                 }
             }
             blocks(turn.content, alignment: alignment)
+            if isRunning, turn.author == .agent, let timing = turn.timing {
+                TurnWorkingLabel(turnID: turn.id, timing: timing)
+            }
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
                                     onOpen: { onOpenChanges(fileChanges.turnNumber) },

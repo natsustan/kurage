@@ -94,7 +94,7 @@ test('projects session images in order and keeps image-only turns', () => {
         activity('2:', { tools: 1 }),
       ],
     },
-    { id: 'a2', author: 'agent', text: '', parts: [activity('0:', { tools: 1 })] },
+    { id: 'a2', author: 'agent', text: '', parts: [activity('0:', { tools: 1 })], timing: { permissionWaitMs: 0 } },
   ]);
 });
 
@@ -181,4 +181,14 @@ test('file attachments project explicit file metadata without inventing message 
   ] }]);
   assert.equal(result.turns[0].text, '');
   assert.deepEqual(result.turns[0].parts, [{ type: 'file', fileID: 'f-1', fileName: 'notes.txt', sizeBytes: 12 }]);
+});
+
+test('live timing survives empty output, ends on completion and belongs only to the latest turn', () => {
+  const entry = { id: 'live', role: 'assistant', timestamp: '2026-01-01T00:00:00Z', items: [], permissionWaitMs: 5000 };
+  const project = history => projectConversation('chat', history).turns;
+  assert.deepEqual(project([entry])[0].timing, { startedAtMs: Date.parse(entry.timestamp), permissionWaitMs: 5000 });
+  assert.equal(project([{ ...entry, finished: true }]).length, 0);
+  assert.equal(project([{ ...entry, endedAt: Date.parse(entry.timestamp) }]).length, 0);
+  assert.equal(project([entry, { id: 'next', role: 'user', items: [{ type: 'text', text: 'Next' }] }]).length, 1);
+  assert.deepEqual(project([{ ...entry, timestamp: 'invalid', permissionWaitMs: -1 }])[0].timing, { permissionWaitMs: 0 });
 });

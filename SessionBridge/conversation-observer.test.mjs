@@ -573,3 +573,10 @@ test('continuously advancing metadata bounds the number of sync attempts', async
   assert.deepEqual(h.updates, [{ error: 'Conversation sync failed' }]);
   h.controller.abort();
 });
+
+test('patches publish timing changes and removal without text changes', () => {
+  const before = { sessionID: 'chat', turns: [{ id: 'a', author: 'agent', text: '', timing: { startedAtMs: 1000, permissionWaitMs: 0 } }] };
+  const after = { ...before, turns: [{ ...before.turns[0], timing: { startedAtMs: 1000, permissionWaitMs: 5000 } }] };
+  assert.equal(conversationPatch(before, after).changed.length, 1);
+  assert.equal(conversationPatch(after, { ...after, turns: [{ id: 'a', author: 'agent', text: '' }] }).changed.length, 1);
+});

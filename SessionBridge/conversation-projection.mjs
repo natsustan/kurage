@@ -76,7 +76,15 @@ export function projectConversation(sessionID, history) {
     const { parts, work } = entry.role === 'assistant'
       ? projectAssistantBlocks(entry, projectItemParts)
       : { parts: (Array.isArray(entry.items) ? entry.items : []).flatMap(projectItemParts) };
-    if (parts.length === 0 && !changedTurnIDs.has(entry.id)) continue;
+    const live = entry === history.at(-1) && entry.role === 'assistant' &&
+      entry.finished !== true && entry.endedAt == null;
+    const startedAtMs = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+    const timing = live ? {
+      ...(Number.isFinite(startedAtMs) ? { startedAtMs } : {}),
+      permissionWaitMs: Number.isFinite(entry.permissionWaitMs) && entry.permissionWaitMs > 0
+        ? entry.permissionWaitMs : 0,
+    } : undefined;
+    if (parts.length === 0 && !changedTurnIDs.has(entry.id) && !timing) continue;
     const text = parts
       .filter((part) => part.type === 'text')
       .map((part) => part.text)
@@ -87,6 +95,7 @@ export function projectConversation(sessionID, history) {
       text,
       parts,
       ...(work ? { work } : {}),
+      ...(timing ? { timing } : {}),
     });
   }
   return { sessionID, turns, latestTurnNumber, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };

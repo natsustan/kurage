@@ -7,6 +7,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     var fileChanges: [ConversationFileChangeGroup] = []
     var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
+    var isRunning = false
     let scrollRequestID: Int
     var messageTimestamp: Double? = nil
     var onBottomMessage: (Double?) -> Void = { _ in }
@@ -24,7 +25,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
         controller.loadImage = loadImage
         controller.onPreviewImage = onPreviewImage
         controller.onOpenTurnChanges = onOpenTurnChanges
-        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
+        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, isRunning: isRunning, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
                           footer: footer(), onRefresh: onRefresh)
     }
 }
@@ -39,6 +40,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
     private var changesByID: [String: ConversationFileChangeGroup] = [:]
     var onOpenTurnChanges: (Int) -> Void = { _ in }
+    private var isRunning = false
     private var turnIDs: [ConversationTurn.ID] = []
     private var scrollRequestID = 0
     private struct ReadingAnchor {
@@ -47,6 +49,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     }
 
     private var readingAnchor: ReadingAnchor?
+    private var anchorsDisclosure = false
     var onBottomMessage: (Double?) -> Void = { _ in }
     private var messageTimestamp: Double?
     private var reportedBottomMessage: Double?
@@ -128,10 +131,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                 TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage,
                         fileChanges: changes, onOpenChanges: onOpenChanges,
                         onToggleChanges: { [weak self] duration in
-                            guard let self else { return }
-                            pendingCardResize = (tableView.contentSize.height, duration)
+                            self?.anchorDisclosureResize(turnID: id, duration: duration)
                         },
-                        disclosures: disclosures)
+                        disclosures: disclosures, isRunning: self?.isRunning == true && id == self?.turnIDs.last)
                     // A reused cell must not carry another turn's disclosure state.
                     .id(turn.id)
                     // Keep the message anchored to the cell top as its disclosure resizes.
@@ -180,7 +182,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         host.didMove(toParent: self)
     }
 
-    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, scrollRequestID: Int, messageTimestamp: Double? = nil,
+    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, isRunning: Bool = false, scrollRequestID: Int, messageTimestamp: Double? = nil,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
         self.messageTimestamp = messageTimestamp
@@ -197,12 +199,17 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         if self.scrollRequestID != scrollRequestID {
             self.scrollRequestID = scrollRequestID
             followsOutput = true
+            anchorsDisclosure = false
             readingAnchor = nil
         }
+        let runningChanged = self.isRunning != isRunning
+        self.isRunning = isRunning
         let updatedChanges = Dictionary(uniqueKeysWithValues: fileChanges.map { ($0.id, $0) })
         let updatedIDs = turns.map(\.id)
+        let lastTurnChanged = turnIDs.last != updatedIDs.last
         let changedIDs: [ConversationTurn.ID] = turns.compactMap { turn in
-            guard let previous = turnsByID[turn.id], previous != turn || changesByID[turn.id] != updatedChanges[turn.id] else { return nil }
+            guard let previous = turnsByID[turn.id], previous != turn || changesByID[turn.id] != updatedChanges[turn.id] || runningChanged ||
+                    (lastTurnChanged && (turn.id == turnIDs.last || turn.id == updatedIDs.last)) else { return nil }
             return turn.id
         }
         changesByID = updatedChanges
@@ -230,13 +237,17 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         view.setNeedsLayout()
     }
 
-    /// Opening work keeps its header where the reader tapped it instead of letting
-    /// bottom-following push it away. Collapsing at the bottom keeps following.
+    /// Both directions keep the tapped row anchored instead of following its bottom.
     private func toggleDisclosure(_ key: String, expanded: Bool, turnID: ConversationTurn.ID, duration: TimeInterval) {
         if expanded { expandedDisclosures.insert(key) } else { expandedDisclosures.remove(key) }
+        anchorDisclosureResize(turnID: turnID, duration: duration)
+    }
+
+    private func anchorDisclosureResize(turnID: ConversationTurn.ID, duration: TimeInterval) {
         pendingCardResize = (tableView.contentSize.height, duration)
-        guard expanded || !followsOutput, let indexPath = dataSource.indexPath(for: turnID) else { return }
+        guard let indexPath = dataSource.indexPath(for: turnID) else { return }
         followsOutput = false
+        anchorsDisclosure = true
         readingAnchor = ReadingAnchor(id: turnID,
                                       viewportOffset: tableView.rectForRow(at: indexPath).minY - tableView.contentOffset.y)
     }
@@ -260,7 +271,13 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             reportBottomMessage()
         }
 
-        let bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
+        var bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
+        // Keep room below a collapsed short transcript so clamping cannot pull
+        // its header down while the contents are retracting upward.
+        if anchorsDisclosure, let readingAnchor, let indexPath = dataSource.indexPath(for: readingAnchor.id) {
+            let offset = tableView.rectForRow(at: indexPath).minY - readingAnchor.viewportOffset
+            bottomInset = max(bottomInset, offset + tableView.bounds.height - tableView.contentSize.height)
+        }
         // Short conversations sit next to the composer, without inserting a fake message row.
         let topInset = max(6, tableView.bounds.height - bottomInset - tableView.contentSize.height)
         let inset = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
@@ -322,6 +339,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         isUserScrolling = true
+        anchorsDisclosure = false
         pendingCardResize = nil
         followsOutput = false
         reportBottomMessage()

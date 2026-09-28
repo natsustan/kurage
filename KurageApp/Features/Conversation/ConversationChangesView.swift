@@ -402,7 +402,7 @@ struct TurnFileChangesCard: View {
             }
             .accessibilityIdentifier("turn-changes-toggle-\(group.id)")
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded {
+            TopAnchoredDisclosure(expanded: expanded) {
                 VStack(spacing: 0) {
                     ForEach(group.files.prefix(3)) { file in
                         VStack(spacing: 0) {
@@ -438,7 +438,6 @@ struct TurnFileChangesCard: View {
                         .accessibilityIdentifier("turn-changes-more-\(group.id)")
                     }
                 }
-                .transition(.opacity)
             }
         }
         .font(.footnote)
