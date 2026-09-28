@@ -230,4 +230,22 @@ for (const attachment of [
     ]);
     assert.equal(expanded.at(-1).text, 'Answer.');
   });
+
+  test(`interleaved ${attachment.type} keeps work expanded in source order`, () => {
+    const items = [
+      { type: 'tool_call', kind: 'read', toolCallId: 'first', title: 'Read first file' },
+      attachment,
+      { type: 'text', text: 'Checking the attachment.' },
+      { type: 'tool_call', kind: 'read', toolCallId: 'second', title: 'Read second file' },
+      { type: 'text', text: 'Answer.' },
+    ];
+    const [streaming] = projectConversation('s', [finishedTurn(items, { finished: false })]).turns;
+    const [finished] = projectConversation('s', [finishedTurn(items)]).turns;
+    assert.equal(finished.work, undefined);
+    assert.deepEqual(finished.parts, streaming.parts);
+    assert.equal(finished.parts[0].steps[0].id, 'first');
+    assert.equal(finished.parts[1].type, attachment.type === 'file' ? 'file' : 'image');
+    assert.equal(finished.parts.at(-2).steps[0].id, 'second');
+    assert.equal(finished.parts.at(-1).text, 'Answer.');
+  });
 }

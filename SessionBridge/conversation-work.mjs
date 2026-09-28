@@ -154,7 +154,12 @@ export function projectAssistantBlocks(entry, projectItem) {
   const visible = blocks.filter(block => !block.work).flatMap(block => block.parts);
   const folded = blocks.filter(block => block.work).flatMap(block => block.parts);
   if (!finished || folded.length === 0 || visible.length === 0) return { parts: all };
-  const insertionIndex = blocks.slice(0, blocks.findIndex(block => block.work))
+  const firstWorkIndex = blocks.findIndex(block => block.work);
+  const lastWorkIndex = blocks.findLastIndex(block => block.work);
+  // One disclosure cannot preserve attachments interleaved between work blocks.
+  // Keep these turns expanded until the display contract supports separate segments.
+  if (blocks.slice(firstWorkIndex, lastWorkIndex).some(block => !block.work)) return { parts: all };
+  const insertionIndex = blocks.slice(0, firstWorkIndex)
     .reduce((count, block) => count + block.parts.length, 0);
   const durationMs = workDurationMs(entry);
   return { parts: visible, work: { ...(durationMs === undefined ? {} : { durationMs }),
