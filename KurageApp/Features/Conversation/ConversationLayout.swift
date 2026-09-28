@@ -8,6 +8,8 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
     let scrollRequestID: Int
+    var messageTimestamp: Double? = nil
+    var onBottomMessage: (Double?) -> Void = { _ in }
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreviewImage: (ConversationImage) -> Void
     let onRefresh: () -> Void
@@ -18,10 +20,11 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: ConversationLayoutController<Footer>, context: Context) {
+        controller.onBottomMessage = onBottomMessage
         controller.loadImage = loadImage
         controller.onPreviewImage = onPreviewImage
         controller.onOpenTurnChanges = onOpenTurnChanges
-        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, scrollRequestID: scrollRequestID,
+        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
                           footer: footer(), onRefresh: onRefresh)
     }
 }
@@ -44,6 +47,12 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     }
 
     private var readingAnchor: ReadingAnchor?
+    var onBottomMessage: (Double?) -> Void = { _ in }
+    private var messageTimestamp: Double?
+    private var reportedBottomMessage: Double?
+    private var needsReceiptLayout = true
+    private var snapshotGeneration = 0
+    private var applyingSnapshot = false
     private var followsOutput = true
     private var isUserScrolling = false
     private var isAdjustingLayout = false
@@ -161,9 +170,11 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         host.didMove(toParent: self)
     }
 
-    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, scrollRequestID: Int,
+    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, scrollRequestID: Int, messageTimestamp: Double? = nil,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
+        self.messageTimestamp = messageTimestamp
+        needsReceiptLayout = true
         self.onRefresh = onRefresh
         footerHost.rootView = MeasuredConversationFooter(content: footer) { [weak self] height in
             guard let self, height.isFinite, height > 0,
@@ -197,7 +208,14 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                 snapshot.appendItems(updatedIDs)
             }
             snapshot.reconfigureItems(changedIDs)
-            dataSource.apply(snapshot, animatingDifferences: false)
+            snapshotGeneration += 1
+            let generation = snapshotGeneration
+            applyingSnapshot = true
+            dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+                guard let self, self.snapshotGeneration == generation else { return }
+                self.applyingSnapshot = false
+                self.view.setNeedsLayout()
+            }
         }
         view.setNeedsLayout()
     }
@@ -215,7 +233,11 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private func adjustTranscriptLayout() {
         guard !isAdjustingLayout, tableView.window != nil, tableView.bounds.height > 0 else { return }
         isAdjustingLayout = true
-        defer { isAdjustingLayout = false }
+        defer {
+            isAdjustingLayout = false
+            if !applyingSnapshot { needsReceiptLayout = false }
+            reportBottomMessage()
+        }
 
         let bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
         // Short conversations sit next to the composer, without inserting a fake message row.
@@ -267,6 +289,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if isUserScrolling { captureReadingAnchor() }
+        reportBottomMessage()
     }
 
     private func captureReadingAnchor() {
@@ -280,6 +303,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         isUserScrolling = true
         pendingCardResize = nil
         followsOutput = false
+        reportBottomMessage()
         captureReadingAnchor()
     }
 
@@ -301,6 +325,23 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         followsOutput = abs(tableView.contentOffset.y - bottomOffset) <= 20
         if followsOutput { readingAnchor = nil }
         else { captureReadingAnchor() }
+        view.setNeedsLayout()
+        reportBottomMessage()
+    }
+
+    private func reportBottomMessage() {
+        // Defer SwiftUI state writes until the representable update has ended,
+        // then recheck geometry so a queued notification cannot certify old layout.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let atBottom = self.tableView.window != nil && self.tableView.bounds.height > 0 &&
+                !self.needsReceiptLayout && !self.applyingSnapshot && !self.isUserScrolling &&
+                self.followsOutput && abs(self.tableView.contentOffset.y - self.bottomOffset) <= 20
+            let timestamp = atBottom ? self.messageTimestamp : nil
+            guard timestamp != self.reportedBottomMessage else { return }
+            self.reportedBottomMessage = timestamp
+            self.onBottomMessage(timestamp)
+        }
     }
 }
 

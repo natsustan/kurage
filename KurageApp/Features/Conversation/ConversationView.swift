@@ -63,12 +63,14 @@ private struct ConversationContent: View {
     @State private var selectedSubtask: ConversationSubtask?
     @State private var observedActivity: SessionActivity?
     @State private var isVisible = false
+    @State private var bottomMessageAt: Double?
     @State private var loadedMessageAt: Double?
 
     private var readReceiptTimestamp: Double? {
         guard isVisible, scenePhase == .active, isCurrentWorkspace,
               connectionStatus == nil, selectedSubtask == nil,
-              previewImage == nil, changesSelection == nil else { return nil }
+              previewImage == nil, changesSelection == nil,
+              bottomMessageAt == loadedMessageAt else { return nil }
         return loadedMessageAt
     }
 
@@ -93,6 +95,8 @@ private struct ConversationContent: View {
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
             scrollRequestID: scrollRequestID,
+            messageTimestamp: loadedMessageAt,
+            onBottomMessage: { bottomMessageAt = $0 },
             loadImage: { image, variant in
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             },
