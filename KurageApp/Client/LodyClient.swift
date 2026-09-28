@@ -42,6 +42,9 @@ protocol LodyClient: AnyObject {
     var supportsSessionMetadataEditing: Bool { get }
     func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws
     var supportsPermissionResponses: Bool { get }
+    var supportsQuestionResponses: Bool { get }
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceID: String) async throws
     /// Whether a local project can start a session from its most recent one.
     var supportsSessionCreation: Bool { get }
 
@@ -51,6 +54,8 @@ protocol LodyClient: AnyObject {
     func signOut()
     func workspaces() async throws -> [WorkspaceSummary]
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
+    func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession]
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
     /// The turn ID reserved for an in-flight or unconfirmed text send.
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
@@ -109,6 +114,8 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] { [] }
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] { [] }
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? { nil }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -145,6 +152,11 @@ extension LodyClient {
         throw LodyClientError.notConnected
     }
     var supportsPermissionResponses: Bool { false }
+    var supportsQuestionResponses: Bool { false }
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceID: String) async throws {
+        throw LodyClientError.notConnected
+    }
     var supportsSessionCreation: Bool { false }
 
     func newSessionOptions(

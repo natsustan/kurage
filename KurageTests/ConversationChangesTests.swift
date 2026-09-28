@@ -16,16 +16,19 @@ struct ConversationChangesTests {
         let unchanged = try patch("").applying(to: previous).conversation
         #expect(unchanged.subtasks == [subtask])
         let changed = try patch("""
-        ,"replacesSubtasks":true,"subtasks":[{"id":"child","title":"Review","agentName":"codex","status":"idle"}]
+        ,"replacesSubtasks":true,"subtasks":[{"id":"child","title":"Review","agentName":"codex","status":"completed","summary":"Done","totalTokens":42,"toolUses":2}]
         """).applying(to: previous).conversation
-        #expect(changed.subtasks?.first?.status == .idle)
+        #expect(changed.subtasks?.first?.status == .completed)
+        #expect(changed.subtasks?.first?.summary == "Done")
+        #expect(changed.subtasks?.first?.totalTokens == 42)
+        #expect(changed.subtasks?.first?.toolUses == 2)
         #expect(changed.turns == previous.turns)
         let removed = try patch(",\"replacesSubtasks\":true,\"subtasks\":[]").applying(to: changed).conversation
         #expect(removed.subtasks == [])
         #expect(removed.turns == previous.turns)
     }
 
-    @Test @MainActor func subtasksStayOutOfRootListAndUseWorkspaceScopedReading() async throws {
+    @Test @MainActor func subtasksAreHistoryDataNotSessionsAndStayWorkspaceScoped() async throws {
         let client = FixtureLodyClient(startsSignedIn: true, records: SessionRecord.samplesWithSubtasks)
         let roots = try await client.sessions(workspaceID: "ws-demo")
         #expect(!roots.contains { $0.id == "review-reuse" || $0.id == "review-quality" })
@@ -33,10 +36,11 @@ struct ConversationChangesTests {
         #expect(parent.subtasks?.map(\.id) == ["review-reuse", "review-quality"])
         let other = try await client.conversation(sessionID: "session-tests", workspaceID: "ws-demo")
         #expect(other.subtasks == [])
-        let child = try await client.conversation(sessionID: "review-reuse", workspaceID: "ws-demo")
-        #expect(child.turns.last?.text == "Reuse review finished.")
         await #expect(throws: LodyClientError.self) {
-            try await client.conversation(sessionID: "review-reuse", workspaceID: "other-workspace")
+            try await client.conversation(sessionID: "review-reuse", workspaceID: "ws-demo")
+        }
+        await #expect(throws: LodyClientError.self) {
+            try await client.conversation(sessionID: "session-long", workspaceID: "other-workspace")
         }
     }
 

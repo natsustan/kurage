@@ -7,7 +7,9 @@ struct KurageApp: App {
     init() {
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
             ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-subtasks")
-                ? SessionRecord.samplesWithSubtasks : SessionRecord.samples,
+                ? SessionRecord.samplesWithSubtasks
+                : ProcessInfo.processInfo.arguments.contains("--fixture-questions")
+                    ? [SessionRecord.questionSample] + SessionRecord.samples : SessionRecord.samples,
                 failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,

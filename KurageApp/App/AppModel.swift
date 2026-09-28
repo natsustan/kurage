@@ -493,6 +493,23 @@ final class AppModel {
         return sessions.first { $0.projectID == projectID }
     }
 
+    func mentionSessions(projectID: String, excluding sessionID: String? = nil) async throws -> [MentionSession] {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let result = try await client.mentionSessions(projectID: projectID, excluding: sessionID, workspaceID: workspaceID)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
+        return result
+    }
+
+    func mentionSkills(templateSessionID: String, agentConfigID: String? = nil) async throws -> [MentionSkill] {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let result = try await client.mentionSkills(templateSessionID: templateSessionID,
+                                                    agentConfigID: agentConfigID, workspaceID: workspaceID)
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
+        return result
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String? = nil
@@ -781,6 +798,23 @@ final class AppModel {
             guard isCurrentOperation() else { return }
             archiveOperationStatusNote = StatusNote(tone: .failure, text: "Could not delete the session.")
         }
+    }
+
+    var supportsQuestionResponses: Bool { client.supportsQuestionResponses }
+
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceGeneration expectedGeneration: Int) async throws {
+        guard workspaceGeneration == expectedGeneration, let workspaceID = selectedWorkspaceID else {
+            throw CancellationError()
+        }
+        let generation = authenticationGeneration
+        try Task.checkCancellation()
+        try await client.respondToQuestion(request, answers: answers, sessionID: sessionID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == expectedGeneration else {
+            throw CancellationError()
+        }
+        conversationCache[workspaceID]?[sessionID]?.questions?.removeAll { $0.id == request.id }
     }
 
     func respond(

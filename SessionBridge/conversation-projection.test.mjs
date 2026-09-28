@@ -32,7 +32,7 @@ test('projects chat text and summarizes tool calls without exposing them as pros
     { id: 's1', role: 'system', items: [{ type: 'text', text: 'system text' }] },
   ]);
   assert.deepEqual(result, {
-    sessionID: 'abc',
+    sessionID: 'abc', subtasks: [],
     latestTurnNumber: 1,
     turns: [
       {

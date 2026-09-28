@@ -1,3 +1,5 @@
+import { projectQuestions } from './conversation-questions.mjs';
+import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectFileChanges } from './file-changes.mjs';
 import { projectAssistantBlocks } from './conversation-work.mjs';
 
@@ -67,6 +69,7 @@ function projectItemParts(item) {
 
 export function projectConversation(sessionID, history) {
   const turns = [];
+  const questions = projectQuestions(history);
   const fileChanges = projectFileChanges(history);
   const changedTurnIDs = new Set(fileChanges.map(group => group.id));
   const latestTurnNumber = Math.max(1, history.filter(entry => entry?.role === 'user').length);
@@ -98,5 +101,5 @@ export function projectConversation(sessionID, history) {
       ...(timing ? { timing } : {}),
     });
   }
-  return { sessionID, turns, latestTurnNumber, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };
+  return { sessionID, turns, latestTurnNumber, subtasks: projectSubtasks(history), permission: null, ...(questions.length ? { questions } : {}), ...(fileChanges.length ? { fileChanges } : {}) };
 }

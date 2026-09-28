@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readSyncedConversation } from './conversation-observer.mjs';
-import { projectSubtasks } from './conversation-subtasks.mjs';
+import { selectMentionSkills } from './mention-skills.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -50,7 +50,6 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     decompressZstd: async (bytes) => bytes,
     createNativeFetch: () => ({ fetch: async () => {}, receive: async () => {} }),
     projectConversation: () => ({}),
-    projectSubtasks,
     projectSessionActivity: () => 'idle',
     observeConversation: async () => {},
     readSyncedConversation,
@@ -58,17 +57,81 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     newSessionOptions: extras.newSessionOptions,
     archiveSession: archive,
     updateSessionMetadata: extras.updateSessionMetadata,
+    respondQuestion: extras.respondQuestion,
     activityTime,
     selectArchivedSessions,
     readLocalProjectState: extras.readLocalProjectState ?? readLocalProjectState,
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
     deleteArchivedSession: extras.deleteArchivedSession ?? deleteArchivedSession,
+    mentionSkills: extras.mentionSkills,
     fetch: async () => {},
     AbortController,
+    setTimeout,
+    clearTimeout,
   });
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('mention sessions stay in the current project and include child sessions', async () => {
+  const rows = [
+    { docId: 'session-current', meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' }, title: 'Current', lastMessageAt: 8 } },
+    { docId: 'session-child', meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' }, parentSessionId: 'current', title: 'Review', lastMessageAt: 9 } },
+    { docId: 'session-root', meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' }, title: 'Other', lastMessageAt: 7 } },
+    { docId: 'session-archived', meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'project' }, title: 'Archived', isArchived: true } },
+    { docId: 'session-other-project', meta: { machineId: 'machine', project: { kind: 'local', localProjectId: 'other' }, title: 'Elsewhere' } },
+  ];
+  const { window } = makeBridge(async () => ({ ok: true }), rows);
+  const result = JSON.parse(await window.kurageMentionSessions('workspace', 'https://gateway.lody.ai',
+    'current', 'local:machine:project', 'request'));
+  assert.deepEqual(result.sessions.map(session => session.id), ['child', 'root']);
+});
+
+test('skill request uses the template machine, project, agent, workspace and user', async () => {
+  let request;
+  const rows = [{ docId: 'session-template', meta: {
+    machineId: 'machine', agentConfigId: 'config', agentType: 'codex',
+    project: { kind: 'local', localProjectId: 'project' },
+  } }];
+  const { window } = makeBridge(async () => ({ ok: true }), rows, undefined, undefined, {
+    mentionSkills: async args => { request = args; return [{ token: 'review', name: 'Review', description: '', path: 'review/SKILL.md' }]; },
+  });
+  const result = JSON.parse(await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+    'template', null, 'user', 'request'));
+  assert.equal(result.skills[0].token, 'review');
+  assert.equal(request.workspaceID, 'workspace');
+  assert.equal(request.machineID, 'machine');
+  assert.equal(request.localProjectID, 'project');
+  assert.equal(request.agentType, 'codex');
+  assert.equal(request.userID, 'user');
+});
+
+test('mention skills use legacy CLI fallback while preserving explicit agent selection', async () => {
+  const groups = [
+    { scope: 'project', dir: '.agents/skills', skills: [
+      { name: 'codex-skill', relativePath: '.agents/skills/codex-skill/SKILL.md' },
+    ] },
+    { scope: 'project', dir: '.claude/skills', skills: [
+      { name: 'claude-skill', relativePath: '.claude/skills/claude-skill/SKILL.md' },
+    ] },
+  ];
+  for (const [agent, expected] of [
+    [{ cliType: 'codex' }, ['codex-skill']],
+    [{ cliType: 'claude' }, ['claude-skill']],
+    [{ cliType: 'codex', agentType: 'claude' }, ['claude-skill']],
+    [{ cliType: 'codex', agentType: 'custom-agent' }, []],
+    [{ cliType: 'builtin' }, []],
+    [{}, []],
+  ]) {
+    const rows = [{ docId: 'session-template', meta: { machineId: 'machine', ...agent } }];
+    const { window } = makeBridge(undefined, rows, undefined, undefined, {
+      mentionSkills: async ({ agentType }) => selectMentionSkills([{ groups }], agentType),
+    });
+    const result = JSON.parse(await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+      'template', null, 'user', 'request'));
+    assert.deepEqual(result.skills.map(skill => skill.token), expected, JSON.stringify(agent));
+  }
+});
 
 test('session cancellation uses the requested workspace and releases its writer', async () => {
   let request;
@@ -497,4 +560,27 @@ test('session list preserves the creation-time sorting fallback without inventin
   const result = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'refresh'));
   assert.equal(result.sessions[0].lastMessageAt, null);
   assert.equal(result.sessions[0].lastActivityAt, Date.parse('2026-01-01T00:00:00Z'));
+});
+
+
+test('question writes scope requests and cancellation to an ephemeral existing-stream replica', async () => {
+  let entered, signal, args;
+  const started = new Promise(resolve => { entered = resolve; });
+  const { window, repos, transports } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    respondQuestion: async (...values) => {
+      args = values;
+      signal = values.at(-1);
+      entered();
+      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  const pending = window.kurageRespondQuestion('workspace-a', 'chat', 'https://example.test', 'turn', 'request', { q: 'Answer' }, 'operation');
+  await started;
+  assert.equal(transports[0].metaStreamId, 'workspace-a:meta');
+  assert.equal(transports[0].createStreamIfMissing, false);
+  assert.deepEqual(args.slice(1, 5), ['chat', 'turn', 'request', { q: 'Answer' }]);
+  window.kurageCancel('operation');
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(signal.aborted, true);
+  assert.equal(repos[0].destroyed, true);
 });

@@ -95,6 +95,35 @@ final class FixtureLodyClient: LodyClient {
             .map(\.summary)
     }
 
+    func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        return records.filter { $0.summary.projectID == projectID && $0.summary.id != sessionID &&
+            !archivedSessionIDs.contains($0.summary.id) }
+            .map { MentionSession(id: $0.summary.id, title: $0.summary.title,
+                                  projectID: $0.summary.projectID,
+                                  lastActivityAt: $0.summary.lastActivityAt ?? $0.summary.lastMessageAt ?? 0) }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
+    }
+
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        _ = try record(templateSessionID)
+        return [
+            MentionSkill(token: "review-and-simplify-changes", name: "Review and Simplify Changes",
+                         description: "Review code quality and simplify changes",
+                         path: ".agents/skills/review-and-simplify-changes/SKILL.md"),
+            MentionSkill(token: "swiftui-specialist", name: "SwiftUI Specialist",
+                         description: "Apple SwiftUI best practices",
+                         path: ".agents/skills/swiftui-specialist/SKILL.md"),
+        ] + (1...12).map { number in
+            MentionSkill(token: "sample-skill-\(number)", name: "Sample Skill \(number)",
+                         description: "A project skill with a longer description for scrolling the suggestions list",
+                         path: ".agents/skills/sample-skill-\(number)/SKILL.md")
+        }
+    }
+
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         try requireAccount()
         try requireWorkspace(workspaceID)
@@ -106,11 +135,8 @@ final class FixtureLodyClient: LodyClient {
             turns: record.turns,
             permission: record.permission,
             fileChanges: record.fileChanges,
-            subtasks: records.filter { $0.parentSessionID == sessionID }.map {
-                ConversationSubtask(id: $0.summary.id, title: $0.summary.title, agentName: $0.summary.agentName,
-                                    status: archivedSessionIDs.contains($0.summary.id) ? .archived :
-                                        $0.summary.activity == .running ? .running : .idle)
-            }
+            subtasks: record.subtasks,
+            questions: record.questions
         )
     }
 
@@ -379,6 +405,31 @@ final class FixtureLodyClient: LodyClient {
         archivedActivity.removeValue(forKey: sessionID)
     }
 
+    var supportsQuestionResponses: Bool { true }
+
+    func respondToQuestion(_ request: ConversationQuestionRequest, answers: [String: QuestionAnswer]?,
+                           sessionID: String, workspaceID: String) async throws {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        try Task.checkCancellation()
+        try update(sessionID) { record in
+            guard record.questions.contains(where: { $0.id == request.id }) else { throw LodyClientError.permissionMissing }
+            if let answers {
+                guard request.answerOptionID != nil,
+                      request.questions.allSatisfy({ question in
+                          guard let answer = answers[question.id] else { return false }
+                          switch answer {
+                          case .text(let value): return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          case .choices(let values): return question.multiSelect && !values.isEmpty
+                          }
+                      }) else { throw LodyClientError.emptyMessage }
+            } else if request.skipOptionID == nil { throw LodyClientError.permissionMissing }
+            record.questions.removeAll { $0.id == request.id }
+            record.turns.append(ConversationTurn(id: "question-result-\(request.id)", author: .agent,
+                                                 text: answers == nil ? "Question skipped." : "Answer received."))
+        }
+    }
+
     func respond(
         _ decision: PermissionDecision,
         requestID: PermissionPrompt.ID,
@@ -441,6 +492,8 @@ struct SessionRecord: Equatable, Sendable {
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var canRestore: Bool = true
     var parentSessionID: String? = nil
+    var subtasks: [ConversationSubtask] = []
+    var questions: [ConversationQuestionRequest] = []
 }
 
 extension SessionRunConfig {
@@ -497,6 +550,24 @@ enum FixtureImage {
 }
 
 extension SessionRecord {
+    static let questionSample = SessionRecord(
+        summary: SessionSummary(id: "session-question", title: "question demo", agentName: "codex",
+                                activity: .running, preview: "Waiting for your answer",
+                                projectID: "local:machine-1:kurage", projectName: "kurage", machineName: "spike@mac"),
+        turns: [ConversationTurn(id: "question-user", author: .user, text: "Help me review the changes."),
+                ConversationTurn(id: "question-agent", author: .agent, text: "I need a little more context before continuing.")],
+        permission: nil,
+        questions: [ConversationQuestionRequest(id: "question-demo", turnID: "question-agent", requestID: "request-demo",
+            questions: [
+                ConversationQuestion(id: "session", question: "Which session should I inspect? Include its title or session ID.",
+                                     header: "Session", options: [], multiSelect: false, allowCustomAnswer: true, isSecret: false),
+                ConversationQuestion(id: "preview", question: "What do you see when opening AppModel.swift?",
+                                     header: "Preview", options: [.init(label: "Code diff", description: "The file changes are visible."),
+                                                                  .init(label: "Preview unavailable", description: "No code is shown.")],
+                                     multiSelect: false, allowCustomAnswer: true, isSecret: false),
+            ], answerOptionID: "answer", skipOptionID: "skip")]
+    )
+
     static let samples: [SessionRecord] = [
         SessionRecord(
             summary: SessionSummary(
@@ -651,21 +722,15 @@ extension ConversationFileChangeGroup {
 
 extension SessionRecord {
     static var samplesWithSubtasks: [SessionRecord] {
-        samples + [
-            SessionRecord(
-                summary: SessionSummary(id: "review-reuse", title: "Review code reuse", agentName: "codex",
-                                        activity: .idle, preview: ""),
-                turns: [ConversationTurn(id: "reuse-task", author: .user, text: "Check reuse opportunities"),
-                        ConversationTurn(id: "reuse-result", author: .agent, text: "Reuse review finished.")],
-                permission: nil, parentSessionID: "session-long"
-            ),
-            SessionRecord(
-                summary: SessionSummary(id: "review-quality", title: "Review correctness", agentName: "codex",
-                                        activity: .running, preview: ""),
-                turns: [ConversationTurn(id: "quality-task", author: .user, text: "Check correctness"),
-                        ConversationTurn(id: "quality-result", author: .agent, text: "Checking state isolation.")],
-                permission: nil, parentSessionID: "session-long"
-            ),
-        ]
+        var records = samples
+        if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {
+            records[index].subtasks = [
+                ConversationSubtask(id: "review-reuse", title: "Review code reuse", agentName: "Codex agent",
+                                    status: .completed, summary: "Reuse review finished.", totalTokens: 1200, toolUses: 3),
+                ConversationSubtask(id: "review-quality", title: "Review correctness", agentName: "Codex agent",
+                                    status: .running, summary: "Checking state isolation.", lastToolName: "Read"),
+            ]
+        }
+        return records
     }
 }

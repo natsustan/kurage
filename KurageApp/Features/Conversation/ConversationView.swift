@@ -44,6 +44,7 @@ private struct ConversationContent: View {
     @State private var refreshID = 0
     @State private var conversation: Conversation?
     @State private var draft = ""
+    @State private var mentions = ComposerMentionState()
     @State private var attachments: [ComposerAttachment] = []
     @State private var isSending = false
     @State private var pendingTurns: [ConversationTurn] = []
@@ -105,11 +106,22 @@ private struct ConversationContent: View {
         ) {
             ConversationFooter(
                 permission: displayedConversation?.permission,
+                question: (observedActivity ?? session?.activity) == .running ? displayedConversation?.questions?.first : nil,
+                questionReady: !isReadOnly && isCurrentWorkspace && scenePhase == .active &&
+                    connectionStatus == nil && observedWorkspaceID == model.selectedWorkspaceID &&
+                    (observedActivity ?? session?.activity) == .running && model.supportsQuestionResponses,
+                onQuestionResponse: { request, answers in
+                    try await model.respondToQuestion(request, answers: answers, sessionID: sessionID,
+                                                      workspaceGeneration: workspaceGeneration)
+                    guard isCurrentWorkspace else { throw CancellationError() }
+                    conversation?.questions?.removeAll { $0.id == request.id }
+                    refreshID += 1
+                },
                 fileChanges: displayedConversation?.fileChanges ?? [],
                 onOpenChanges: { changesSelection = FileChangesSelection(turnNumber: nil) },
                 subtasks: displayedConversation?.subtasks ?? [],
                 onOpenSubtasks: { selectedSubtask = $0 },
-                draft: $draft, attachments: $attachments,
+                draft: $draft, mentions: $mentions, attachments: $attachments,
                 isSending: isSending,
                 isCancelling: isCancelling,
                 isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
@@ -121,6 +133,12 @@ private struct ConversationContent: View {
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
+                mentionSourceID: "\(workspaceGeneration):\(sessionID)",
+                loadMentionSessions: {
+                    guard let projectID = session?.projectID else { return [] }
+                    return try await model.mentionSessions(projectID: projectID, excluding: sessionID)
+                },
+                loadMentionSkills: { try await model.mentionSkills(templateSessionID: sessionID) },
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
@@ -141,7 +159,7 @@ private struct ConversationContent: View {
             }
         }
         .sheet(item: $selectedSubtask) { subtask in
-            ConversationSubtaskSheet(subtask: subtask, model: model)
+            ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id })
         }
         .sheet(item: $changesSelection) { selection in
             ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
@@ -296,7 +314,9 @@ private struct ConversationContent: View {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
                 model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
-        let text = draft
+        let originalDraft = draft
+        let originalMentions = mentions
+        let text = mentions.expanded(draft)
         let sentAttachments = attachments
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { return }
@@ -309,6 +329,7 @@ private struct ConversationContent: View {
         }
         let choice = runConfigState.choice
         draft = ""
+        mentions.clear()
         scrollRequestID += 1
         banner = nil
         isSending = true
@@ -331,28 +352,32 @@ private struct ConversationContent: View {
             } catch LodyClientError.deliveryUnconfirmed {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                draft = text
+                draft = originalDraft
+                mentions = originalMentions
                 previousPendingText = trimmed
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "Send could not be confirmed. Retry to resume the same message."
             } catch LodyClientError.previousSendPending(let previousText) {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                draft = text
+                draft = originalDraft
+                mentions = originalMentions
                 previousPendingText = previousText
                 previousPendingWorkspaceID = model.selectedWorkspaceID
                 banner = "An earlier send is unconfirmed. Retry it before sending different text."
             } catch LodyClientError.sendSuperseded {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                draft = text
+                draft = originalDraft
+                mentions = originalMentions
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
                 banner = "A newer message took precedence. Send again to create a new message."
             } catch LodyClientError.sessionBusy {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                draft = text
+                draft = originalDraft
+                mentions = originalMentions
                 banner = "Wait for the current reply before sending."
             } catch is CancellationError {
                 removePendingTurn(id: turnID)
@@ -360,7 +385,8 @@ private struct ConversationContent: View {
             } catch {
                 guard isCurrentWorkspace else { return }
                 removePendingTurn(id: turnID)
-                draft = text
+                draft = originalDraft
+                mentions = originalMentions
                 previousPendingText = model.pendingTextSend(sessionID: sessionID)?.text
                 previousPendingWorkspaceID = previousPendingText == nil ? nil : model.selectedWorkspaceID
                 banner = previousPendingText == nil
@@ -412,7 +438,10 @@ private struct ConversationContent: View {
                 runConfigState.didSend(sentChoice)
                 previousPendingText = nil
                 previousPendingWorkspaceID = nil
-                if draft.trimmingCharacters(in: .whitespacesAndNewlines) == text { draft = "" }
+                if mentions.expanded(draft).trimmingCharacters(in: .whitespacesAndNewlines) == text {
+                    draft = ""
+                    mentions.clear()
+                }
                 banner = draft.isEmpty ? nil : "Earlier message confirmed. Review your draft before sending."
                 if let latest = try? await model.conversation(sessionID: sessionID) {
                     receiveConversation(latest)
@@ -638,11 +667,15 @@ struct TurnRow: View {
 
 private struct ConversationFooter: View {
     let permission: PermissionPrompt?
+    let question: ConversationQuestionRequest?
+    let questionReady: Bool
+    let onQuestionResponse: @MainActor (ConversationQuestionRequest, [String: QuestionAnswer]?) async throws -> Void
     let fileChanges: [ConversationFileChangeGroup]
     let onOpenChanges: () -> Void
     let subtasks: [ConversationSubtask]
     let onOpenSubtasks: (ConversationSubtask) -> Void
     @Binding var draft: String
+    @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
     let isSending: Bool
     let isCancelling: Bool
@@ -655,6 +688,9 @@ private struct ConversationFooter: View {
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
+    let mentionSourceID: String
+    let loadMentionSessions: @MainActor () async throws -> [MentionSession]
+    let loadMentionSkills: @MainActor () async throws -> [MentionSkill]
     let onSend: () -> Void
     let onCancel: () -> Void
     let onChooseRunConfig: (String) -> Void
@@ -684,6 +720,12 @@ private struct ConversationFooter: View {
                         .font(.footnote)
                         .disabled(isSending)
                 }
+                if let question {
+                    ConversationQuestionCard(request: question, isReady: questionReady) { answers in
+                        try await onQuestionResponse(question, answers)
+                    }
+                    .id(question.id)
+                }
                 if let permission, supportsPermissionResponses {
                     PermissionCard(permission: permission, onDecision: onDecision)
                 }
@@ -695,13 +737,17 @@ private struct ConversationFooter: View {
                     .frame(maxWidth: .infinity)
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
-                    SessionComposer(draft: $draft, attachments: $attachments, isSending: isSending, isCancelling: isCancelling,
+                    SessionComposer(draft: $draft, mentions: $mentions, attachments: $attachments,
+                                    isSending: isSending, isCancelling: isCancelling,
                                     isSessionRunning: isSessionRunning,
                                     supportsTextSending: supportsTextSending,
                                     supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                     supportsSessionCancellation: supportsSessionCancellation,
                                     runConfig: runConfig?.menu,
                                     contextWindowUsage: contextWindowUsage,
+                                    mentionSourceID: mentionSourceID,
+                                    loadMentionSessions: loadMentionSessions,
+                                    loadMentionSkills: loadMentionSkills,
                                     onSend: onSend, onCancel: onCancel,
                                     onChooseRunConfig: { _, value in onChooseRunConfig(value) })
                 } else {

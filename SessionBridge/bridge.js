@@ -1,14 +1,15 @@
+import { respondQuestion } from './conversation-questions.mjs';
 import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
 import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
-import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation, readSyncedConversation } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
+import { mentionSkills } from './mention-skills.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
 import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
@@ -179,6 +180,81 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 
+window.kurageMentionSessions = async (workspaceID, gatewayBaseURL, currentSessionID, projectID, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
+    const rows = await repo.listDoc();
+    controller.signal.throwIfAborted();
+    const currentProjectKey = projectID.startsWith('github:') ? projectID.toLowerCase() : projectID;
+    const sessions = rows.filter(row => row.docId.startsWith('session-') &&
+      !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta?.isArchived &&
+      row.docId !== `session-${currentSessionID}`).map(row => {
+      const project = row.meta.project;
+      const localID = project?.kind === 'local' ? project.localProjectId : null;
+      const repoName = project?.kind === 'github' ? project.repoFullName :
+        project?.githubRepoFullName ?? row.meta.repoFullName;
+      const key = typeof localID === 'string' ? `local:${row.meta.machineId}:${localID}` :
+        typeof repoName === 'string' && repoName.trim().length ? `github:${repoName.trim().toLowerCase()}` : null;
+      return {
+        id: row.docId.slice('session-'.length), title: row.meta.title || 'Untitled session',
+        projectID: key, lastActivityAt: activityTime(row.meta),
+      };
+    }).filter(row => row.projectID === currentProjectKey)
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    return JSON.stringify({ sessions });
+  }, true, controller.signal); }
+  finally { if (operationID) sessionRefreshes.delete(operationID); }
+};
+
+window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSessionID,
+  agentConfigID, userID, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    const source = await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
+      const row = (await repo.listDoc()).find(row => row.docId === `session-${templateSessionID}` &&
+        !row.deleted && !row.meta?.isArchived);
+      if (!row) throw new Error('Session is unavailable in this workspace');
+      const machineID = row.meta.machineId;
+      if (typeof machineID !== 'string' || !machineID) throw new Error('Machine is unavailable');
+      let agentType = row.meta.agentType ?? row.meta.cliType;
+      if (agentConfigID && agentConfigID !== row.meta.agentConfigId) {
+        const flockID = `${workspaceID}:mf:${machineID}`;
+        const document = await repo.openFlockDoc(flockID);
+        const synced = await repo.sync({ scope: 'doc', flockDocIds: [flockID],
+          requireTransports: ['cloud'], signal: controller.signal });
+        if (!synced.ok) throw new Error('Agent configuration sync failed');
+        const config = Array.from(document.flock.scan({ prefix: ['agentConfig'] }))
+          .find(item => item.key?.[1] === agentConfigID)?.value;
+        if (!config?.agentType) throw new Error('Agent configuration is unavailable');
+        agentType = config.agentType;
+      }
+      const localProjectID = row.meta.project?.kind === 'local'
+        ? row.meta.project.localProjectId : null;
+      return { machineID, localProjectID, agentType };
+    }, true, controller.signal);
+    controller.signal.throwIfAborted();
+    const skills = await mentionSkills({
+      workspaceID, ...source, userID, gatewayBaseURL,
+      auth: async () => {
+        const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, operationID,
+        });
+        return access.token;
+      },
+      signal: controller.signal,
+    });
+    return JSON.stringify({ skills });
+  }
+  finally {
+    clearTimeout(timeout);
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
+
 window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
@@ -301,10 +377,7 @@ window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, opera
       const conversation = await readSyncedConversation({
         repo, workspaceID, sessionID, doc: handle.doc, signal: controller.signal,
       });
-      return JSON.stringify({
-        ...conversation,
-        subtasks: projectSubtasks(sessionID, await repo.listDoc()),
-      });
+      return JSON.stringify(conversation);
     } finally {
       // Search reads every transcript. Keep only documents used by a pending
       // or active observation; unloading those would invalidate its handle.
@@ -351,5 +424,18 @@ window.kurageUpdateSessionMetadata = async (workspaceID, sessionID, gatewayBaseU
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
+
+window.kurageRespondQuestion = async (workspaceID, sessionID, baseURL, turnID, requestID, answers, operationID) => {
+  const controller = new AbortController();
+  sessionRefreshes.set(operationID, controller);
+  try {
+    return await withSyncedWriteRepo(workspaceID, baseURL,
+      repo => respondQuestion(repo, sessionID, turnID, requestID, answers, controller.signal),
+      { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    controller.abort();
+    sessionRefreshes.delete(operationID);
   }
 };

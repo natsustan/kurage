@@ -198,6 +198,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                   abs(footerHeightConstraint.constant - height) > 0.5 else { return }
             footerHeightConstraint.constant = ceil(height)
             view.setNeedsLayout()
+            // Keep the transcript inset in step with the newly measured footer.
+            view.layoutIfNeeded()
         }
         emptyHost.rootView = ConversationEmptyState(isLoading: isLoading)
         emptyHost.view.isHidden = !turns.isEmpty
