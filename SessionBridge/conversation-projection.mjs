@@ -1,8 +1,9 @@
 import { projectFileChanges } from './file-changes.mjs';
+import { projectAssistantBlocks } from './conversation-work.mjs';
 
-// Project ordinary chat text, session images, and file metadata. Tool results, thoughts,
-// and other item types need their own UI; rendering them as prose would
-// misrepresent them.
+// Project ordinary chat text, session images, and file metadata. Tool calls are
+// summarized as explicit activity parts; thoughts and other item types need
+// their own UI, and rendering them as prose would misrepresent them.
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -44,33 +45,24 @@ function projectImage(item) {
   return image;
 }
 
-function projectParts(items) {
-  const parts = [];
-  for (const item of items) {
-    if (item?.type === 'file' && isImageReference(item.fileId) && Number.isInteger(item.sizeBytes) && item.sizeBytes > 0) {
-      const fileName = typeof item.fileName === 'string'
-        ? item.fileName.replaceAll('\0', '').trim().slice(0, 200) : '';
-      parts.push({ type: 'file', fileID: item.fileId, fileName: fileName || 'File', sizeBytes: item.sizeBytes });
-      continue;
-    }
-    if (item?.type === 'text') {
-      const text = visibleText(item.text);
-      if (text) parts.push({ type: 'text', text });
-      continue;
-    }
-    if (item?.type === 'image') {
-      const image = projectImage(item);
-      if (image) parts.push(image);
-      continue;
-    }
-    if (item?.type === 'image_group' && Array.isArray(item.images)) {
-      for (const image of item.images) {
-        const projected = projectImage(image);
-        if (projected) parts.push(projected);
-      }
-    }
+function projectItemParts(item) {
+  if (item?.type === 'file' && isImageReference(item.fileId) && Number.isInteger(item.sizeBytes) && item.sizeBytes > 0) {
+    const fileName = typeof item.fileName === 'string'
+      ? item.fileName.replaceAll('\0', '').trim().slice(0, 200) : '';
+    return [{ type: 'file', fileID: item.fileId, fileName: fileName || 'File', sizeBytes: item.sizeBytes }];
   }
-  return parts;
+  if (item?.type === 'text') {
+    const text = visibleText(item.text);
+    return text ? [{ type: 'text', text }] : [];
+  }
+  if (item?.type === 'image') {
+    const image = projectImage(item);
+    return image ? [image] : [];
+  }
+  if (item?.type === 'image_group' && Array.isArray(item.images)) {
+    return item.images.map(projectImage).filter(Boolean);
+  }
+  return [];
 }
 
 export function projectConversation(sessionID, history) {
@@ -81,7 +73,9 @@ export function projectConversation(sessionID, history) {
   for (const entry of history) {
     if (entry?.role !== 'user' && entry?.role !== 'assistant') continue;
     if (typeof entry.id !== 'string') continue;
-    const parts = projectParts(Array.isArray(entry.items) ? entry.items : []);
+    const { parts, work } = entry.role === 'assistant'
+      ? projectAssistantBlocks(entry, projectItemParts)
+      : { parts: (Array.isArray(entry.items) ? entry.items : []).flatMap(projectItemParts) };
     if (parts.length === 0 && !changedTurnIDs.has(entry.id)) continue;
     const text = parts
       .filter((part) => part.type === 'text')
@@ -92,6 +86,7 @@ export function projectConversation(sessionID, history) {
       author: entry.role === 'user' ? 'user' : 'agent',
       text,
       parts,
+      ...(work ? { work } : {}),
     });
   }
   return { sessionID, turns, latestTurnNumber, permission: null, ...(fileChanges.length ? { fileChanges } : {}) };

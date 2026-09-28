@@ -561,31 +561,17 @@ struct TurnRow: View {
     var fileChanges: ConversationFileChangeGroup? = nil
     var onOpenChanges: (Int) -> Void = { _ in }
     var onToggleChanges: (TimeInterval) -> Void = { _ in }
+    var disclosures = TurnDisclosures()
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
         VStack(alignment: alignment, spacing: 8) {
-            ForEach(conversationBlocks(author: turn.author, content: turn.content)) { block in
-                switch block {
-                case .file(_, let file):
-                    Label {
-                        VStack(alignment: .leading) {
-                            Text(file.fileName).lineLimit(2)
-                            Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-                        }
-                    } icon: { Image(systemName: "doc") }
-                    .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
-                case .text(_, let text):
-                    messageText(text)
-                case .images(_, let images):
-                    ConversationImageGroup(
-                        images: images,
-                        alignment: alignment,
-                        loadImage: loadImage,
-                        onPreview: onPreviewImage
-                    )
+            if let work = turn.displayedWork {
+                TurnWorkDisclosure(turnID: turn.id, work: work, disclosures: disclosures) {
+                    blocks(work.parts, alignment: alignment)
                 }
             }
+            blocks(turn.content, alignment: alignment)
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
                                     onOpen: { onOpenChanges(fileChanges.turnNumber) },
@@ -594,6 +580,32 @@ struct TurnRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: turn.author == .user ? .trailing : .leading)
+    }
+
+    private func blocks(_ content: [ConversationPart], alignment: HorizontalAlignment) -> some View {
+        ForEach(conversationBlocks(author: turn.author, content: content)) { block in
+            switch block {
+            case .file(_, let file):
+                Label {
+                    VStack(alignment: .leading) {
+                        Text(file.fileName).lineLimit(2)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "doc") }
+                .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
+            case .text(_, let text):
+                messageText(text)
+            case .images(_, let images):
+                ConversationImageGroup(
+                    images: images,
+                    alignment: alignment,
+                    loadImage: loadImage,
+                    onPreview: onPreviewImage
+                )
+            case .activity(let activity):
+                ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
+            }
+        }
     }
 
     @ViewBuilder

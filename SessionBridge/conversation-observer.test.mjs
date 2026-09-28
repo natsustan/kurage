@@ -254,6 +254,17 @@ test('patch transmits an image added to an unchanged text turn', () => {
   assert.deepEqual(conversationPatch(next, next).changed, []);
 });
 
+test('patch transmits folded work that changes without visible parts changing', () => {
+  const before = { id: 'a', author: 'agent', text: 'Done', parts: [{ type: 'text', text: 'Done' }],
+    work: { parts: [{ type: 'text', text: 'Working' }] } };
+  const after = { ...before, work: { ...before.work, durationMs: 1_000 } };
+  const withoutWork = { ...before, work: undefined };
+  const turns = turn => ({ sessionID: 'abc', turns: [turn], permission: null });
+  assert.deepEqual(conversationPatch(turns(before), turns(after)).changed, [after]);
+  assert.deepEqual(conversationPatch(turns(after), turns(withoutWork)).changed, [withoutWork]);
+  assert.deepEqual(conversationPatch(turns(after), turns(after)).changed, []);
+});
+
 
 test('file-only history updates replace summaries and removal clears them while subscribed', async () => {
   const h = harness();

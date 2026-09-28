@@ -57,6 +57,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var isUserScrolling = false
     private var isAdjustingLayout = false
     private var pendingCardResize: (height: CGFloat, duration: TimeInterval)?
+    /// Opened "Worked for …" and activity disclosures, restored when cells are reconfigured or reused.
+    private var expandedDisclosures: Set<String> = []
     private var onRefresh: (() -> Void)?
     var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
     var onPreviewImage: ((ConversationImage) -> Void)?
@@ -117,13 +119,21 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             let onPreviewImage = self?.onPreviewImage ?? { _ in }
             let changes = self?.changesByID[id]
             let onOpenChanges = self?.onOpenTurnChanges ?? { _ in }
+            let disclosures = TurnDisclosures { [weak self] key in
+                self?.expandedDisclosures.contains(key) ?? false
+            } onToggle: { [weak self] key, expanded, duration in
+                self?.toggleDisclosure(key, expanded: expanded, turnID: id, duration: duration)
+            }
             cell.contentConfiguration = UIHostingConfiguration {
                 TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage,
                         fileChanges: changes, onOpenChanges: onOpenChanges,
                         onToggleChanges: { [weak self] duration in
                             guard let self else { return }
                             pendingCardResize = (tableView.contentSize.height, duration)
-                        })
+                        },
+                        disclosures: disclosures)
+                    // A reused cell must not carry another turn's disclosure state.
+                    .id(turn.id)
                     // Keep the message anchored to the cell top as its disclosure resizes.
                     .frame(maxHeight: .infinity, alignment: .top)
             }
@@ -218,6 +228,17 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             }
         }
         view.setNeedsLayout()
+    }
+
+    /// Opening work keeps its header where the reader tapped it instead of letting
+    /// bottom-following push it away. Collapsing at the bottom keeps following.
+    private func toggleDisclosure(_ key: String, expanded: Bool, turnID: ConversationTurn.ID, duration: TimeInterval) {
+        if expanded { expandedDisclosures.insert(key) } else { expandedDisclosures.remove(key) }
+        pendingCardResize = (tableView.contentSize.height, duration)
+        guard expanded || !followsOutput, let indexPath = dataSource.indexPath(for: turnID) else { return }
+        followsOutput = false
+        readingAnchor = ReadingAnchor(id: turnID,
+                                      viewportOffset: tableView.rectForRow(at: indexPath).minY - tableView.contentOffset.y)
     }
 
     override func viewDidLayoutSubviews() {

@@ -134,6 +134,46 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkedForDisclosureRevealsEarlierWork() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let toggle = app.buttons["turn-work-toggle-long-agent-20"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.label, "Worked for 1m 27s")
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertTrue(app.staticTexts["Latest reply in long conversation"].exists)
+        XCTAssertFalse(app.staticTexts["I will check the conversation layout first."].exists)
+        attachScreen(app, name: "Worked for collapsed")
+
+        tap(toggle)
+        XCTAssertEqual(toggle.value as? String, "Expanded")
+        // Expanding at the bottom must not scroll the tapped header away.
+        XCTAssertTrue(toggle.isHittable)
+        XCTAssertTrue(app.staticTexts["I will check the conversation layout first."].waitForExistence(timeout: 5))
+        let transcript = app.tables["conversation-transcript"]
+        let activity = app.buttons["turn-activity-2:long-tool-1"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 5))
+        XCTAssertEqual(activity.label, "Ran 2 commands · Read 1 file")
+        for _ in 0..<4 where !activity.isHittable { transcript.swipeUp(velocity: .slow) }
+        tap(activity)
+        XCTAssertEqual(activity.value as? String, "Expanded")
+        XCTAssertTrue(app.staticTexts["git status --short"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Worked for expanded with commands")
+
+        for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        tap(toggle)
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertFalse(app.staticTexts["git status --short"].exists)
+        // Reopening restores the command list the reader had opened.
+        for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        tap(toggle)
+        XCTAssertTrue(app.staticTexts["git status --short"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testRetryClearsConfirmedDraftAndPreservesEditedDraft() {
         for editDraft in [false, true] {
             let app = XCUIApplication()

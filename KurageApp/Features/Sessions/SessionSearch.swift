@@ -8,7 +8,8 @@ enum SessionSearch {
 
     static func bodyText(_ turns: [ConversationTurn]) -> String {
         turns.compactMap { turn in
-            let lines = turn.content.compactMap { part -> String? in
+            // Folded work stays searchable, as in Lody.
+            let lines = ((turn.displayedWork?.parts ?? []) + turn.content).compactMap { part -> String? in
                 guard case .text(let text) = part else { return nil }
                 return text
             }

@@ -66,7 +66,8 @@ export function conversationPatch(previous, next) {
     changed: next.turns.filter(turn => {
       const before = old.get(turn.id);
       return !before || before.text !== turn.text || before.author !== turn.author ||
-        JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []);
+        JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []) ||
+        JSON.stringify(before.work ?? null) !== JSON.stringify(turn.work ?? null);
     }),
     permission: next.permission,
     latestTurnNumber: next.latestTurnNumber,
