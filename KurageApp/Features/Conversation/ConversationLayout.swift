@@ -7,6 +7,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     var fileChanges: [ConversationFileChangeGroup] = []
     var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
+    var isRunning = false
     let scrollRequestID: Int
     var messageTimestamp: Double? = nil
     var onBottomMessage: (Double?) -> Void = { _ in }
@@ -24,7 +25,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
         controller.loadImage = loadImage
         controller.onPreviewImage = onPreviewImage
         controller.onOpenTurnChanges = onOpenTurnChanges
-        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
+        controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, isRunning: isRunning, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
                           footer: footer(), onRefresh: onRefresh)
     }
 }
@@ -39,6 +40,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
     private var changesByID: [String: ConversationFileChangeGroup] = [:]
     var onOpenTurnChanges: (Int) -> Void = { _ in }
+    private var isRunning = false
     private var turnIDs: [ConversationTurn.ID] = []
     private var scrollRequestID = 0
     private struct ReadingAnchor {
@@ -47,6 +49,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     }
 
     private var readingAnchor: ReadingAnchor?
+    private var anchorsDisclosure = false
     var onBottomMessage: (Double?) -> Void = { _ in }
     private var messageTimestamp: Double?
     private var reportedBottomMessage: Double?
@@ -56,7 +59,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var followsOutput = true
     private var isUserScrolling = false
     private var isAdjustingLayout = false
-    private var pendingCardResize: (height: CGFloat, duration: TimeInterval)?
+    /// Opened "Worked for …" and activity disclosures, restored when cells are reconfigured or reused.
+    private var expandedDisclosures: Set<String> = []
     private var onRefresh: (() -> Void)?
     var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
     var onPreviewImage: ((ConversationImage) -> Void)?
@@ -89,6 +93,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         tableView.separatorStyle = .none
         tableView.allowsSelection = false
         tableView.rowHeight = UITableView.automaticDimension
+        tableView.selfSizingInvalidation = .enabledIncludingConstraints
         tableView.estimatedRowHeight = 100
         tableView.contentInsetAdjustmentBehavior = .never
         tableView.automaticallyAdjustsScrollIndicatorInsets = false
@@ -97,7 +102,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         tableView.alwaysBounceVertical = true
         tableView.accessibilityIdentifier = "conversation-transcript"
         tableView.delegate = self
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "turn")
+        tableView.register(ConversationTurnCell.self, forCellReuseIdentifier: "turn")
         contentView.addSubview(tableView)
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -108,7 +113,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
         dataSource = UITableViewDiffableDataSource<Int, ConversationTurn.ID>(tableView: tableView) {
             [weak self] table, indexPath, id in
-            let cell = table.dequeueReusableCell(withIdentifier: "turn", for: indexPath)
+            let cell = table.dequeueReusableCell(withIdentifier: "turn", for: indexPath) as! ConversationTurnCell
             guard let turn = self?.turnsByID[id] else { return cell }
             cell.backgroundColor = .clear
             let loadImage = self?.loadImage ?? { @MainActor _, _ async throws -> Data in
@@ -117,18 +122,30 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             let onPreviewImage = self?.onPreviewImage ?? { _ in }
             let changes = self?.changesByID[id]
             let onOpenChanges = self?.onOpenTurnChanges ?? { _ in }
-            cell.contentConfiguration = UIHostingConfiguration {
+            let disclosures = TurnDisclosures { [weak self] key in
+                self?.expandedDisclosures.contains(key) ?? false
+            } onToggle: { [weak self] key, expanded in
+                self?.toggleDisclosure(key, expanded: expanded, turnID: id)
+            }
+            cell.setContent(parent: self) {
                 TurnRow(turn: turn, loadImage: loadImage, onPreviewImage: onPreviewImage,
                         fileChanges: changes, onOpenChanges: onOpenChanges,
-                        onToggleChanges: { [weak self] duration in
-                            guard let self else { return }
-                            pendingCardResize = (tableView.contentSize.height, duration)
-                        })
-                    // Keep the message anchored to the cell top as its disclosure resizes.
-                    .frame(maxHeight: .infinity, alignment: .top)
+                        onToggleChanges: { [weak self] in
+                            self?.anchorDisclosureResize(turnID: id)
+                        },
+                        disclosures: disclosures, isRunning: self?.isRunning == true && id == self?.turnIDs.last)
+                    // A reused cell must not carry another turn's disclosure state.
+                    .id(turn.id)
+                    // Cell sizing must not inject a second geometry animation.
+                    .transaction { transaction in
+                        guard turn.author == .agent else { return }
+                        transaction.animation = nil
+                        transaction.disablesAnimations = true
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .margins(.horizontal, 20)
-            .margins(.vertical, 14)
             return cell
         }
 
@@ -170,7 +187,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         host.didMove(toParent: self)
     }
 
-    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, scrollRequestID: Int, messageTimestamp: Double? = nil,
+    func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, isRunning: Bool = false, scrollRequestID: Int, messageTimestamp: Double? = nil,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
         self.messageTimestamp = messageTimestamp
@@ -187,12 +204,19 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         if self.scrollRequestID != scrollRequestID {
             self.scrollRequestID = scrollRequestID
             followsOutput = true
+            anchorsDisclosure = false
             readingAnchor = nil
         }
+        let runningChanged = self.isRunning != isRunning
+        self.isRunning = isRunning
         let updatedChanges = Dictionary(uniqueKeysWithValues: fileChanges.map { ($0.id, $0) })
         let updatedIDs = turns.map(\.id)
+        let lastTurnChanged = turnIDs.last != updatedIDs.last
         let changedIDs: [ConversationTurn.ID] = turns.compactMap { turn in
-            guard let previous = turnsByID[turn.id], previous != turn || changesByID[turn.id] != updatedChanges[turn.id] else { return nil }
+            let runningDisplayChanged = (runningChanged || lastTurnChanged) &&
+                (turn.id == turnIDs.last || turn.id == updatedIDs.last)
+            guard let previous = turnsByID[turn.id], previous != turn ||
+                    changesByID[turn.id] != updatedChanges[turn.id] || runningDisplayChanged else { return nil }
             return turn.id
         }
         changesByID = updatedChanges
@@ -220,6 +244,20 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         view.setNeedsLayout()
     }
 
+    /// Both directions keep the tapped row anchored instead of following its bottom.
+    private func toggleDisclosure(_ key: String, expanded: Bool, turnID: ConversationTurn.ID) {
+        if expanded { expandedDisclosures.insert(key) } else { expandedDisclosures.remove(key) }
+        anchorDisclosureResize(turnID: turnID)
+    }
+
+    private func anchorDisclosureResize(turnID: ConversationTurn.ID) {
+        guard let indexPath = dataSource.indexPath(for: turnID) else { return }
+        followsOutput = false
+        anchorsDisclosure = true
+        readingAnchor = ReadingAnchor(id: turnID,
+                                      viewportOffset: tableView.rectForRow(at: indexPath).minY - tableView.contentOffset.y)
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         adjustTranscriptLayout()
@@ -239,7 +277,13 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             reportBottomMessage()
         }
 
-        let bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
+        var bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
+        // Keep room below a collapsed short transcript so clamping cannot pull
+        // its header down while the contents are retracting upward.
+        if anchorsDisclosure, let readingAnchor, let indexPath = dataSource.indexPath(for: readingAnchor.id) {
+            let offset = tableView.rectForRow(at: indexPath).minY - readingAnchor.viewportOffset
+            bottomInset = max(bottomInset, offset + tableView.bounds.height - tableView.contentSize.height)
+        }
         // Short conversations sit next to the composer, without inserting a fake message row.
         let topInset = max(6, tableView.bounds.height - bottomInset - tableView.contentSize.height)
         let inset = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
@@ -247,14 +291,6 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         let indicatorInsets = UIEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
         if tableView.verticalScrollIndicatorInsets != indicatorInsets {
             tableView.verticalScrollIndicatorInsets = indicatorInsets
-        }
-        // Hosting configuration reports its final height before SwiftUI finishes the
-        // disclosure animation. Move the viewport with that animation, not ahead of it.
-        var resizeDuration: TimeInterval = 0
-        if let resize = pendingCardResize,
-           abs(tableView.contentSize.height - resize.height) > 0.5 {
-            resizeDuration = resize.duration
-            pendingCardResize = nil
         }
         // Only gesture callbacks change the reading intent. Keyboard/layout updates never do.
         guard !isUserScrolling else { return }
@@ -270,12 +306,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             return
         }
         if abs(tableView.contentOffset.y - target) > 0.5 {
-            if resizeDuration > 0 {
-                UIView.animate(withDuration: resizeDuration, delay: 0,
-                               options: [.curveEaseInOut, .beginFromCurrentState, .allowUserInteraction]) {
-                    self.tableView.contentOffset.y = target
-                }
-            } else {
+            // This is a coordinate correction, not a scroll. Animating it makes
+            // the title drift while SwiftUI independently animates the body.
+            let correctOffset = { [self] in
                 tableView.contentOffset.y = target
                 // Self-sizing can move a cell during this layout pass while its
                 // hosting content still has the old position (especially at large text sizes).
@@ -284,6 +317,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                     cell.layoutIfNeeded()
                 }
             }
+            if anchorsDisclosure { UIView.performWithoutAnimation(correctOffset) }
+            else { correctOffset() }
         }
     }
 
@@ -301,7 +336,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         isUserScrolling = true
-        pendingCardResize = nil
+        anchorsDisclosure = false
         followsOutput = false
         reportBottomMessage()
         captureReadingAnchor()
@@ -341,6 +376,58 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             guard timestamp != self.reportedBottomMessage else { return }
             self.reportedBottomMessage = timestamp
             self.onBottomMessage(timestamp)
+        }
+    }
+}
+
+/// Pin the hosting view to the cell edges so self-sizing does not translate
+/// the disclosure header while its body animates.
+private final class ConversationTurnCell: UITableViewCell {
+    private let host = UIHostingController(rootView: AnyView(EmptyView()))
+    private weak var owner: UIViewController?
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        host.safeAreaRegions = []
+        host.sizingOptions = .intrinsicContentSize
+        host.view.backgroundColor = .clear
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            host.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            host.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func setContent<Content: View>(parent: UIViewController?, @ViewBuilder content: () -> Content) {
+        owner = parent
+        if host.parent == nil, let parent {
+            parent.addChild(host)
+            host.didMove(toParent: parent)
+        }
+        host.rootView = AnyView(content())
+        host.view.invalidateIntrinsicContentSize()
+    }
+
+    override func systemLayoutSizeFitting(_ targetSize: CGSize,
+                                          withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+                                          verticalFittingPriority: UILayoutPriority) -> CGSize {
+        host.sizeThatFits(in: CGSize(width: targetSize.width, height: .greatestFiniteMagnitude))
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        if superview == nil, host.parent != nil {
+            host.willMove(toParent: nil)
+            host.removeFromParent()
+        } else if superview != nil, host.parent == nil, let owner {
+            owner.addChild(host)
+            host.didMove(toParent: owner)
         }
     }
 }

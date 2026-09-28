@@ -134,6 +134,77 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkingTimerTicks() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        let label = app.staticTexts["turn-working-tests-agent"]
+        XCTAssertTrue(label.waitForExistence(timeout: 5))
+        let reply = app.staticTexts["Running npm test"]
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(label.frame.maxY, reply.frame.minY)
+        let initial = label.label
+        XCTAssertTrue(initial.hasPrefix("Working… "))
+        let changes = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in label.label != initial }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [changes], timeout: 4), .completed)
+        attachScreen(app, name: "Working timer")
+        tap(app.buttons["pause-session"])
+        XCTAssertTrue(label.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testWorkedForDisclosureRevealsEarlierWork() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let toggle = app.buttons["turn-work-toggle-long-agent-20"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.label, "Worked for 1m 27s")
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertTrue(app.staticTexts["Latest reply in long conversation"].exists)
+        XCTAssertFalse(app.staticTexts["I will check the conversation layout first."].exists)
+        let attachment = app.staticTexts["Before work.txt"]
+        XCTAssertTrue(attachment.exists)
+        XCTAssertLessThan(attachment.frame.maxY, toggle.frame.minY)
+        attachScreen(app, name: "Worked for collapsed")
+
+        let headerY = toggle.frame.minY
+        tap(toggle)
+        XCTAssertEqual(toggle.value as? String, "Expanded")
+        XCTAssertLessThan(attachment.frame.maxY, toggle.frame.minY)
+        XCTAssertEqual(toggle.frame.minY, headerY, accuracy: 2)
+        // Expanding at the bottom must not scroll the tapped header away.
+        XCTAssertTrue(toggle.isHittable)
+        XCTAssertTrue(app.staticTexts["I will check the conversation layout first."].waitForExistence(timeout: 5))
+        let transcript = app.tables["conversation-transcript"]
+        let activity = app.buttons["turn-activity-2:long-tool-1"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 5))
+        XCTAssertEqual(activity.label, "Ran 2 commands · Read 1 file")
+        for _ in 0..<4 where !activity.isHittable { transcript.swipeUp(velocity: .slow) }
+        tap(activity)
+        XCTAssertEqual(activity.value as? String, "Expanded")
+        XCTAssertTrue(app.staticTexts["git status --short"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Worked for expanded with commands")
+
+        for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        let collapseY = toggle.frame.minY
+        tap(toggle)
+        XCTAssertEqual(toggle.value as? String, "Collapsed")
+        XCTAssertEqual(toggle.frame.minY, collapseY, accuracy: 2)
+        XCTAssertFalse(app.staticTexts["git status --short"].exists)
+        // Reopening restores the command list without moving its header.
+        for _ in 0..<4 where !toggle.isHittable { transcript.swipeDown(velocity: .slow) }
+        let reopenY = toggle.frame.minY
+        tap(toggle)
+        XCTAssertEqual(toggle.frame.minY, reopenY, accuracy: 2)
+        XCTAssertTrue(app.staticTexts["git status --short"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testRetryClearsConfirmedDraftAndPreservesEditedDraft() {
         for editDraft in [false, true] {
             let app = XCUIApplication()

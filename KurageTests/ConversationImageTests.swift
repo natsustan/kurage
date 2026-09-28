@@ -6,6 +6,24 @@ import UIKit
 @MainActor
 @Suite(.serialized)
 struct ConversationImageTests {
+    @Test func patchDecodesAndClearsLiveTiming() throws {
+        let previous = Conversation(sessionID: "s", turns: [], permission: nil)
+        let live = try JSONDecoder().decode(ConversationPatch.self, from: Data(#"{"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"","timing":{"startedAtMs":1000,"permissionWaitMs":5000}}],"permission":null,"activity":"running","syncState":"live"}"#.utf8))
+        let conversation = try live.applying(to: previous).conversation
+        #expect(conversation.turns.first?.timing?.title(at: Date(timeIntervalSince1970: 41)) == "Working… 35s")
+        let finished = try JSONDecoder().decode(ConversationPatch.self, from: Data(#"{"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"Done"}],"permission":null,"activity":"idle","syncState":"live"}"#.utf8))
+        #expect(try finished.applying(to: conversation).conversation.turns.first?.timing == nil)
+    }
+
+    @Test func liveTimingUsesWallClockAndRecordedWait() throws {
+        let timing = ConversationTiming(startedAtMs: 1_000, permissionWaitMs: 5_000)
+        #expect(timing.title(at: Date(timeIntervalSince1970: 41)) == "Working… 35s")
+        #expect(timing.title(at: Date(timeIntervalSince1970: 0)) == "Working… 0s")
+        #expect(ConversationTiming().title(at: .now) == "Working…")
+        let turn = ConversationTurn(id: "live", author: .agent, text: "", timing: timing)
+        #expect(try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn)) == turn)
+    }
+
     @Test func cameraPhotoIsBoundedAndKeepsOrientation() async throws {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -66,6 +84,56 @@ struct ConversationImageTests {
                 .image(ConversationImage(imageID: "unlabeled", mimeType: nil, fileName: "photo.png")),
             ]),
         ])
+    }
+
+    @Test func patchDecodesFoldedWorkAndActivitySummaries() throws {
+        let previous = Conversation(sessionID: "s", turns: [], permission: nil)
+        let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data("""
+        {"sessionID":"s","order":["a"],"changed":[{"id":"a","author":"agent","text":"Done","parts":[
+          {"type":"text","text":"Done"}
+        ],"work":{"durationMs":87400,"parts":[
+          {"type":"text","text":"Checking"},
+          {"type":"activity","id":"1:t1","commands":2,"reads":1,"edits":0,"searches":0,"fetches":0,"tools":1,
+           "steps":[{"id":"t1","kind":"command","title":"git status"},{"id":"t2","kind":"future","title":"x"}]},
+          {"type":"activity","id":"empty","commands":0,"steps":[]},
+          {"type":"thought","text":"hidden"}
+        ]}}],"permission":null,"activity":"idle","syncState":"live"}
+        """.utf8))
+        let turn = try #require(try patch.applying(to: previous).conversation.turns.first)
+        let activity = ConversationActivity(id: "1:t1", commands: 2, reads: 1, tools: 1, steps: [
+            .init(id: "t1", kind: .command, title: "git status"),
+        ])
+        #expect(turn.content == [.text("Done")])
+        #expect(turn.displayedWork == ConversationWork(durationMs: 87_400, parts: [.text("Checking"), .activity(activity)]))
+        #expect(activity.summary == "Ran 2 commands · Read 1 file · Called 1 tool")
+        #expect(activity.primaryKind == .command)
+        #expect(turn.displayedWork?.title == "Worked for 1m 27s")
+        #expect(SessionSearch.bodyText([turn]) == "Checking\nDone")
+
+        let cached = try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn))
+        #expect(cached == turn)
+        let legacy = try JSONDecoder().decode(ConversationTurn.self, from: Data(#"{"id":"a","author":"agent","text":"Hi"}"#.utf8))
+        #expect(legacy.displayedWork == nil)
+    }
+
+    @Test func foldedWorkInsertionSurvivesBridgeDecodingAndCacheRoundTrip() throws {
+        let turn = try JSONDecoder().decode(ConversationTurn.self, from: Data(#"{"id":"a","author":"agent","parts":[{"type":"file","fileID":"f","fileName":"before.txt","sizeBytes":12},{"type":"text","text":"Answer"}],"work":{"insertionIndex":1,"parts":[{"type":"text","text":"Checking"}]}}"#.utf8))
+        #expect(turn.displayedWork?.insertionIndex == 1)
+        let cached = try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn))
+        #expect(cached == turn)
+        let legacy = try JSONDecoder().decode(ConversationWork.self, from: Data(#"{"parts":[{"type":"text","text":"Checking"}]}"#.utf8))
+        #expect(legacy.insertionIndex == 0)
+    }
+
+    @Test func workTitleMatchesLodyDurationFormat() {
+        #expect(ConversationWork(durationMs: 40_900, parts: []).title == "Worked for 40s")
+        #expect(ConversationWork(durationMs: 65_000, parts: []).title == "Worked for 1m 05s")
+        #expect(ConversationWork(durationMs: 3_723_000, parts: []).title == "Worked for 1h 02m 03s")
+        #expect(ConversationWork(parts: []).title == "Finished working")
+        #expect(ConversationWork(durationMs: -1, parts: []).title == "Finished working")
+        // User turns never show folded work, and nothing folds when nothing remains to show.
+        #expect(ConversationTurn(id: "u", author: .user, text: "Hi", work: .init(parts: [.text("x")])).displayedWork == nil)
+        #expect(ConversationTurn(id: "a", author: .agent, text: "Hi", work: .init(parts: [.text("  ")])).displayedWork == nil)
     }
 
     @Test func userImagesSitAboveTextAndAgentImagesStayInOrder() {

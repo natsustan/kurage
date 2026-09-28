@@ -364,17 +364,15 @@ private struct FileDiffLineView: View {
 struct TurnFileChangesCard: View {
     let group: ConversationFileChangeGroup
     let onOpen: () -> Void
-    var onToggle: (TimeInterval) -> Void = { _ in }
+    var onToggle: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expanded = true
 
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                onToggle(reduceMotion ? 0 : 0.25)
-                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-                    expanded.toggle()
-                }
+                onToggle()
+                expanded.toggle()
             } label: {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
@@ -382,7 +380,10 @@ struct TurnFileChangesCard: View {
                         counts
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { image in
+                                image.rotationEffect(.degrees(expanded ? 90 : 0))
+                            }
+                            .transaction { $0.disablesAnimations = false }
                             .foregroundStyle(.secondary)
                     }
                     HStack(spacing: 8) {
@@ -392,7 +393,10 @@ struct TurnFileChangesCard: View {
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { image in
+                                image.rotationEffect(.degrees(expanded ? 90 : 0))
+                            }
+                            .transaction { $0.disablesAnimations = false }
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -402,7 +406,7 @@ struct TurnFileChangesCard: View {
             }
             .accessibilityIdentifier("turn-changes-toggle-\(group.id)")
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded {
+            TopAnchoredDisclosure(expanded: expanded) {
                 VStack(spacing: 0) {
                     ForEach(group.files.prefix(3)) { file in
                         VStack(spacing: 0) {
@@ -438,7 +442,6 @@ struct TurnFileChangesCard: View {
                         .accessibilityIdentifier("turn-changes-more-\(group.id)")
                     }
                 }
-                .transition(.opacity)
             }
         }
         .font(.footnote)

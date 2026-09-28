@@ -5,10 +5,12 @@ enum ConversationBlock: Equatable, Identifiable {
     case text(id: String, text: String)
     case file(id: String, file: ConversationFile)
     case images(id: String, images: [ConversationImage])
+    case activity(ConversationActivity)
 
     var id: String {
         switch self {
         case .text(let id, _), .images(let id, _), .file(let id, _): id
+        case .activity(let activity): "activity-\(activity.id)"
         }
     }
 }
@@ -25,6 +27,7 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
             case .file(let file): files.append(file)
             case .text(let text): texts.append(text)
             case .image(let image): images.append(image)
+            case .activity: break
             }
         }
         var blocks: [ConversationBlock] = []
@@ -41,6 +44,8 @@ func conversationBlocks(author: TurnAuthor, content: [ConversationPart]) -> [Con
             blocks.append(.file(id: "file-\(blocks.count)", file: file))
         case .text(let text):
             blocks.append(.text(id: "text-\(blocks.count)", text: text))
+        case .activity(let activity):
+            blocks.append(.activity(activity))
         case .image(let image):
             if case .images(let id, var images) = blocks.last {
                 images.append(image)

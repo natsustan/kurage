@@ -46,6 +46,7 @@
 		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
 		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
 		EA004FC38EE7E82876F98010 /* ConversationLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B366CEB77792BB4C07117803 /* ConversationLayout.swift */; };
+		FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */; };
 		FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 6A79AACE724D367AC3C05B6B /* session-bridge.js */; };
 /* End PBXBuildFile section */
 
@@ -102,6 +103,7 @@
 		AF6B057A72F618ECD2D1FA99 /* session-bridge.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "session-bridge.html"; sourceTree = "<group>"; };
 		B366CEB77792BB4C07117803 /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
 		B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedSessionsView.swift; sourceTree = "<group>"; };
+		C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWorkView.swift; sourceTree = "<group>"; };
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
 		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
@@ -132,6 +134,7 @@
 				B366CEB77792BB4C07117803 /* ConversationLayout.swift */,
 				0D6E7BB882700BCC2B3DCE1A /* ConversationSubtasksView.swift */,
 				153B4F2F19120EAF70238123 /* ConversationView.swift */,
+				C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */,
 				9FD450BD8575DF0264928B18 /* SessionComposer.swift */,
 			);
 			path = Conversation;
@@ -397,6 +400,7 @@
 				EA004FC38EE7E82876F98010 /* ConversationLayout.swift in Sources */,
 				401B74DA0A333A159C23A634 /* ConversationSubtasksView.swift in Sources */,
 				058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */,
+				FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */,
 				731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */,
 				C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */,
 				7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */,

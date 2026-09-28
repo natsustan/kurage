@@ -94,6 +94,7 @@ private struct ConversationContent: View {
             fileChanges: displayedConversation?.fileChanges ?? [],
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: isLoading,
+            isRunning: (session?.activity ?? observedActivity) == .running,
             scrollRequestID: scrollRequestID,
             messageTimestamp: loadedMessageAt,
             onBottomMessage: { bottomMessageAt = $0 },
@@ -560,31 +561,26 @@ struct TurnRow: View {
     let onPreviewImage: (ConversationImage) -> Void
     var fileChanges: ConversationFileChangeGroup? = nil
     var onOpenChanges: (Int) -> Void = { _ in }
-    var onToggleChanges: (TimeInterval) -> Void = { _ in }
+    var onToggleChanges: () -> Void = {}
+    var disclosures = TurnDisclosures()
+    var isRunning = false
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
         VStack(alignment: alignment, spacing: 8) {
-            ForEach(conversationBlocks(author: turn.author, content: turn.content)) { block in
-                switch block {
-                case .file(_, let file):
-                    Label {
-                        VStack(alignment: .leading) {
-                            Text(file.fileName).lineLimit(2)
-                            Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
-                        }
-                    } icon: { Image(systemName: "doc") }
-                    .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
-                case .text(_, let text):
-                    messageText(text)
-                case .images(_, let images):
-                    ConversationImageGroup(
-                        images: images,
-                        alignment: alignment,
-                        loadImage: loadImage,
-                        onPreview: onPreviewImage
-                    )
+            if isRunning, turn.author == .agent, let timing = turn.timing {
+                TurnWorkingLabel(turnID: turn.id, timing: timing)
+            }
+            if let work = turn.displayedWork {
+                let content = turn.content
+                let insertionIndex = min(max(work.insertionIndex, 0), content.count)
+                blocks(Array(content.prefix(insertionIndex)), alignment: alignment)
+                TurnWorkDisclosure(turnID: turn.id, work: work, disclosures: disclosures) {
+                    blocks(work.parts, alignment: alignment)
                 }
+                blocks(Array(content.dropFirst(insertionIndex)), alignment: alignment)
+            } else {
+                blocks(turn.content, alignment: alignment)
             }
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
@@ -594,6 +590,32 @@ struct TurnRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: turn.author == .user ? .trailing : .leading)
+    }
+
+    private func blocks(_ content: [ConversationPart], alignment: HorizontalAlignment) -> some View {
+        ForEach(conversationBlocks(author: turn.author, content: content)) { block in
+            switch block {
+            case .file(_, let file):
+                Label {
+                    VStack(alignment: .leading) {
+                        Text(file.fileName).lineLimit(2)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: { Image(systemName: "doc") }
+                .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
+            case .text(_, let text):
+                messageText(text)
+            case .images(_, let images):
+                ConversationImageGroup(
+                    images: images,
+                    alignment: alignment,
+                    loadImage: loadImage,
+                    onPreview: onPreviewImage
+                )
+            case .activity(let activity):
+                ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
+            }
+        }
     }
 
     @ViewBuilder

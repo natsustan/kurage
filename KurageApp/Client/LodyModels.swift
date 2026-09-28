@@ -87,10 +87,169 @@ struct ConversationFile: Codable, Equatable, Sendable {
     let sizeBytes: Int
 }
 
+/// A run of consecutive tool calls, summarized like Lody's activity groups.
+struct ConversationActivity: Codable, Equatable, Sendable, Identifiable {
+    enum Kind: String, Codable, Sendable {
+        case command, read, edit, search, fetch, tool
+    }
+
+    struct Step: Codable, Equatable, Sendable, Identifiable {
+        let id: String
+        var kind: Kind
+        var title: String
+    }
+
+    let id: String
+    var commands = 0
+    var reads = 0
+    var edits = 0
+    var searches = 0
+    var fetches = 0
+    var tools = 0
+    var steps: [Step] = []
+
+    /// Lody's wording, e.g. "Ran 3 commands · Read 2 files".
+    var summary: String {
+        [
+            Self.phrase(commands, "Ran", "command", "commands"),
+            Self.phrase(reads, "Read", "file", "files"),
+            Self.phrase(edits, "Edited", "file", "files"),
+            Self.phrase(searches, "Ran", "search", "searches"),
+            Self.phrase(fetches, "Fetched", "resource", "resources"),
+            Self.phrase(tools, "Called", "tool", "tools"),
+        ].compactMap(\.self).joined(separator: " · ")
+    }
+
+    /// The first kind in summary order.
+    var primaryKind: Kind {
+        [(commands, Kind.command), (reads, .read), (edits, .edit), (searches, .search), (fetches, .fetch)]
+            .first { $0.0 > 0 }?.1 ?? .tool
+    }
+
+    var isEmpty: Bool { commands + reads + edits + searches + fetches + tools == 0 }
+
+    private static func phrase(_ count: Int, _ verb: String, _ one: String, _ many: String) -> String? {
+        count > 0 ? "\(verb) \(count) \(count == 1 ? one : many)" : nil
+    }
+
+    init(id: String, commands: Int = 0, reads: Int = 0, edits: Int = 0, searches: Int = 0,
+         fetches: Int = 0, tools: Int = 0, steps: [Step] = []) {
+        self.id = id
+        self.commands = commands
+        self.reads = reads
+        self.edits = edits
+        self.searches = searches
+        self.fetches = fetches
+        self.tools = tools
+        self.steps = steps
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        func count(_ key: CodingKeys) -> Int { max(0, (try? container.decodeIfPresent(Int.self, forKey: key)) ?? 0) }
+        commands = count(.commands)
+        reads = count(.reads)
+        edits = count(.edits)
+        searches = count(.searches)
+        fetches = count(.fetches)
+        tools = count(.tools)
+        steps = ((try? container.decodeIfPresent([LossyStep].self, forKey: .steps)) ?? []).compactMap(\.step)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, commands, reads, edits, searches, fetches, tools, steps
+    }
+
+    /// Drops steps of kinds this client does not know instead of the whole group.
+    private struct LossyStep: Decodable {
+        var step: Step?
+        init(from decoder: Decoder) throws { step = try? Step(from: decoder) }
+    }
+}
+
+/// Earlier work of a finished turn, folded behind "Worked for …" above its answer.
+struct ConversationWork: Codable, Equatable, Sendable {
+    /// Effective working time, excluding permission waits. Absent when not recorded.
+    var durationMs: Double?
+    /// Number of visible turn parts before the folded group; old caches default to zero.
+    var insertionIndex: Int
+    var parts: [ConversationPart]
+
+    init(durationMs: Double? = nil, insertionIndex: Int = 0, parts: [ConversationPart]) {
+        self.insertionIndex = insertionIndex
+        self.durationMs = durationMs
+        self.parts = parts
+    }
+
+    var title: String {
+        guard let durationMs, durationMs.isFinite, durationMs >= 0 else { return "Finished working" }
+        return "Worked for \(Self.formatDuration(durationMs))"
+    }
+
+    /// Matches Lody's compact format: `12s`, `1m 05s`, `1h 02m 03s`.
+    static func formatDuration(_ milliseconds: Double) -> String {
+        let total = Int(min(max(milliseconds, 0), 1e15) / 1000)
+        let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60)
+        let padded = { (value: Int) in value < 10 ? "0\(value)" : "\(value)" }
+        if hours > 0 { return "\(hours)h \(padded(minutes))m \(padded(seconds))s" }
+        if minutes > 0 { return "\(minutes)m \(padded(seconds))s" }
+        return "\(seconds)s"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        insertionIndex = try container.decodeIfPresent(Int.self, forKey: .insertionIndex) ?? 0
+        durationMs = try container.decodeIfPresent(Double.self, forKey: .durationMs)
+        parts = try container.decodeIfPresent([PartBox].self, forKey: .parts)?.compactMap(\.part) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(insertionIndex, forKey: .insertionIndex)
+        try container.encodeIfPresent(durationMs, forKey: .durationMs)
+        try container.encode(parts.map(PartBox.init), forKey: .parts)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case durationMs, insertionIndex, parts
+    }
+}
+
 enum ConversationPart: Equatable, Sendable {
     case text(String)
     case image(ConversationImage)
     case file(ConversationFile)
+    case activity(ConversationActivity)
+
+    /// Hides blank text and images this client cannot display.
+    var displayable: ConversationPart? {
+        switch self {
+        case .text(let text):
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+        case .image(let image):
+            image.isDisplayable ? self : nil
+        case .activity(let activity):
+            activity.isEmpty ? nil : self
+        case .file:
+            self
+        }
+    }
+}
+
+/// Live history timing, in milliseconds since Unix epoch; absent on completed turns.
+struct ConversationTiming: Codable, Equatable, Sendable {
+    var startedAtMs: Double?
+    var permissionWaitMs: Double = 0
+
+    func title(at date: Date) -> String {
+        guard let startedAtMs, startedAtMs.isFinite else { return "Working…" }
+        let now = date.timeIntervalSince1970 * 1000
+        guard now.isFinite else { return "Working…" }
+        let wait = permissionWaitMs.isFinite ? max(0, permissionWaitMs) : 0
+        let elapsed = max(0, now - startedAtMs - wait)
+        return "Working… \(ConversationWork.formatDuration(elapsed))"
+    }
 }
 
 struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
@@ -98,28 +257,31 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     var author: TurnAuthor
     var text: String
     var parts: [ConversationPart]
+    /// Folded earlier work of a finished agent turn; `parts` then holds its answer.
+    var work: ConversationWork?
+    var timing: ConversationTiming?
 
-    init(id: String, author: TurnAuthor, text: String, parts: [ConversationPart] = []) {
+    init(id: String, author: TurnAuthor, text: String, parts: [ConversationPart] = [], work: ConversationWork? = nil, timing: ConversationTiming? = nil) {
         self.id = id
         self.author = author
         self.text = text
         self.parts = parts
+        self.work = work
+        self.timing = timing
     }
 
     /// Ordered chat content. Text-only turns written before image parts still render their text.
     var content: [ConversationPart] {
-        let visible = parts.compactMap { part -> ConversationPart? in
-            switch part {
-            case .text(let text):
-                return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .text(text)
-            case .file(let file):
-                return .file(file)
-            case .image(let image):
-                return image.isDisplayable ? .image(image) : nil
-            }
-        }
+        let visible = parts.compactMap(\.displayable)
         if !visible.isEmpty { return visible }
         return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [.text(text)]
+    }
+
+    /// Folded work that still has something to show.
+    var displayedWork: ConversationWork? {
+        guard author == .agent, var work else { return nil }
+        work.parts = work.parts.compactMap(\.displayable)
+        return work.parts.isEmpty ? nil : work
     }
 
     init(from decoder: Decoder) throws {
@@ -128,6 +290,8 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         author = try container.decode(TurnAuthor.self, forKey: .author)
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         parts = try container.decodeIfPresent([PartBox].self, forKey: .parts)?.compactMap(\.part) ?? []
+        work = try? container.decodeIfPresent(ConversationWork.self, forKey: .work)
+        timing = try? container.decodeIfPresent(ConversationTiming.self, forKey: .timing)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -136,10 +300,12 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         try container.encode(author, forKey: .author)
         try container.encode(text, forKey: .text)
         try container.encode(parts.map(PartBox.init), forKey: .parts)
+        try container.encodeIfPresent(work, forKey: .work)
+        try container.encodeIfPresent(timing, forKey: .timing)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, author, text, parts
+        case id, author, text, parts, work, timing
     }
 }
 
@@ -165,6 +331,10 @@ private struct PartBox: Codable {
             if let image = try? ConversationImage(from: decoder), image.isDisplayable {
                 part = .image(image)
             }
+        case "activity":
+            if let activity = try? ConversationActivity(from: decoder), !activity.isEmpty {
+                part = .activity(activity)
+            }
         default:
             break
         }
@@ -187,6 +357,9 @@ private struct PartBox: Codable {
             try container.encodeIfPresent(image.storageSessionID, forKey: .storageSessionID)
             try container.encodeIfPresent(image.width, forKey: .width)
             try container.encodeIfPresent(image.height, forKey: .height)
+        case .activity(let activity):
+            try container.encode("activity", forKey: .type)
+            try activity.encode(to: encoder)
         case nil:
             break
         }
