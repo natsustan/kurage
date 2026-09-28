@@ -121,9 +121,9 @@ struct NewSessionView: View {
     private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let options {
-                detailRow(options.machineName, systemImage: "laptopcomputer")
+                detailRow(options.machineName, imageName: "laptop")
             }
-            detailRow(route.projectName, systemImage: "folder")
+            detailRow(route.projectName, imageName: "folder-open")
             if let pendingStart {
                 Text(pendingStart.displayText)
                     .lineLimit(4)
@@ -148,11 +148,11 @@ struct NewSessionView: View {
         .foregroundStyle(.secondary)
     }
 
-    private func detailRow(_ title: String, systemImage: String) -> some View {
+    private func detailRow(_ title: String, imageName: String) -> some View {
         Label {
             Text(title).lineLimit(1)
         } icon: {
-            NewSessionIcon(systemImage: systemImage)
+            NewSessionIcon(imageName: imageName)
         }
         .font(.body)
     }
@@ -228,13 +228,17 @@ struct NewSessionView: View {
     }
 }
 
-/// Keeps the detail titles aligned across symbols of different widths.
+/// Keeps the detail titles aligned across asset images of different widths.
 private struct NewSessionIcon: View {
-    let systemImage: String
+    let imageName: String
     @ScaledMetric(relativeTo: .body) private var width = 28
+    @ScaledMetric(relativeTo: .body) private var iconSize = 20
 
     var body: some View {
-        Image(systemName: systemImage)
+        Image(imageName)
+            .resizable()
+            .scaledToFit()
+            .frame(width: iconSize, height: iconSize)
             .frame(width: width)
     }
 }
