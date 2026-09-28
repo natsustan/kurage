@@ -21,6 +21,15 @@ test('skill candidates use the selected provider directories and project path pr
   ]);
 });
 
+test('unmapped agents never expose skills from scanned directories', () => {
+  const results = [{ groups: [{ scope: 'project', dir: '.agents/skills', skills: [
+    { name: 'review', relativePath: '.agents/skills/review/SKILL.md' },
+  ] }] }];
+  for (const agentType of [undefined, null, '', 'custom-agent', 'builtin', 'registry', 'toString', '__proto__']) {
+    assert.deepEqual(selectMentionSkills(results, agentType), [], `agent: ${agentType}`);
+  }
+});
+
 test('local skill discovery sends workspace-bound project and global requests', async () => {
   const calls = [];
   const skills = await mentionSkills({

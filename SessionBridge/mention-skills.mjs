@@ -56,14 +56,15 @@ async function control(repoAccess, workspaceID, machineID, request, signal) {
 }
 
 export function selectMentionSkills(results, agentType) {
+  if (!Object.hasOwn(skillDirs.agents, agentType)) return [];
   const mapping = skillDirs.agents[agentType];
-  const allowed = mapping && new Set([
+  const allowed = new Set([
     ...mapping.projectDirs, ...mapping.globalDirs, ...mapping.systemDirs,
   ]);
   const seen = new Set();
   const skills = [];
   for (const group of results.flatMap(result => result.groups ?? [])) {
-    if (allowed && ![...allowed].some(dir => group.dir === dir || group.dir.startsWith(`${dir}/`))) continue;
+    if (![...allowed].some(dir => group.dir === dir || group.dir.startsWith(`${dir}/`))) continue;
     for (const skill of group.skills ?? []) {
       const name = skill.name?.trim() ?? '';
       const basename = skill.relativePath?.replace(/\/SKILL\.md$/i, '').split('/').at(-1) ?? '';

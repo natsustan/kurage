@@ -52,6 +52,8 @@
 - 新建会话配置在页面内预取并缓存各 provider 的选项，共享同一 provider 的在途请求；已缓存 provider 切换及 model/reasoning 选择立即更新本地状态，往返切换保留各自选择。尚未加载的 provider 立即显示新名称和加载状态，不展示旧模型，不允许发送；迟到结果不会覆盖新选择，页面离开或进入后台取消请求。缓存随页面释放，写入时仍由桥重新校验能力。真实账号首次加载耗时尚未测量。
 - 输入区提及：已有会话与新建会话输入 `$` 显示当前 Agent 可用的本地项目、全局和系统 skills，输入 `@` 同时显示这些 skills 与当前项目的会话（含子会话，排除自身和已归档）；候选位于输入框上方，滚动视口最多展示三行。选择后保留短 token，退格或选区删除触及 token 时整段删除并移除绑定，发送时按 Lody 规则展开为 `use /token [Skill Path](path)` 或 `[@Title](session://id)`，插入或替换 token 内文字会移除绑定，失败恢复保留绑定。技能列表经当前工作区机器的 `local-project/list-skills`、`local-project/list-global-skills` RPC 获取，使用所选 provider 的目录过滤；请求可取消，不持久化令牌。GitHub 项目当前仅有机器全局/系统 skills，尚未接入 Lody 的 GitHub skill 扫描。本次 168 项 JS 测试、bundle 重建、5 项 Swift 提及单元测试、已有会话浅色/深色 fixture UI 用例及新建会话浅色 fixture UI 用例通过。真实账号的机器技能发现、跨端会话提及解析和弱网取消仍待验证。
 
+- 2026-09-29 PR #19 技能过滤修复：旧会话缺少 `agentType` 时回退到 `cliType`，显式代理类型保持优先；无法映射的代理返回空技能候选，避免混入其它代理目录。新增旧版 CLI、显式代理优先和未知代理回归。本次 182 项 JS 测试通过，已按 frozen lockfile 安装依赖并重建 bundle；未修改 Swift/JavaScript 消息契约，未进行真实账号机器扫描验证。
+
 - 2026-09-29 提及后台取消修复：输入区离开 active 时更换加载任务标识，通过已有桥接取消链停止未完成请求；回到前台恢复未完成加载，已加载候选保留。取消即使表现为网络错误，也不会显示失败或继续启动技能请求。新增挂载真实 SessionComposer 的 `@` / `$` 生命周期回归，覆盖 inactive 取消、background 不继续请求及 active 恢复；本次 10 项 Swift 提及测试（生命周期测试含两个参数用例）、已有会话和新建会话两项 fixture UI 提及回归通过，`git diff --check` 通过。未改桥接协议；真实账号的后台网络取消仍待实测。
 - 会话底部输入区使用悬浮的 Liquid Glass 胶囊；点按发送后立即清空草稿并保持键盘，同时用同一个 turn ID 在对话列表插入用户气泡，不显示单独的发送进度提示。同步到对应 turn 时原位接管而不重复显示；若发送未确认则移除临时气泡并恢复原文供同 ID 重试。
 - 已有会话的输入区在 model/reasoning 按钮左侧显示 Context window 用量环，不显示数字百分比；点按可查看已用/总 token。数据来自 Session metadata 的 `contextWindowUsage`，随订阅更新；无有效用量时不显示，新建会话尚无用量。真实账号的持续更新和真机浮层布局尚未验证。

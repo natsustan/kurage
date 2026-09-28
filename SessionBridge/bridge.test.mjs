@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 import { readSyncedConversation } from './conversation-observer.mjs';
+import { selectMentionSkills } from './mention-skills.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -103,6 +104,33 @@ test('skill request uses the template machine, project, agent, workspace and use
   assert.equal(request.localProjectID, 'project');
   assert.equal(request.agentType, 'codex');
   assert.equal(request.userID, 'user');
+});
+
+test('mention skills use legacy CLI fallback while preserving explicit agent selection', async () => {
+  const groups = [
+    { scope: 'project', dir: '.agents/skills', skills: [
+      { name: 'codex-skill', relativePath: '.agents/skills/codex-skill/SKILL.md' },
+    ] },
+    { scope: 'project', dir: '.claude/skills', skills: [
+      { name: 'claude-skill', relativePath: '.claude/skills/claude-skill/SKILL.md' },
+    ] },
+  ];
+  for (const [agent, expected] of [
+    [{ cliType: 'codex' }, ['codex-skill']],
+    [{ cliType: 'claude' }, ['claude-skill']],
+    [{ cliType: 'codex', agentType: 'claude' }, ['claude-skill']],
+    [{ cliType: 'codex', agentType: 'custom-agent' }, []],
+    [{ cliType: 'builtin' }, []],
+    [{}, []],
+  ]) {
+    const rows = [{ docId: 'session-template', meta: { machineId: 'machine', ...agent } }];
+    const { window } = makeBridge(undefined, rows, undefined, undefined, {
+      mentionSkills: async ({ agentType }) => selectMentionSkills([{ groups }], agentType),
+    });
+    const result = JSON.parse(await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+      'template', null, 'user', 'request'));
+    assert.deepEqual(result.skills.map(skill => skill.token), expected, JSON.stringify(agent));
+  }
 });
 
 test('session cancellation uses the requested workspace and releases its writer', async () => {

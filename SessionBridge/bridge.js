@@ -219,7 +219,7 @@ window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSession
       if (!row) throw new Error('Session is unavailable in this workspace');
       const machineID = row.meta.machineId;
       if (typeof machineID !== 'string' || !machineID) throw new Error('Machine is unavailable');
-      let agentType = row.meta.agentType;
+      let agentType = row.meta.agentType ?? row.meta.cliType;
       if (agentConfigID && agentConfigID !== row.meta.agentConfigId) {
         const flockID = `${workspaceID}:mf:${machineID}`;
         const document = await repo.openFlockDoc(flockID);
