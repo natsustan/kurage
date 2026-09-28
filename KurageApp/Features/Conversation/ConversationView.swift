@@ -49,7 +49,6 @@ private struct ConversationContent: View {
     @State private var pendingTurns: [ConversationTurn] = []
     @State private var isCancelling = false
     @State private var scrollRequestID = 0
-    @State private var isLoading = true
     @State private var banner: String?
     @State private var connectionStatus: String?
     @State private var showsConnectionIndicator = false
@@ -93,7 +92,7 @@ private struct ConversationContent: View {
             turns: displayedTurns,
             fileChanges: displayedConversation?.fileChanges ?? [],
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
-            isLoading: isLoading,
+            isLoading: displayedConversation == nil,
             isRunning: (session?.activity ?? observedActivity) == .running,
             scrollRequestID: scrollRequestID,
             messageTimestamp: loadedMessageAt,
@@ -232,7 +231,6 @@ private struct ConversationContent: View {
         observedWorkspaceID = model.selectedWorkspaceID
         observedSessionID = sessionID
         conversation = model.cachedConversation(sessionID: sessionID)
-        isLoading = conversation == nil
         connectionStatus = "Connecting…"
         var retryDelay = 1
         while !Task.isCancelled {
@@ -244,7 +242,6 @@ private struct ConversationContent: View {
                     runConfigState.receive(update.runConfig)
                     contextWindowUsage = update.contextWindowUsage
                     loadedMessageAt = update.lastMessageAt
-                    isLoading = false
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
                     if update.syncState == .live { retryDelay = 1 }
                 }
@@ -253,7 +250,6 @@ private struct ConversationContent: View {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
-                isLoading = false
                 connectionStatus = "Reconnecting…"
                 do { try await Task.sleep(for: .seconds(retryDelay)) }
                 catch { return }

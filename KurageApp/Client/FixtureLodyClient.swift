@@ -23,6 +23,7 @@ final class FixtureLodyClient: LodyClient {
     private var failStartAndArchiveProjectOnce: Bool
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
+    private let conversationDelay: Duration?
     private let sendDelay: Duration?
     private var failSendOnce: Bool
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
@@ -32,6 +33,7 @@ final class FixtureLodyClient: LodyClient {
         records: [SessionRecord] = SessionRecord.samples,
         archivedIDs: Set<SessionSummary.ID>? = nil,
         failingConversationIDsOnce: Set<String> = [],
+        conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
         failSendOnce: Bool = false
@@ -39,6 +41,7 @@ final class FixtureLodyClient: LodyClient {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
+        self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
         self.failSendOnce = failSendOnce
         if let archivedIDs {
@@ -95,6 +98,7 @@ final class FixtureLodyClient: LodyClient {
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if let conversationDelay { try await Task.sleep(for: conversationDelay) }
         if failingConversationIDsOnce.remove(sessionID) != nil { throw LodyClientError.unreachable }
         let record = try record(sessionID)
         return Conversation(

@@ -46,21 +46,122 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
     metadataChanged: () => metaListener?.(), releases: () => releases };
 }
 
-test('initial cached history cannot acknowledge a newer marker until content arrives', async () => {
+test('cached history acknowledges a stable synced marker without another content change', async () => {
   const h = harness({ meta: { status: { type: 'idle' }, lastMessageAt: 200 } });
   const history = h.doc.getList('history');
   history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Old' }] });
   h.doc.commit();
   await h.start();
   assert.deepEqual(h.updates[0].order, ['old']);
-  assert.equal(h.updates[0].lastMessageAt, null);
+  assert.equal(h.updates[0].lastMessageAt, 200);
   h.metadataChanged();
   await h.flush();
-  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
   history.push({ id: 'new', role: 'assistant', items: [{ type: 'text', text: 'New' }] });
   h.doc.commit();
   await h.flush();
   assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  h.controller.abort();
+});
+
+test('stream updates reuse a successful pull without requiring repeated visible changes', async () => {
+  const meta = { lastMessageAt: 200 };
+  const h = harness({ meta });
+  let pulls = 0;
+  h.repo.sync = async () => { pulls++; return { ok: true }; };
+  const history = h.doc.getList('history');
+  history.push({ id: 'a', role: 'assistant', items: [{ type: 'text', text: 'Partial' }] });
+  h.doc.commit();
+  await h.start();
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  for (let index = 0; index < 3; index++) {
+    h.metadataChanged();
+    h.doc.getMap('acpRuntimeConfig').set('modelId', `model-${index}`);
+    h.doc.commit();
+    await h.flush();
+  }
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  history.delete(0, 1);
+  history.push({ id: 'a', role: 'assistant', items: [{ type: 'text', text: 'Completed' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(pulls, 1);
+  assert.equal(h.updates.at(-1).changed[0].text, 'Completed');
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  meta.lastMessageAt = 300;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(pulls, 2);
+  assert.equal(h.updates.at(-1).lastMessageAt, 300);
+  h.controller.abort();
+});
+
+test('completion metadata arriving after the final body can acknowledge the synced turn', async () => {
+  const meta = { status: { type: 'running' }, latestUserMsgId: 'u1', lastMessageAt: 100 };
+  const h = harness({ meta });
+  await h.start();
+  const history = h.doc.getList('history');
+  history.push({ id: 'u1', role: 'user', items: [{ type: 'text', text: 'Question' }] });
+  history.push({ id: 'a1', userTurnId: 'u1', role: 'assistant', finished: true,
+    items: [{ type: 'text', text: 'Final answer' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 100);
+
+  meta.lastMessageAt = 200;
+  meta.status = { type: 'idle' };
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).changed, []);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+
+  // A later dispatch must complete its own pull before publishing a marker.
+  const pull = Promise.withResolvers();
+  h.repo.sync = async () => pull.promise;
+  meta.latestUserMsgId = 'u2';
+  meta.lastMessageAt = 300;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  pull.resolve({ ok: true });
+  await h.flush();
+  assert.equal(h.updates.at(-1).lastMessageAt, 300);
+  h.controller.abort();
+});
+
+test('synced cached history does not depend on optional completion or dispatch fields', async () => {
+  for (const [answer, latestUserMsgId, expected] of [
+    [{ userTurnId: 'u1', finished: true }, 'u1', 200],
+    [{ userTurnId: 'u1', endedAt: 150 }, 'u1', 200],
+    [{ userTurnId: 'u1', finished: false }, 'u1', 200],
+    [{ userTurnId: 'other', finished: true }, 'u1', 200],
+    [{ finished: true }, 'u1', 200],
+    [{ userTurnId: 'u1', finished: true }, 'u2', 200],
+    [{ userTurnId: 'u1', finished: true }, undefined, 200],
+  ]) {
+    const h = harness({ meta: { lastMessageAt: 200, latestUserMsgId } });
+    const history = h.doc.getList('history');
+    history.push({ id: 'u1', role: 'user', items: [{ type: 'text', text: 'Question' }] });
+    history.push({ id: 'a1', role: 'assistant', items: [{ type: 'text', text: 'Answer' }], ...answer });
+    h.doc.commit();
+    await h.start();
+    assert.equal(h.updates.at(-1).lastMessageAt, expected);
+    h.controller.abort();
+  }
+});
+
+test('completed answers cannot bypass a failed history pull', async () => {
+  const h = harness({ meta: { lastMessageAt: 200, latestUserMsgId: 'u1' } });
+  const history = h.doc.getList('history');
+  history.push({ id: 'u1', role: 'user', items: [{ type: 'text', text: 'Question' }] });
+  history.push({ id: 'a1', userTurnId: 'u1', role: 'assistant', finished: true,
+    items: [{ type: 'text', text: 'Answer' }] });
+  h.doc.commit();
+  h.repo.sync = async () => ({ ok: false });
+  await h.start();
+  assert.deepEqual(h.updates, [{ error: 'Conversation sync failed' }]);
   h.controller.abort();
 });
 
@@ -77,7 +178,7 @@ test('initial room restoration counts as content arriving after the local baseli
   h.controller.abort();
 });
 
-test('initial receipt waits through non-visible updates and accepts same-turn growth', async () => {
+test('synced receipts survive non-visible updates and same-turn growth', async () => {
   const h = harness({ meta: { lastMessageAt: 200 } });
   const history = h.doc.getList('history');
   history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Partial' }] });
@@ -86,7 +187,7 @@ test('initial receipt waits through non-visible updates and accepts same-turn gr
   h.doc.getMap('acpRuntimeConfig').set('modelId', 'model');
   h.doc.commit();
   await h.flush();
-  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
   history.delete(0, 1);
   history.push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Partial completed' }] });
   h.doc.commit();
@@ -107,8 +208,9 @@ test('reopening delivered history reuses only its confirmed marker and workspace
   await h.start();
   assert.equal(h.updates[0].lastMessageAt, 100);
   h.controller.abort();
-  h.repo.sync = async () => ({ ok: true });
-  for (const [workspaceID, timestamp, expected] of [['ws', 100, 100], ['ws', 200, null], ['other', 100, null]]) {
+  let pulls = 0;
+  h.repo.sync = async () => { pulls++; return { ok: true }; };
+  for (const [workspaceID, timestamp, expected] of [['ws', 100, 100], ['ws', 200, 200], ['other', 100, 100]]) {
     meta.lastMessageAt = timestamp;
     const controller = new AbortController();
     const updates = [];
@@ -117,6 +219,7 @@ test('reopening delivered history reuses only its confirmed marker and workspace
     assert.equal(updates[0].lastMessageAt, expected);
     controller.abort();
   }
+  assert.equal(pulls, 2);
 });
 
 test('initial history, same-turn growth, deletion and reconnect status remain coherent', async () => {
@@ -383,7 +486,7 @@ test('a metadata update cannot publish its read timestamp before history sync co
   h.controller.abort();
 });
 
-test('a synced marker stays unread until the visible conversation catches up', async () => {
+test('metadata-only activity is readable after a stable pull and later history still arrives', async () => {
   const meta = { status: { type: 'idle' }, lastMessageAt: 100 };
   const h = harness({ meta });
   const history = h.doc.getList('history');
@@ -397,7 +500,7 @@ test('a synced marker stays unread until the visible conversation catches up', a
   meta.lastMessageAt = 200;
   h.metadataChanged();
   await h.flush();
-  assert.equal(h.updates.at(-1).lastMessageAt, null);
+  assert.equal(h.updates.at(-1).lastMessageAt, 200);
   assert.deepEqual(h.updates.at(-1).order, ['first']);
   history.push({ id: 'second', role: 'assistant', items: [{ type: 'text', text: 'Second' }] });
   h.doc.commit();
@@ -481,18 +584,21 @@ test('search sync evidence survives unloading and is scoped to repo, workspace, 
     h.repo.openPersistedDoc = async () => ({ ...(await open()), doc });
     const repo = scenario === 'repo' ? { ...h.repo } : h.repo;
     if (scenario === 'newer-marker') repo.getDocMeta = async () => ({ meta: { lastMessageAt: 200 } });
+    let pulls = 0;
+    repo.sync = async () => { pulls++; return { ok: true }; };
     const controller = new AbortController();
     const updates = [];
     await observeConversation({ repo, workspaceID: scenario === 'workspace' ? 'other' : 'ws',
       sessionID: scenario === 'session' ? 'other' : 'abc', signal: controller.signal,
       emit: async update => updates.push(update) });
-    assert.equal(updates[0].lastMessageAt, scenario === 'matching' ? 100 : null, scenario);
+    assert.equal(updates[0].lastMessageAt, scenario === 'newer-marker' ? 200 : 100, scenario);
+    assert.equal(pulls, scenario === 'matching' ? 0 : 1, scenario);
     controller.abort();
   }
 });
 
 for (const scenario of ['unchanged', 'failed', 'cancelled']) {
-  test(`search ${scenario} sync cannot establish receipt evidence`, async () => {
+  test(`search ${scenario} sync never writes a read receipt`, async () => {
     const h = harness({ meta: { lastMessageAt: 100 } });
     h.doc.getList('history').push({ id: 'old', role: 'assistant', items: [{ type: 'text', text: 'Old' }] });
     h.doc.commit();
@@ -509,15 +615,18 @@ for (const scenario of ['unchanged', 'failed', 'cancelled']) {
       doc: h.doc, signal: controller.signal });
     if (scenario === 'unchanged') await read;
     else await assert.rejects(read);
-    h.repo.sync = async () => ({ ok: true });
+    assert.deepEqual(h.updates, []);
+    let pulls = 0;
+    h.repo.sync = async () => { pulls++; return { ok: true }; };
     await h.start();
-    assert.equal(h.updates[0].lastMessageAt, null);
+    assert.equal(h.updates[0].lastMessageAt, 100);
+    assert.equal(pulls, scenario === 'unchanged' ? 0 : 1);
     h.controller.abort();
   });
 }
 
 for (const preload of [false, true]) {
-  test(`marker advancing during ${preload ? 'search' : 'observation'} sync retains the original baseline`, async () => {
+  test(`marker advancing during ${preload ? 'search' : 'observation'} sync waits for a stable timestamp`, async () => {
     const meta = { lastMessageAt: 200 };
     const h = harness({ meta });
     let pulls = 0;

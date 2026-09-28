@@ -387,6 +387,120 @@ struct FixtureLodyClientTests {
 
 @MainActor
 struct AppModelSessionRefreshTests {
+    @Test(arguments: [false, true])
+    func refreshFailureAfterCancellationDoesNotPublishStatus(cancel: Bool) async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let refresh = Task { await model.refreshSessions(cancelWhenCallerCancels: true) }
+        #expect(await requests.next() == "ws-a")
+
+        // A manual caller can join a request originally owned by automatic refresh.
+        let joined = AsyncStream<Void>.makeStream()
+        var joins = joined.stream.makeAsyncIterator()
+        let manual = Task {
+            joined.continuation.yield(())
+            await model.refreshSessions()
+        }
+        _ = await joins.next()
+        if cancel { refresh.cancel() }
+        client.fail("ws-a", with: NSError(domain: "WKErrorDomain", code: 5))
+        await refresh.value
+        await manual.value
+
+        #expect(model.isSignedIn)
+        #expect(!model.isRefreshingSessions)
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+        if cancel {
+            #expect(model.statusNote == nil)
+        } else {
+            #expect(model.statusNote == StatusNote(tone: .failure, text: "Could not refresh sessions."))
+        }
+    }
+
+    @Test func visibleListRefreshesRepeatedlyAndStopsWhenCancelled() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let automatic = Task { await model.refreshSessionsWhileVisible(interval: .milliseconds(1)) }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [Self.session("first")])
+        #expect(await requests.next() == "ws-a")
+        #expect(model.sessions.map(\.id) == ["first"])
+        automatic.cancel()
+        client.finish("ws-a", with: [Self.session("cancelled")])
+        await automatic.value
+        #expect(model.sessions.map(\.id) == ["first"])
+        #expect(!model.isRefreshingSessions)
+        #expect(client.requestedWorkspaceIDs == ["ws-a", "ws-a"])
+
+        let returned = Task { await model.refreshSessionsWhileVisible(interval: .seconds(60)) }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [Self.session("returned")])
+        await model.refreshSessions()
+        #expect(model.sessions.map(\.id) == ["returned"])
+        returned.cancel()
+        await returned.value
+    }
+
+    @Test func stoppingAutomaticWaiterDoesNotCancelManualRefresh() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let manual = Task { await model.refreshSessions() }
+        #expect(await requests.next() == "ws-a")
+        let automatic = Task { await model.refreshSessionsWhileVisible() }
+        await Task.yield()
+        automatic.cancel()
+        client.finish("ws-a", with: [Self.session("manual")])
+        await manual.value
+        await automatic.value
+        #expect(model.sessions.map(\.id) == ["manual"])
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+    }
+
+    @Test func sessionRefreshDoesNotWaitForWorkspaceDiscovery() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        client.defersWorkspaces = true
+        var requests = client.started.makeAsyncIterator()
+        var discoveries = client.workspaceStarted.stream.makeAsyncIterator()
+        let refresh = Task { await model.refreshContent() }
+        #expect(await requests.next() == "ws-a")
+        _ = await discoveries.next()
+        client.finish("ws-a", with: [Self.session("fresh")])
+        // Join the same list request; workspace discovery is still suspended.
+        await model.refreshSessions()
+        #expect(model.sessions.map(\.id) == ["fresh"])
+        client.workspaceContinuation?.resume(returning: [WorkspaceSummary(id: "ws-a", name: "A", slug: "a")])
+        await refresh.value
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+    }
+
+    @Test func discoveryChangingWorkspaceLoadsReplacementAndRejectsOldRows() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        client.defersWorkspaces = true
+        var requests = client.started.makeAsyncIterator()
+        var discoveries = client.workspaceStarted.stream.makeAsyncIterator()
+        let refresh = Task { await model.refreshContent() }
+        #expect(await requests.next() == "ws-a")
+        _ = await discoveries.next()
+        client.workspaceContinuation?.resume(returning: [WorkspaceSummary(id: "ws-b", name: "B", slug: "b")])
+        client.finish("ws-a", with: [Self.session("stale")])
+        #expect(await requests.next() == "ws-b")
+        #expect(model.sessions.isEmpty)
+        client.finish("ws-b", with: [Self.session("replacement")])
+        await refresh.value
+        #expect(model.selectedWorkspaceID == "ws-b")
+        #expect(model.sessions.map(\.id) == ["replacement"])
+    }
+
     @Test func sharesRefreshAndDiscardsCancelledWorkspaceResult() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)
@@ -588,7 +702,17 @@ private final class DeferredSessionClient: LodyClient {
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws { throw LodyClientError.notConnected }
     func restoreSession() async -> Account? { account }
     func signOut() { account = nil }
+    var defersWorkspaces = false
+    let workspaceStarted = AsyncStream<Void>.makeStream()
+    var workspaceContinuation: CheckedContinuation<[WorkspaceSummary], Error>?
+
     func workspaces() async throws -> [WorkspaceSummary] {
+        if defersWorkspaces {
+            return try await withCheckedThrowingContinuation { continuation in
+                workspaceContinuation = continuation
+                workspaceStarted.continuation.yield(())
+            }
+        }
         if let workspaceError { throw workspaceError }
         return [WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
          WorkspaceSummary(id: "ws-b", name: "B", slug: "b")]
@@ -607,6 +731,12 @@ private final class DeferredSessionClient: LodyClient {
     func finish(_ workspaceID: String, with sessions: [SessionSummary]) {
         for continuation in pending.removeValue(forKey: workspaceID) ?? [] {
             continuation.resume(returning: sessions)
+        }
+    }
+
+    func fail(_ workspaceID: String, with error: Error) {
+        for continuation in pending.removeValue(forKey: workspaceID) ?? [] {
+            continuation.resume(throwing: error)
         }
     }
 
