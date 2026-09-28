@@ -2,7 +2,7 @@
 
 ## 通知规划（尚未实现）
 
-- 详细方案见 [NOTIFICATIONS_PLAN.md](NOTIFICATIONS_PLAN.md)。已核实 Lody 机器端通过 Cloud 发送完成／权限事件。Innei/lody-ios 的实现和文档提供第三方接入路径：独立 OneSignal App，由 SDK 注册设备并关联 Lody 用户，Cloud 的 `ONE_SIGNAL_APPS` 清单增加发送目标，无需新建 token 接口。该云端配置机制尚未在 Kurage 所用部署核实，也未验证向 Kurage Bundle ID 的投递。优先确认配置并验证真实事件链路，再接入授权、账号绑定、点击路由和前台展示；保持项目仅开发客户端的范围。本次仅更新规划文档。
+- 已核实 Lody 机器端通过 Cloud 发送完成／权限事件。Innei/lody-ios 的实现和文档提供第三方接入路径：独立 OneSignal App，由 SDK 注册设备并关联 Lody 用户，Cloud 的 `ONE_SIGNAL_APPS` 清单增加发送目标，无需新建 token 接口。该云端配置机制尚未在 Kurage 所用部署核实，也未验证向 Kurage Bundle ID 的投递。优先确认配置并验证真实事件链路，再接入授权、账号绑定、点击路由和前台展示；保持项目仅开发客户端的范围。本次仅更新规划文档。
 
 ## 当前状态
 
