@@ -197,8 +197,10 @@ struct SessionComposer: View {
         return query
     }
 
-    private var mentionLoadID: String {
-        "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentionRetry)"
+    private var mentionLoadID: String? {
+        // Leaving the foreground cancels pending bridge requests.
+        guard scenePhase == .active else { return nil }
+        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentionRetry)"
     }
 
     var body: some View {
@@ -270,7 +272,7 @@ struct SessionComposer: View {
     }
 
     private func loadMentions() async {
-        guard let query = mentionQuery else { return }
+        guard scenePhase == .active, !Task.isCancelled, let query = mentionQuery else { return }
         if loadedMentionSourceID != mentionSourceID {
             mentionSessions = []
             mentionSkills = []
@@ -286,7 +288,10 @@ struct SessionComposer: View {
                 mentionSessions = loaded
                 sessionsLoaded = true
             } catch is CancellationError { return }
-            catch { mentionLoadFailed = true }
+            catch {
+                guard !Task.isCancelled else { return }
+                mentionLoadFailed = true
+            }
         }
         if !skillsLoaded, let loadMentionSkills {
             do {
@@ -295,7 +300,10 @@ struct SessionComposer: View {
                 mentionSkills = loaded
                 skillsLoaded = true
             } catch is CancellationError { return }
-            catch { mentionLoadFailed = true }
+            catch {
+                guard !Task.isCancelled else { return }
+                mentionLoadFailed = true
+            }
         }
     }
 

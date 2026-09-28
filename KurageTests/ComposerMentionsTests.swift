@@ -1,9 +1,37 @@
 import Foundation
 import SwiftUI
 import Testing
+import UIKit
 @testable import Kurage
 
 struct ComposerMentionsTests {
+    @MainActor
+    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["@review", "$review"])
+    func mentionLoadsCancelOffForegroundAndResume(draft: String) async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let probe = MentionLoadProbe()
+        let host = UIHostingController(rootView: MentionLifecycleHarness(probe: probe, draft: draft))
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        try await waitForMentionLoad { probe.starts == 1 }
+        probe.phase = .inactive
+        try await waitForMentionLoad { probe.cancellations == 1 }
+        probe.phase = .background
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.starts == 1)
+        #expect(probe.skillStarts == (draft.hasPrefix("$") ? 1 : 0))
+
+        probe.phase = .active
+        try await waitForMentionLoad { probe.completions == (draft.hasPrefix("@") ? 2 : 1) }
+        #expect(probe.starts == (draft.hasPrefix("@") ? 3 : 2))
+    }
+
     @Test func skillAndSessionMentionsExpandToLodyPromptForms() {
         var state = ComposerMentionState()
         var text = "Ask @review"
@@ -107,4 +135,60 @@ struct ComposerMentionsTests {
                                  replacing: text.range(of: "@review")!, in: text)
         #expect(state.expanded(text) == "🐈 [@Review](session://ses_1) ")
     }
+}
+
+@MainActor
+@Observable
+private final class MentionLoadProbe {
+    var phase = ScenePhase.active
+    var starts = 0
+    var skillStarts = 0
+    var cancellations = 0
+    var completions = 0
+
+    func load(isSkill: Bool) async throws {
+        starts += 1
+        if isSkill { skillStarts += 1 }
+        if starts == 1 {
+            do { try await Task.sleep(for: .seconds(30)) }
+            catch {
+                cancellations += 1
+                // Network cancellation need not arrive as CancellationError.
+                throw URLError(.cancelled)
+            }
+        }
+        completions += 1
+    }
+}
+
+private struct MentionLifecycleHarness: View {
+    let probe: MentionLoadProbe
+    @State private var draft: String
+    @State private var mentions = ComposerMentionState()
+    @State private var attachments: [ComposerAttachment] = []
+
+    init(probe: MentionLoadProbe, draft: String) {
+        self.probe = probe
+        _draft = State(initialValue: draft)
+    }
+
+    var body: some View {
+        SessionComposer(draft: $draft, mentions: $mentions, attachments: $attachments,
+                        isSending: false, isCancelling: false, isSessionRunning: false,
+                        supportsTextSending: true, supportsTextSendingWhileRunning: false,
+                        supportsSessionCancellation: false, runConfig: nil, focusesOnAppear: true,
+                        loadMentionSessions: { try await probe.load(isSkill: false); return [] },
+                        loadMentionSkills: { try await probe.load(isSkill: true); return [] },
+                        onSend: {}, onCancel: {}, onChooseRunConfig: { _, _ in })
+            .environment(\.scenePhase, probe.phase)
+    }
+}
+
+@MainActor
+private func waitForMentionLoad(_ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !condition(), ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(condition())
 }
