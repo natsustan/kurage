@@ -261,13 +261,30 @@ final class AppModel {
         await refreshSessions()
     }
 
-    func refreshSessions(restart: Bool = false) async {
+    /// Owned by the visible list's SwiftUI task; no polling in details or the background.
+    func refreshSessionsWhileVisible(interval: Duration = .seconds(10)) async {
+        while !Task.isCancelled, account != nil {
+            // Search owns the bridge while indexing; do not repeatedly invalidate its results.
+            if !isSessionSearchActive {
+                await refreshSessions(cancelWhenCallerCancels: true)
+            }
+            do {
+                try await Task.sleep(for: interval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    func refreshSessions(restart: Bool = false, cancelWhenCallerCancels: Bool = false) async {
         guard !Task.isCancelled, account != nil, let workspaceID = selectedWorkspaceID else { return }
         let generation = authenticationGeneration
-        if restart || (sessionRefreshTask != nil && sessionRefreshWorkspaceID != workspaceID) {
+        if restart || sessionRefreshTask?.isCancelled == true ||
+            (sessionRefreshTask != nil && sessionRefreshWorkspaceID != workspaceID) {
             cancelSessionRefresh()
         }
         let refreshTask: Task<[SessionSummary], Error>
+        let ownsRequest = sessionRefreshTask == nil
         if let currentTask = sessionRefreshTask {
             refreshTask = currentTask
         } else {
@@ -287,8 +304,13 @@ final class AppModel {
             }
         }
         do {
-            let loaded = try await refreshTask.value
-            guard isCurrentSessionRefresh(
+            let loaded = try await withTaskCancellationHandler {
+                try await refreshTask.value
+            } onCancel: {
+                // A disappearing list must not cancel a request started by another caller.
+                if ownsRequest && cancelWhenCallerCancels { refreshTask.cancel() }
+            }
+            guard !Task.isCancelled, isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
             ) else { return }
             // A list request can finish after a newer conversation update.

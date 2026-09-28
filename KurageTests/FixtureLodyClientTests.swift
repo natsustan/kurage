@@ -387,6 +387,49 @@ struct FixtureLodyClientTests {
 
 @MainActor
 struct AppModelSessionRefreshTests {
+    @Test func visibleListRefreshesRepeatedlyAndStopsWhenCancelled() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let automatic = Task { await model.refreshSessionsWhileVisible(interval: .milliseconds(1)) }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [Self.session("first")])
+        #expect(await requests.next() == "ws-a")
+        #expect(model.sessions.map(\.id) == ["first"])
+        automatic.cancel()
+        client.finish("ws-a", with: [Self.session("cancelled")])
+        await automatic.value
+        #expect(model.sessions.map(\.id) == ["first"])
+        #expect(!model.isRefreshingSessions)
+        #expect(client.requestedWorkspaceIDs == ["ws-a", "ws-a"])
+
+        let returned = Task { await model.refreshSessionsWhileVisible(interval: .seconds(60)) }
+        #expect(await requests.next() == "ws-a")
+        client.finish("ws-a", with: [Self.session("returned")])
+        await model.refreshSessions()
+        #expect(model.sessions.map(\.id) == ["returned"])
+        returned.cancel()
+        await returned.value
+    }
+
+    @Test func stoppingAutomaticWaiterDoesNotCancelManualRefresh() async {
+        let client = DeferredSessionClient()
+        let model = AppModel(client: client)
+        await model.refreshWorkspaces()
+        var requests = client.started.makeAsyncIterator()
+        let manual = Task { await model.refreshSessions() }
+        #expect(await requests.next() == "ws-a")
+        let automatic = Task { await model.refreshSessionsWhileVisible() }
+        await Task.yield()
+        automatic.cancel()
+        client.finish("ws-a", with: [Self.session("manual")])
+        await manual.value
+        await automatic.value
+        #expect(model.sessions.map(\.id) == ["manual"])
+        #expect(client.requestedWorkspaceIDs == ["ws-a"])
+    }
+
     @Test func sessionRefreshDoesNotWaitForWorkspaceDiscovery() async {
         let client = DeferredSessionClient()
         let model = AppModel(client: client)

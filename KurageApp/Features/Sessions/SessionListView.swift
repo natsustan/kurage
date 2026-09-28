@@ -16,6 +16,7 @@ struct SessionNavigation {
 
 struct SessionListView: View {
     let model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
     @State private var searchQuery = ""
@@ -24,6 +25,18 @@ struct SessionListView: View {
 
     private var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private struct RefreshContext: Equatable {
+        let isVisible: Bool
+        let workspaceGeneration: Int
+    }
+
+    private var refreshContext: RefreshContext {
+        RefreshContext(
+            isVisible: scenePhase == .active && navigation.path.isEmpty && !showArchivedSessions,
+            workspaceGeneration: model.workspaceGeneration
+        )
     }
 
     var body: some View {
@@ -137,6 +150,10 @@ struct SessionListView: View {
                     .accessibilityIdentifier("more-options")
                 }
             }
+        }
+        .task(id: refreshContext) {
+            guard refreshContext.isVisible else { return }
+            await model.refreshSessionsWhileVisible()
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest))
         .sheet(isPresented: $showArchivedSessions) {
