@@ -572,11 +572,16 @@ struct TurnRow: View {
                 TurnWorkingLabel(turnID: turn.id, timing: timing)
             }
             if let work = turn.displayedWork {
+                let content = turn.content
+                let insertionIndex = min(max(work.insertionIndex, 0), content.count)
+                blocks(Array(content.prefix(insertionIndex)), alignment: alignment)
                 TurnWorkDisclosure(turnID: turn.id, work: work, disclosures: disclosures) {
                     blocks(work.parts, alignment: alignment)
                 }
+                blocks(Array(content.dropFirst(insertionIndex)), alignment: alignment)
+            } else {
+                blocks(turn.content, alignment: alignment)
             }
-            blocks(turn.content, alignment: alignment)
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
                                     onOpen: { onOpenChanges(fileChanges.turnNumber) },

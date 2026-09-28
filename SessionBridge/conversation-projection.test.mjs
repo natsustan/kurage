@@ -207,3 +207,27 @@ test('live timing survives empty output, ends on completion and belongs only to 
   assert.equal(project([entry, { id: 'next', role: 'user', items: [{ type: 'text', text: 'Next' }] }]).length, 1);
   assert.deepEqual(project([{ ...entry, timestamp: 'invalid', permissionWaitMs: -1 }])[0].timing, { permissionWaitMs: 0 });
 });
+
+for (const attachment of [
+  { type: 'image', imageId: 'before' },
+  { type: 'file', fileId: 'before', fileName: 'before.txt', sizeBytes: 12 },
+  { type: 'image_group', images: [{ imageId: 'one' }, { imageId: 'two' }] },
+]) {
+  test(`folded work stays after a leading ${attachment.type}`, () => {
+    const [turn] = projectConversation('s', [finishedTurn([
+      attachment,
+      { type: 'text', text: 'Checking.' },
+      { type: 'tool_call', kind: 'read', toolCallId: 'read', title: 'Read file' },
+      { type: 'text', text: 'Answer.' },
+    ])]).turns;
+    const prefixLength = attachment.type === 'image_group' ? 2 : 1;
+    assert.equal(turn.work.insertionIndex, prefixLength);
+    const expanded = [...turn.parts];
+    expanded.splice(turn.work.insertionIndex, 0, ...turn.work.parts);
+    assert.deepEqual(expanded.map(part => part.type), [
+      ...Array(prefixLength).fill(attachment.type === 'file' ? 'file' : 'image'),
+      'text', 'activity', 'text',
+    ]);
+    assert.equal(expanded.at(-1).text, 'Answer.');
+  });
+}

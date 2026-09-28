@@ -172,9 +172,12 @@ struct ConversationActivity: Codable, Equatable, Sendable, Identifiable {
 struct ConversationWork: Codable, Equatable, Sendable {
     /// Effective working time, excluding permission waits. Absent when not recorded.
     var durationMs: Double?
+    /// Number of visible turn parts before the folded group; old caches default to zero.
+    var insertionIndex: Int
     var parts: [ConversationPart]
 
-    init(durationMs: Double? = nil, parts: [ConversationPart]) {
+    init(durationMs: Double? = nil, insertionIndex: Int = 0, parts: [ConversationPart]) {
+        self.insertionIndex = insertionIndex
         self.durationMs = durationMs
         self.parts = parts
     }
@@ -196,18 +199,20 @@ struct ConversationWork: Codable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        insertionIndex = try container.decodeIfPresent(Int.self, forKey: .insertionIndex) ?? 0
         durationMs = try container.decodeIfPresent(Double.self, forKey: .durationMs)
         parts = try container.decodeIfPresent([PartBox].self, forKey: .parts)?.compactMap(\.part) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(insertionIndex, forKey: .insertionIndex)
         try container.encodeIfPresent(durationMs, forKey: .durationMs)
         try container.encode(parts.map(PartBox.init), forKey: .parts)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case durationMs, parts
+        case durationMs, insertionIndex, parts
     }
 }
 

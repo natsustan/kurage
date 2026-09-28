@@ -537,7 +537,10 @@ extension SessionRecord {
                         id: "long-agent-\(number)",
                         author: .agent,
                         text: number == 20 ? "Latest reply in long conversation" : "Answer \(number): More details about this question.",
-                        parts: number == 20 ? [.text("Latest reply in long conversation")] : [],
+                        parts: number == 20 ? [
+                            .file(ConversationFile(fileID: "before-work", fileName: "Before work.txt", sizeBytes: 12)),
+                            .text("Latest reply in long conversation"),
+                        ] : [],
                         work: number == 20 ? .fixture : nil
                     ),
                 ]
@@ -619,7 +622,7 @@ extension SessionRecord {
 
 
 extension ConversationWork {
-    static let fixture = ConversationWork(durationMs: 87_400, parts: [
+    static let fixture = ConversationWork(durationMs: 87_400, insertionIndex: 1, parts: [
         .text("I will check the conversation layout first."),
         .activity(ConversationActivity(id: "2:long-tool-1", commands: 2, reads: 1, steps: [
             .init(id: "long-tool-1", kind: .command, title: "git status --short"),

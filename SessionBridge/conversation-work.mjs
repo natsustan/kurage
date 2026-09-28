@@ -154,6 +154,9 @@ export function projectAssistantBlocks(entry, projectItem) {
   const visible = blocks.filter(block => !block.work).flatMap(block => block.parts);
   const folded = blocks.filter(block => block.work).flatMap(block => block.parts);
   if (!finished || folded.length === 0 || visible.length === 0) return { parts: all };
+  const insertionIndex = blocks.slice(0, blocks.findIndex(block => block.work))
+    .reduce((count, block) => count + block.parts.length, 0);
   const durationMs = workDurationMs(entry);
-  return { parts: visible, work: { ...(durationMs === undefined ? {} : { durationMs }), parts: folded } };
+  return { parts: visible, work: { ...(durationMs === undefined ? {} : { durationMs }),
+    ...(insertionIndex > 0 ? { insertionIndex } : {}), parts: folded } };
 }

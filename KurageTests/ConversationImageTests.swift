@@ -116,6 +116,15 @@ struct ConversationImageTests {
         #expect(legacy.displayedWork == nil)
     }
 
+    @Test func foldedWorkInsertionSurvivesBridgeDecodingAndCacheRoundTrip() throws {
+        let turn = try JSONDecoder().decode(ConversationTurn.self, from: Data(#"{"id":"a","author":"agent","parts":[{"type":"file","fileID":"f","fileName":"before.txt","sizeBytes":12},{"type":"text","text":"Answer"}],"work":{"insertionIndex":1,"parts":[{"type":"text","text":"Checking"}]}}"#.utf8))
+        #expect(turn.displayedWork?.insertionIndex == 1)
+        let cached = try JSONDecoder().decode(ConversationTurn.self, from: JSONEncoder().encode(turn))
+        #expect(cached == turn)
+        let legacy = try JSONDecoder().decode(ConversationWork.self, from: Data(#"{"parts":[{"type":"text","text":"Checking"}]}"#.utf8))
+        #expect(legacy.insertionIndex == 0)
+    }
+
     @Test func workTitleMatchesLodyDurationFormat() {
         #expect(ConversationWork(durationMs: 40_900, parts: []).title == "Worked for 40s")
         #expect(ConversationWork(durationMs: 65_000, parts: []).title == "Worked for 1m 05s")

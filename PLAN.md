@@ -165,3 +165,6 @@
 
 - PR #14 取消链路修复：置顶和改名通过 operation ID 将 Swift Task 取消传入临时仓库、metadata 同步及原生网络代理；读取后写入前检查取消，退出时销毁副本并清理认证别名。取消会停止尚未完成的工作，不能撤回服务端已接收的写入；真实账号弱网场景仍待验证。
   本轮 frozen lockfile 安装、125 项 JavaScript 测试及 bundle 重建通过；7 项 iOS 定向测试通过（StreamFetchHandlerTests、SessionMetadataTests），包含实际 WebKit 桥接取消原生网络请求的回归。
+
+- Worked for 审查修复：桥接投影记录折叠组在可见内容中的插入位置，原生按该位置显示前置附件、工作组与后续正文，避免展开后将前置图片/文件移到工作过程之后。旧缓存缺少位置时默认从开头显示；新增桥接回归覆盖前置图片、文件和多图组，原生覆盖解码与缓存往返，fixture UI 检查文件在折叠和展开时均位于工作组上方。
+  本轮 frozen lockfile 安装、156 项 JavaScript 测试及 bundle 重建通过；25 项图片/布局 Swift 测试和 1 项 Worked for fixture UI 测试通过。已核对 iPhone 17 浅色默认字号下折叠与展开截图，前置文件位置正确、标题锚点稳定。真实账号、深色及辅助大字号本轮未复验。

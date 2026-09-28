@@ -167,11 +167,15 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertEqual(toggle.value as? String, "Collapsed")
         XCTAssertTrue(app.staticTexts["Latest reply in long conversation"].exists)
         XCTAssertFalse(app.staticTexts["I will check the conversation layout first."].exists)
+        let attachment = app.staticTexts["Before work.txt"]
+        XCTAssertTrue(attachment.exists)
+        XCTAssertLessThan(attachment.frame.maxY, toggle.frame.minY)
         attachScreen(app, name: "Worked for collapsed")
 
         let headerY = toggle.frame.minY
         tap(toggle)
         XCTAssertEqual(toggle.value as? String, "Expanded")
+        XCTAssertLessThan(attachment.frame.maxY, toggle.frame.minY)
         XCTAssertEqual(toggle.frame.minY, headerY, accuracy: 2)
         // Expanding at the bottom must not scroll the tapped header away.
         XCTAssertTrue(toggle.isHittable)
