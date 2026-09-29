@@ -390,9 +390,10 @@ test('file-only history updates replace summaries and removal clears them while 
   h.controller.abort();
 });
 
-test('task history updates replace and clear tasks without scanning child tabs', async () => {
+test('task history updates stay independent from session tabs', async () => {
   const h = harness();
-  h.repo.listDoc = async () => { throw new Error('Must not scan child tabs'); };
+  h.repo.listDoc = async () => [{ docId: 'session-abc', meta: {} },
+    { docId: 'session-child', meta: { parentSessionId: 'abc', title: 'A separate tab' } }];
   await h.start();
   assert.deepEqual(h.updates[0].subtasks, []);
   const history = h.doc.getList('history');
@@ -682,4 +683,29 @@ test('patches publish timing changes and removal without text changes', () => {
   const after = { ...before, turns: [{ ...before.turns[0], timing: { startedAtMs: 1000, permissionWaitMs: 5000 } }] };
   assert.equal(conversationPatch(before, after).changed.length, 1);
   assert.equal(conversationPatch(after, { ...after, turns: [{ id: 'a', author: 'agent', text: '' }] }).changed.length, 1);
+});
+
+
+test('metadata changes update the tab group while history changes do not rescan it', async () => {
+  const h = harness();
+  const rows = [{ docId: 'session-abc', meta: { title: 'Main' } }];
+  let scans = 0;
+  h.repo.listDoc = async () => { scans++; return rows; };
+  await h.start();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc']);
+  h.doc.getList('history').push({ id: 'u', role: 'user', items: [{ type: 'text', text: 'Hello' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(scans, 1);
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc']);
+  rows.push({ docId: 'session-tab', meta: { parentSessionId: 'abc', status: { type: 'running' } } });
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc', 'tab']);
+  assert.equal(h.updates.at(-1).sessionTabs[1].activity, 'running');
+  rows[1].meta.isTabClosed = true;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).sessionTabs[1].isTabClosed, true);
+  h.controller.abort();
 });

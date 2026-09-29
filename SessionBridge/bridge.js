@@ -1,3 +1,4 @@
+import { sessionProjects } from './session-projects.mjs';
 import { respondQuestion } from './conversation-questions.mjs';
 import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
@@ -208,7 +209,7 @@ window.kurageMentionSessions = async (workspaceID, gatewayBaseURL, currentSessio
 };
 
 window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSessionID,
-  agentConfigID, userID, operationID) => {
+  agentConfigID, userID, operationID, projectID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   const timeout = setTimeout(() => controller.abort(), 120000);
@@ -231,7 +232,11 @@ window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSession
         if (!config?.agentType) throw new Error('Agent configuration is unavailable');
         agentType = config.agentType;
       }
-      const localProjectID = row.meta.project?.kind === 'local'
+      const prefix = `local:${machineID}:`;
+      if (projectID && (!projectID.startsWith(prefix) || !projectID.slice(prefix.length))) {
+        throw new Error('Skill project belongs to another machine');
+      }
+      const localProjectID = projectID ? projectID.slice(prefix.length) : row.meta.project?.kind === 'local'
         ? row.meta.project.localProjectId : null;
       return { machineID, localProjectID, agentType };
     }, true, controller.signal);
@@ -306,12 +311,12 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, s
   }
 }
 
-window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID) => {
+window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
     return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
-      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal)),
+      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal, projectID ?? undefined, tab)),
     { operationID, signal: controller.signal }, controller.signal);
   } finally {
     controller.abort();
@@ -435,6 +440,28 @@ window.kurageRespondQuestion = async (workspaceID, sessionID, baseURL, turnID, r
       repo => respondQuestion(repo, sessionID, turnID, requestID, answers, controller.signal),
       { operationID, signal: controller.signal }, controller.signal);
   } finally {
+    controller.abort();
+    sessionRefreshes.delete(operationID);
+  }
+};
+
+window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessionID, action, path, cursor, operationID) => {
+  const controller = new AbortController();
+  sessionRefreshes.set(operationID, controller);
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(
+      await sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor, {
+        baseURL: gatewayBaseURL,
+        auth: async () => {
+          const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+            command: 'auth', workspaceID, operationID,
+          });
+          return access.token;
+        },
+      }, controller.signal)), { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    clearTimeout(timeout);
     controller.abort();
     sessionRefreshes.delete(operationID);
   }

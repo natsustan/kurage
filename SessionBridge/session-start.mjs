@@ -59,19 +59,29 @@ async function readDocumentBaseline(repo, docID, signal) {
 // A new session reuses the machine and local project of a recent root session
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.
-async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { allowArchived = false } = {}) {
+async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { allowArchived = false, projectID, tab = false } = {}) {
   signal?.throwIfAborted();
   const rows = await repo.listDoc();
   const templateDocID = `session-${templateSessionID}`;
   const row = rows.find(entry => entry.docId === templateDocID);
   const meta = row?.meta;
   const project = meta?.project;
-  if (!row || !isRootSession(row, allowArchived) || project?.kind !== 'local' ||
-      !text(project.localProjectId) || !text(meta.machineId) ||
+  if (!row || !isRootSession(row, allowArchived) ||
+      (!tab && (project?.kind !== 'local' || !text(project.localProjectId))) || !text(meta.machineId) ||
       !text(meta.cliType) || !text(meta.agentType)) {
     throw new Error('Project is unavailable for a new session');
   }
 
+  if (tab && (projectID || agentConfigID)) throw new Error('Tab inherits its parent agent and project');
+  let targetMeta = meta;
+  if (projectID !== undefined) {
+    const prefix = `local:${meta.machineId}:`;
+    if (!projectID.startsWith(prefix) || !projectID.slice(prefix.length)) {
+      throw new Error('Target project belongs to another machine');
+    }
+    targetMeta = { ...meta, project: project.localProjectId === projectID.slice(prefix.length)
+      ? project : { kind: 'local', localProjectId: projectID.slice(prefix.length) } };
+  }
   let flock;
   const flockDocID = `${workspaceID}:mf:${meta.machineId}`;
   try {
@@ -86,8 +96,9 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   // Reuse the known machine snapshot and the restore rules, including legacy projects.
   if (flock) {
     const state = await readLocalProjectState(repo, workspaceID, meta.machineId, signal, flock);
-    if (!canRestoreArchivedSession(meta, state)) throw new Error('Project is unavailable for a new session');
+    if (!canRestoreArchivedSession(targetMeta, state)) throw new Error('Project is unavailable for a new session');
   }
+  if (projectID && !flock) throw new Error('Target project could not be verified');
   let providers = flock ? readProviders(flock, meta.machineId) : [];
   // The inherited agent remains selectable even while viewing another provider.
   if (!providers.some(provider => provider.id === meta.agentConfigId)) {
@@ -97,13 +108,14 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   const chosenID = text(agentConfigID) ?? meta.agentConfigId;
   const agent = providers.find(provider => provider.id === chosenID);
   if (!agent) throw new Error('Provider is unavailable for a new session');
-  const baseline = text(agent.id)
+  if (tab) providers = [agent];
+  const baseline = !tab && text(agent.id)
     ? await readBaseline(repo, rows, meta, agent.id, signal)
     : await readDocumentBaseline(repo, templateDocID, signal);
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   return {
-    meta,
+    meta: targetMeta,
     agent,
     baseline,
     machineName: machineName ?? meta.machineId,
@@ -116,8 +128,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   };
 }
 
-export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, signal) {
-  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal);
+export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, signal, projectID, tab = false) {
+  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { projectID, tab });
   return {
     machineName: template.machineName,
     agentConfigID: template.agent.id ?? '',
@@ -130,7 +142,7 @@ export async function newSessionOptions(repo, workspaceID, templateSessionID, ag
 // the machine never sees a session without its message. Metadata carries the
 // dispatch pointer in the same write. Retries reuse both IDs.
 export async function startSession(repo, workspaceID, {
-  templateSessionID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections, attachments = [],
+  templateSessionID, projectID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections, attachments = [], parentSessionID,
 }) {
   if (!text(userID) || !text(sessionID) || !text(turnID)) {
     throw new Error('Session dispatch configuration is unavailable');
@@ -140,6 +152,8 @@ export async function startSession(repo, workspaceID, {
   const published = (await repo.listDoc()).find(entry => entry.docId === docID);
   if (published?.deleted) throw new Error('Session was removed');
   if (published) {
+    if ((published.meta?.parentSessionId ?? undefined) !== parentSessionID) throw new Error('Session parent does not match');
+    if (projectID && projectID !== `local:${published.meta?.machineId}:${published.meta?.project?.localProjectId}`) throw new Error('Session project does not match');
     if (published.meta?.userId !== userID) throw new Error('Session ID belongs to another session');
     return sendText(repo, sessionID, turnID, userID, prompt, timestamp, undefined, attachments);
   }
@@ -159,8 +173,13 @@ export async function startSession(repo, workspaceID, {
   try {
     // Archiving the source must not strand a first turn already authored by this request.
     // Only a synced, matching turn may resume from an archived template.
-    template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
-      { allowArchived: Boolean(existing) });
+    if (parentSessionID) {
+      if (parentSessionID !== templateSessionID || projectID || agentConfigID) throw new Error('Invalid tab parent');
+      template = await readTemplate(repo, workspaceID, parentSessionID, undefined, undefined, { tab: true });
+    } else {
+      template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
+        { allowArchived: Boolean(existing), projectID });
+    }
     if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }, ...attachments],
       cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,
@@ -180,8 +199,9 @@ export async function startSession(repo, workspaceID, {
     }
   }
 
-  const project = { kind: 'local', localProjectId: source.project.localProjectId };
-  if (text(source.project.githubRepoFullName)) {
+  const project = parentSessionID ? { ...(source.project ?? { kind: 'chat' }) }
+    : { kind: 'local', localProjectId: source.project.localProjectId };
+  if (text(source.project?.githubRepoFullName)) {
     project.githubRepoFullName = source.project.githubRepoFullName;
   }
   const meta = {
@@ -199,6 +219,11 @@ export async function startSession(repo, workspaceID, {
     latestUserMsgId: turnID,
     lastMessageAt: Date.now(),
   };
+  if (parentSessionID) {
+    meta.parentSessionId = parentSessionID;
+    if (source.isWorktree !== undefined) meta.isWorktree = source.isWorktree;
+    if (source.repoFullName) meta.repoFullName = source.repoFullName;
+  }
   if (text(agent.id)) meta.agentConfigId = agent.id;
   if (project.githubRepoFullName) meta.repoFullName = project.githubRepoFullName;
   await repo.upsertDocMeta(docID, meta);

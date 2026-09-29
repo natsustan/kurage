@@ -8,8 +8,8 @@ struct ConversationView: View {
     var isReadOnly = false
 
     var body: some View {
-        ConversationContent(sessionID: sessionID, title: title, model: model,
-                            workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly)
+        ConversationTabsContent(rootID: sessionID, title: title, model: model,
+                                    workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly)
             .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly))
     }
 }
@@ -26,15 +26,16 @@ private struct ConversationScope: Hashable {
 }
 
 // Scope the owner of all transient state, not just its layout subtree.
-private struct ConversationContent: View {
+struct ConversationContent: View {
     let sessionID: SessionSummary.ID
     let title: String
     let model: AppModel
     let workspaceGeneration: Int
     let isReadOnly: Bool
+    let isReading: Bool
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == workspaceGeneration }
-    private var session: SessionSummary? { model.sessions.first { $0.id == sessionID } }
+    private var session: SessionSummary? { model.sessionSummary(sessionID) }
 
     @Environment(\.dismiss) private var dismiss
     @State private var actionRequest: SessionActionRequest?
@@ -43,9 +44,9 @@ private struct ConversationContent: View {
     @State private var observedSessionID: String?
     @State private var refreshID = 0
     @State private var conversation: Conversation?
-    @State private var draft = ""
-    @State private var mentions = ComposerMentionState()
-    @State private var attachments: [ComposerAttachment] = []
+    @Binding var draft: String
+    @Binding var mentions: ComposerMentionState
+    @Binding var attachments: [ComposerAttachment]
     @State private var isSending = false
     @State private var pendingTurns: [ConversationTurn] = []
     @State private var isCancelling = false
@@ -56,7 +57,10 @@ private struct ConversationContent: View {
     @State private var showsConnectionMessage = false
     @State private var previousPendingText: String?
     @State private var previousPendingWorkspaceID: String?
-    @State private var runConfigState = ConversationRunConfigState()
+    @Binding var runConfigState: ConversationRunConfigState
+    var onNewTab: (() -> Void)? = nil
+    var closedTabs: [SessionSummary] = []
+    var onReopenTab: (SessionSummary) -> Void = { _ in }
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
     @State private var changesSelection: FileChangesSelection?
@@ -67,7 +71,7 @@ private struct ConversationContent: View {
     @State private var loadedMessageAt: Double?
 
     private var readReceiptTimestamp: Double? {
-        guard isVisible, scenePhase == .active, isCurrentWorkspace,
+        guard isVisible, isReading, scenePhase == .active, isCurrentWorkspace,
               connectionStatus == nil, selectedSubtask == nil,
               previewImage == nil, changesSelection == nil,
               bottomMessageAt == loadedMessageAt else { return nil }
@@ -124,7 +128,7 @@ private struct ConversationContent: View {
                 draft: $draft, mentions: $mentions, attachments: $attachments,
                 isSending: isSending,
                 isCancelling: isCancelling,
-                isSessionRunning: model.sessions.first(where: { $0.id == sessionID })?.activity == .running,
+                isSessionRunning: (observedActivity ?? session?.activity) == .running,
                 banner: banner,
                 connectionMessage: showsConnectionMessage ? connectionStatus : nil,
                 supportsTextSending: !isReadOnly && model.supportsTextSending,
@@ -169,10 +173,32 @@ private struct ConversationContent: View {
         .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: { dismiss() }))
         .toolbar {
             if !isReadOnly, let session {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if let onNewTab {
+                        Button(action: onNewTab) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                        }
+                        .accessibilityLabel("New tab")
+                        .accessibilityIdentifier("new-session-tab")
+                        .disabled(!model.supportsSessionCreation)
+                    }
                     Menu {
-                        SessionActionButtons(session: session, model: model) { action in
-                            actionRequest = SessionActionRequest(session: session, action: action)
+                        if !closedTabs.isEmpty {
+                            Menu("Closed tabs", systemImage: "rectangle.on.rectangle") {
+                                ForEach(closedTabs) { tab in
+                                    Button(tab.title) { onReopenTab(tab) }
+                                }
+                            }
+                            .accessibilityIdentifier("closed-session-tabs")
+                        }
+                        if session.parentSessionID == nil {
+                            SessionActionButtons(session: session, model: model) { action in
+                                actionRequest = SessionActionRequest(session: session, action: action)
+                            }
+                        } else {
+                            Button("Rename session", systemImage: "pencil") {
+                                actionRequest = SessionActionRequest(session: session, action: .rename)
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis").accessibilityLabel("Session options")
@@ -313,7 +339,7 @@ private struct ConversationContent: View {
     private func sendDraft() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
-                model.sessions.first(where: { $0.id == sessionID })?.activity != .running else { return }
+                (observedActivity ?? session?.activity) != .running else { return }
         let originalDraft = draft
         let originalMentions = mentions
         let text = mentions.expanded(draft)
@@ -403,7 +429,7 @@ private struct ConversationContent: View {
 
     private func cancelSession() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
-              model.sessions.first(where: { $0.id == sessionID })?.activity == .running else { return }
+              (observedActivity ?? session?.activity) == .running else { return }
         isCancelling = true
         banner = nil
         Task {

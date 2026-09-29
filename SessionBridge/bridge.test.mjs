@@ -584,3 +584,38 @@ test('question writes scope requests and cancellation to an ephemeral existing-s
   assert.equal(signal.aborted, true);
   assert.equal(repos[0].destroyed, true);
 });
+
+
+test('new-folder skill mentions use the selected project on the template machine', async () => {
+  let request;
+  const rows = [{ docId: 'session-template', meta: {
+    machineId: 'machine', agentType: 'codex', project: { kind: 'local', localProjectId: 'old' },
+  } }];
+  const { window } = makeBridge(undefined, rows, undefined, undefined, {
+    mentionSkills: async args => { request = args; return []; },
+  });
+  await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+    'template', null, 'user', 'request', 'local:machine:fresh');
+  assert.equal(request.localProjectID, 'fresh');
+  await assert.rejects(window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+    'template', null, 'user', 'request2', 'local:other:fresh'), /another machine/);
+});
+
+test('tab configuration forwards its mode and scope without a project override or writable streams', async () => {
+  const { window, repos, transports } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    newSessionOptions: async (_repo, workspace, parent, agent, signal, project, tab) => {
+      assert.equal(workspace, 'workspace-tab');
+      assert.equal(parent, 'parent');
+      assert.equal(agent, null);
+      assert.equal(project, undefined);
+      assert.equal(tab, true);
+      assert.equal(signal.aborted, false);
+      return { agentConfigID: 'codex', providers: [], runConfig: {} };
+    },
+  });
+  const result = await window.kurageNewSessionOptions('workspace-tab', 'parent', null,
+    'https://gateway.lody.ai', 'tab-config', null, true);
+  assert.equal(JSON.parse(result).agentConfigID, 'codex');
+  assert.equal(transports[0].createStreamIfMissing, false);
+  assert.equal(repos[0].destroyed, true);
+});

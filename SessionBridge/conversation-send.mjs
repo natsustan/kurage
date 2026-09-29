@@ -63,7 +63,7 @@ function competingActivation(meta, entries, turnID) {
 export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = []) {
   const docID = `session-${sessionID}`;
   const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
-  if (!row || row.meta.isArchived || row.meta.parentSessionId) {
+  if (!row || row.meta.isArchived) {
     throw new Error('Session is unavailable in this workspace');
   }
   const { cliType, agentType, status } = row.meta;

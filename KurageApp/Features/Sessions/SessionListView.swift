@@ -60,6 +60,11 @@ struct SessionListView: View {
                 searchBody: { model.sessionSearchBody(sessionID: $0) },
                 canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
                 onOpen: { navigation.path.append(.conversation($0)) },
+                onChat: {
+                    if let template = model.sessions.first(where: { $0.projectID?.hasPrefix("local:") == true }),
+                       let projectID = template.projectID { startNewSession(projectID: projectID) }
+                },
+                canChat: model.supportsSessionCreation && model.sessions.contains { $0.projectID?.hasPrefix("local:") == true },
                 onNewSession: startNewSession
             )
             .task(id: isSearchActive) {
@@ -210,6 +215,8 @@ private struct SessionList: View {
     let searchBody: (SessionSummary.ID) -> String
     let canCreateSession: (String) -> Bool
     let onOpen: (SessionSummary.ID) -> Void
+    let onChat: () -> Void
+    let canChat: Bool
     let onNewSession: (String) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
 
@@ -263,7 +270,21 @@ private struct SessionList: View {
         // The list fills the screen, including the home-indicator area. The search field
         // keeps its own safe-area padding so it floats above that area.
         .overlay(alignment: .bottom) {
-            SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty)
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty)
+                    Button(action: onChat) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.title3)
+                            .frame(width: 50, height: 50)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .disabled(!canChat)
+                    .accessibilityLabel("New chat")
+                    .accessibilityIdentifier("new-chat")
+                }
+            }
                 .overlay(alignment: .top) {
                     if hasIncompleteSearch && !trimmedQuery.isEmpty {
                         Button("Search incomplete. Retry", action: onRetrySearch)

@@ -4,6 +4,16 @@
 
 - 已核实 Lody 机器端通过 Cloud 发送完成／权限事件。Innei/lody-ios 的实现和文档提供第三方接入路径：独立 OneSignal App，由 SDK 注册设备并关联 Lody 用户，Cloud 的 `ONE_SIGNAL_APPS` 清单增加发送目标，无需新建 token 接口。该云端配置机制尚未在 Kurage 所用部署核实，也未验证向 Kurage Bundle ID 的投递。优先确认配置并验证真实事件链路，再接入授权、账号绑定、点击路由和前台展示；保持项目仅开发客户端的范围。本次仅更新规划文档。
 
+## Session 多 tab（2026-09-29）
+
+- 交互修订：只有多个打开的会话时，详情标题下才显示横向玻璃药丸 tab 栏；单会话不常驻 Main 占位。顶部「···」左侧 chat 图标进入 New Tab 页面，复用 New Session 的底部输入框、附件、提及和 model/reasoning 菜单；机器和项目仅显示继承信息，不提供项目或 Agent 切换。创建成功返回同一详情并切到新 tab。
+- 各 tab 的文字、提及、附件草稿和下一轮配置在本次详情访问期间独立保留；切换重新定位到所选会话的最新消息，仅当前正文订阅保持活动。列表仍只显示根 Session。多个药丸使用系统 `GlassEffectContainer` / `glassEffect`，当前 tab 带轻微强调色。
+- 新建沿用主会话的机器、Agent 和完整 project/worktree 上下文，第一轮默认取主会话有效配置，model/reasoning 选项来自同一 Agent 的机器能力；页面选择与写入验证共用投影，支持每模型的 reasoning 约束。不复制历史、不恢复主会话的 provider session。附件沿用现有上传链路；先同步新 Session 正文，再发布 `parentSessionId` / `latestUserMsgId` metadata；只有创建副本可创建 Streams 流。未确认请求在进程内保留会话／turn ID、原文、附件与首次配置，Retry 继续原请求；离开创建页取消调用者，阻止迟到导航。
+- 关闭与重开：长按子 tab 的 Close tab 写 `isTabClosed`，不归档、不删除、不停止；当前 tab 关闭后回主会话，仅剩一个 tab 时收起药丸栏。「··· → Closed tabs」可重新打开。其它端的新增、关闭和状态变化经现有 metadata room 更新；剔除归档、删除、`childSessionPlacement: side-panel` 及仅有 opened-by 关系的会话。关闭未发草稿在本次详情内保留，退出详情后释放。
+- 原生状态：tab metadata 随完整 conversation update 传递，只有 metadata 变化才扫描目录，正文增长不重复扫描；缓存信息随之后的正文更新继续携带，防止 `bufferingNewest` 丢失状态。按账号／工作区隔离，退出登录清空；新建页面显示期间暂停详情已读回执。发送、停止和问答使用当前 tab 的独立 Session ID，保留原有空闲发送与重试限制。
+- 协议参考：本机 Lody `packages/shared/src/schema.ts` 的 `parentSessionId` / `childSessionPlacement`，`components/src/hooks/use-session-actions.ts` 的创建和 `setSessionTabClosed`，`components/src/components/sessions/session-detail.tsx` 的 tab 分组，以及 `apps/cli/src/session/session-manager.ts` 的共享父会话工作目录解析。subagent 的投影、模型和面板不变。
+- 此次交互修订验证进行中：208 项 JS 测试通过，frozen lockfile 安装及 bundle 重建完成，Simulator 构建通过；Swift 和更新后的浅色／深色大字号 UI 回归正在运行。之前布局的验证不作为此次结果。真实账号的首轮 model/reasoning 生效、同目录派发、跨端 tab 更新、网络恢复与后台恢复仍待实测。
+
 ## 当前状态
 
 - 已读／未读：列表接入 Lody `lastMessageAt` / `lastReadAt`，空闲未读会话显示蓝点，运行中保留 spinner，VoiceOver 同时读出运行与阅读状态。详情仅在前台可见、实时同步完成、未被图片／变更／子任务面板遮挡，且对应正文完成布局并实际到达底部时写回执；用户上滚时暂停，回到底部后恢复。搜索预加载不写回执。
@@ -48,7 +58,7 @@
 - 真实客户端现可向空闲会话发送普通文本：独立的短生命周期 Streams 副本先确认正文同步，再写入 `latestUserMsgId` 并确认 metadata 同步。写前重新同步并检查派发指针，写后确认指针仍指向本次 turn；现有 LoroRepo metadata 写入没有 CAS，跨客户端同时写入时仍不能保证绝对互斥。未确认的发送保留 turn ID；改发文本前须先重试旧消息，防止留下未派发的历史记录。旧 turn 已被较新的派发取代时会废弃旧重试 ID。发送成功后会话列表立即更新最近排序，并从服务端刷新。普通工具权限响应仍只在 fixture 中可用；问答请求已单独接入真实写入链路（见问答支持）。
 - 运行中的会话在输入区显示停止按钮，保留未发送草稿；具备 `supportsTextSendingWhileRunning` 的客户端（目前仅 fixture）同时保留发送按钮，真实客户端仍只显示停止操作；点按后从已同步的原始 history 找出最新未完成的 assistant turn，将其 ID 写入 `lastCanceledTurn` 并确认 metadata 同步。若 turn 尚未出现或已经结束，会提示重试。真实机器的停止响应仍待实测。
 - 会话内 model/reasoning：输入区第一行输入文字，第二行放置操作按钮；带刻度的仪表盘图标随 reasoning 档位变化。点击后打开无箭头浮层，model/reasoning 标签位于玻璃刻度胶囊外；离散 reasoning 刻度支持点选、拖动及 VoiceOver 调整，点击模型进入 Advanced 表单。浮层打开时使用仅内存中的页面快照做渐变模糊，关闭即释放，系统键盘保留清晰显示。新建会话的 provider/model/reasoning 共用此入口，选项仍遵循代理能力；Fast 暂不可用，尚未接入真实协议。观察器从机器 Flock 文档 `${workspace}:mf:${machineId}` 的 `['acpCapability', agentConfigId]` 读取能力（cliType/agentType 须与会话一致），当前值依次取与最新用户 turn 对应的 `acpRuntimeConfig`、该 turn 的 `inputConfig`、能力的 `currentValue`。能力含 reasoning 选项（`reasoning_effort` 或 `thought_level` 类别）时只允许改 reasoning（若有 `modelReasoningEfforts` 则按当前模型过滤），以免中途换模型破坏上下文缓存；否则允许改 model（builtin 写 `modelId`，registry/custom 写对应 config option）。无能力记录时只读显示。界面和新 turn 发送共用与最新用户 turn 匹配的运行时配置基线，运行时 configOptionValues 作为完整快照替换旧值。选择仅作用于下一条新 turn，页面离开即丢弃；未确认发送的重试沿用首次发送时的选择；发送层返回实际沿用的选择，界面仅清除已发送的选择，重试时新选的配置保留给下一轮，包括明确选回原基线的值；普通发送与“Retry earlier message”入口均更新实际配置基线。运行中可预选。尚未用真实账号验证 CLI 对切换值的实际应用。
-- 新建会话：按项目分组时，本地项目行右侧有新建按钮（未分组与 GitHub 项目不显示），进入独立页面后以第一条消息创建会话。机器、Agent 配置和本地项目取自该项目最近的根会话（模板），项目引用只保留 `localProjectId` / `githubRepoFullName`，不带 worktree 和分支，即直接在项目目录工作。第一条 turn 继承同工作区、同机器和同 Agent 配置最近活动的未归档根会话（跨项目）最新用户 turn 的有效配置中的 `modeId`、`modelId`、`configOptionValues`、`mcpServerIds`（不继承 Agent Role 与 `resume`），model 与 reasoning 都可在页面上选择：选项来自机器 Flock 的 `acpCapability`，reasoning 按所选模型的 `modelReasoningEfforts` 过滤，切到不支持当前 reasoning 的模型时不写 reasoning，由 Agent 默认值决定；桥在写入时重新投影并拒绝未提供的选项。写入使用独立短生命周期副本，只有它开启 `createStreamIfMissing` 以创建新 Session 文档流（对应 Lody 的 `ensureDocStream`）：先同步第一条 turn，再一次写入 metadata（`status: idle`、`title` 取前 50 字且 `titleSource: 'draft'`、`latestUserMsgId`）并确认同步，因此机器看到会话时正文已就绪。未确认时按项目在进程内保留会话 ID 与 turn ID，重试沿用首次的选择；改了文本须先重发原文。成功后替换为会话详情页，列表乐观插入后在后台刷新。Lody 桌面端创建会话前会在客户端检查免费会话额度，Kurage 没有这一步，需在 issue 中跟进。真实账号的新建、机器派发与首轮 model/reasoning 生效尚未验证。
+- 新建会话：列表底部搜索框右侧提供 New chat，本地项目行右侧也保留新建按钮（未分组与 GitHub 项目不显示），进入独立页面后以第一条消息创建会话。机器与默认 Agent 取自本地根会话模板；项目可切换为同机器的已登记项目，或浏览机器目录并选择其它本地文件夹，项目引用只保留 `localProjectId` / `githubRepoFullName`，不带 worktree 和分支，即直接在项目目录工作。第一条 turn 继承同工作区、同机器和同 Agent 配置最近活动的未归档根会话（跨项目）最新用户 turn 的有效配置中的 `modeId`、`modelId`、`configOptionValues`、`mcpServerIds`（不继承 Agent Role 与 `resume`），model 与 reasoning 都可在页面上选择：选项来自机器 Flock 的 `acpCapability`，reasoning 按所选模型的 `modelReasoningEfforts` 过滤，切到不支持当前 reasoning 的模型时不写 reasoning，由 Agent 默认值决定；桥在写入时重新投影并拒绝未提供的选项。写入使用独立短生命周期副本，只有它开启 `createStreamIfMissing` 以创建新 Session 文档流（对应 Lody 的 `ensureDocStream`）：先同步第一条 turn，再一次写入 metadata（`status: idle`、`title` 取前 50 字且 `titleSource: 'draft'`、`latestUserMsgId`）并确认同步，因此机器看到会话时正文已就绪。未确认时按项目在进程内保留会话 ID 与 turn ID，重试沿用首次的选择；改了文本须先重发原文。成功后替换为会话详情页，列表乐观插入后在后台刷新。Lody 桌面端创建会话前会在客户端检查免费会话额度，Kurage 没有这一步，需在 issue 中跟进。真实账号的新建、机器派发与首轮 model/reasoning 生效尚未验证。
 - 新建会话配置在页面内预取并缓存各 provider 的选项，共享同一 provider 的在途请求；已缓存 provider 切换及 model/reasoning 选择立即更新本地状态，往返切换保留各自选择。尚未加载的 provider 立即显示新名称和加载状态，不展示旧模型，不允许发送；迟到结果不会覆盖新选择，页面离开或进入后台取消请求。缓存随页面释放，写入时仍由桥重新校验能力。真实账号首次加载耗时尚未测量。
 - 输入区提及：已有会话与新建会话输入 `$` 显示当前 Agent 可用的本地项目、全局和系统 skills，输入 `@` 同时显示这些 skills 与当前项目的会话（含子会话，排除自身和已归档）；候选位于输入框上方，滚动视口最多展示三行。选择后保留短 token，退格或选区删除触及 token 时整段删除并移除绑定，发送时按 Lody 规则展开为 `use /token [Skill Path](path)` 或 `[@Title](session://id)`，插入或替换 token 内文字会移除绑定，失败恢复保留绑定。技能列表经当前工作区机器的 `local-project/list-skills`、`local-project/list-global-skills` RPC 获取，使用所选 provider 的目录过滤；请求可取消，不持久化令牌。GitHub 项目当前仅有机器全局/系统 skills，尚未接入 Lody 的 GitHub skill 扫描。本次 168 项 JS 测试、bundle 重建、5 项 Swift 提及单元测试、已有会话浅色/深色 fixture UI 用例及新建会话浅色 fixture UI 用例通过。真实账号的机器技能发现、跨端会话提及解析和弱网取消仍待验证。
 
@@ -221,3 +231,25 @@
 - 问答 snapshot/patch 显式携带请求列表和删除。写入使用独立、可取消的已有 Streams 副本，工作区/会话/turn/request 四层定位，读取后重新核对元数据、结束状态、截止时间和已有 outcome。保留原有 CRDT 容器与无关字段，只修改匹配请求的 outcome；已存在相同答案视为重试成功，不覆盖不同答案。原生阻止同账号/工作区/请求的并发写入，成功需确认正文同步。
 - 卡片提交后保留同一答案供失败/取消重试，不产生新 turn；草稿与未确认答案只在当前页面内存中保留。跨端同时写入没有 CAS 保证；已同步的 outcome 会阻止后来的覆盖，但不能承诺绝对互斥。离开页面或进程退出会丢失未确认答案，重新进入先以服务端请求状态为准。
 - 本轮 frozen lockfile 安装、180 项 JavaScript 测试和 bundle 重建通过；151 项 Swift 测试通过，包含问答解码、patch 删除、工作区隔离和真实 WebKit→原生网络取消回归。问答 fixture 使用独立 `--fixture-questions` 参数，不改变默认列表数据。浅色默认字号和深色 accessibility-large 各 2 项问答 UI 用例已通过，最终一轮构建、151 项 Swift 与 2 项问答 UI 测试全部通过。截图已核对卡片、输入草稿、翻页与提交/跳过结果；大字号下选项区域可滚动，页脚保持可见。模拟器始终未显示软件键盘，重启/键盘偏好设置无效，CUA 按名称和路径访问 Simulator 均返回 Invalid app，因此软件键盘避让尚未验证；已恢复模拟器原偏好。真实账号问答、跨端同时回答、断网与后台恢复仍待实测。
+
+## 新建会话目标选择（2026-09-29）
+
+- Session 列表底部搜索框右侧新增 New chat 入口，沿用项目行新建入口与首条消息编辑页。点击项目名称显示锚定在该行的原生菜单，底部 Add new folder 直接打开目录 sheet；项目菜单读取所用机器的已同步项目目录，包含尚无历史会话的项目；切换保留输入草稿与附件，重新加载目标对应的 provider/model/reasoning，提及会话与技能也使用所选项目。
+- Choose Folder 使用机器 `local-project/browse-dir`，支持返回上层、目录分页、空目录、半屏／全屏 sheet 与失败重试。确认通过 `local-project/prepare-add` 校验并规范化路径，再在当前工作区的机器 Flock 中仅在记录不存在时登记项目、等待同步；不会覆盖已有项目自定义名称。参照 Lody `packages/shared/src/message.ts`、`packages/components/src/lib/local-project-import.ts`、`providers/workspace-writer-impl.ts` 和 CLI `message-handler.ts`。本功能选择已有目录，不创建磁盘目录。
+- 创建请求显式携带目标项目，在读取配置和首轮写入时核对机器、项目存在性及待删除状态。模板只提供同机器的 agent 配置；创建仍直接使用项目目录，不创建 worktree 或切换分支。原有待处理记录的项目 key 传至写入桥，重试保留首次目标、模板、首轮与会话 ID。目录请求和校验支持取消、后台暂停与账号／工作区过期结果隔离。
+- 当前入口仍需至少一条可用本地根会话提供机器及 agent 模板，完全没有本地会话的工作区尚不能从零创建；机器选择沿用入口模板，本轮不新增跨机器切换。真实账号目录权限、远端机器离线、跨端同时登记与实际派发尚待验证。
+- 本轮验证：frozen lockfile 安装、205 项 JavaScript 测试及 bundle 重建通过。最终使用独立 DerivedData 完整构建并通过 161 项 Swift 测试（包括项目读取／选择的 WebKit→原生网络取消、未确认创建原目标重试）和 2 项 fixture UI 测试；新流程另用同一最终构建在深色 accessibility-extra-large 下复测通过。浅色与深色截图已核对项目切换、目录层级、确认、草稿保留及创建后导航，未发现遮挡。初轮共享增量缓存的链接错误通过独立构建消除；真实服务与真机键盘手感未验证。
+
+
+### 新建会话项目菜单与目录点击修正（2026-09-29）
+
+- 按参考交互移除独立 Choose Project 页面，Project 行直接打开原生菜单，显示 Projects、当前项目勾选和 Add new folder；后者直接呈现半屏／全屏 Choose Folder，无额外导航层。目录使用中性色 plain 列表，整行内容区域可点击，确认和取消固定在系统导航栏；加载／选择进度显示在面板中央，避免长列表把反馈推到屏幕外。
+- 修复同路径导航没有改变 task identity、却已进入 loading 状态导致停留加载的问题：每次进入目录都使用新的请求身份。核对 Lody browseDirectory 返回的是 realpath，文件夹与符号链接可能共享 absolutePath；目录行身份改为名称与 canonical path 组合，分页合并也保留不同别名，不再发生重复行身份与别名被丢弃。
+- 原有选定路径、工作区隔离、取消、注册及未确认创建重试语义保留。本轮未改 JavaScript 协议或 bundle。
+- 本轮 29 项相关 Swift 测试通过；fixture UI 已验证原有项目入口，以及新菜单、目录行尾点击、同路径连续进入、共享 canonical path 的两个别名、返回上层、确认后保留草稿与发送。软件键盘未在模拟器截图中显示，键盘布局不计验证通过；真实账号远端目录交互仍待实测。
+- 新流程浅色默认字号与深色 accessibility-extra-large 回归通过；大字号截图发现目录图标放大而占位宽度固定，已改为随字号缩放，重建后深色完整流程再次通过。
+
+### 新建会话视觉精简（2026-09-29）
+
+- 新建页选择项目后仅显示项目名称，移除额外的本地路径行。目录面板加载／确认仅显示居中转圈，移除材质底色及可见说明文字，保留辅助功能标签。
+- 目录行使用明确的上下 4pt 内边距，默认行高约 52pt；图标与文字间距缩为 12pt，保持整行可点击和大字号自适应。

@@ -100,3 +100,17 @@ test('invalid read receipts do not write', async () => {
     assert.equal(await updateSessionMetadata(repo, 'chat', { lastReadAt }), 'invalid');
   }
 });
+
+test('closing and reopening a child tab never archives or stops it; root and side panels reject close', async () => {
+  const repo = repository({ parentSessionId: 'root', status: { type: 'running' } });
+  for (const isTabClosed of [true, false]) {
+    assert.equal(await updateSessionMetadata(repo, 'chat', { isTabClosed }), 'updated');
+    assert.equal(repo.row.meta.isTabClosed, isTabClosed);
+    assert.equal(repo.row.meta.isArchived, undefined);
+    assert.deepEqual(repo.row.meta.status, { type: 'running' });
+  }
+  repo.row.meta.childSessionPlacement = 'side-panel';
+  assert.equal(await updateSessionMetadata(repo, 'chat', { isTabClosed: true }), 'invalid');
+  repo.row = { meta: {} };
+  assert.equal(await updateSessionMetadata(repo, 'chat', { isTabClosed: true }), 'invalid');
+});

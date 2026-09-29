@@ -180,3 +180,14 @@ test('image and file blocks survive history, dispatch, and same-ID retries', asy
   assert.equal(doc.getList('history').length, 1);
   await assert.rejects(sendText(repo, 'chat', 'turn-attachments', 'user', '', 'now', undefined, []), /another turn/);
 });
+
+test('independent child tab sends and retries its own turn while preserving parent linkage', async () => {
+  const { repo, doc, meta } = fixture();
+  meta.parentSessionId = 'root';
+  assert.equal(await sendText(repo, 'chat', 'tab-turn', 'user', 'Hello', 'now'), 'sent');
+  assert.equal(await sendText(repo, 'chat', 'tab-turn', 'user', 'Hello', 'now'), 'sent');
+  assert.equal(doc.getList('history').length, 1);
+  assert.equal(meta.parentSessionId, 'root');
+  meta.status = { type: 'running' };
+  assert.equal(await sendText(repo, 'chat', 'next', 'user', 'Hello', 'now'), 'busy');
+});

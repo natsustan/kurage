@@ -143,3 +143,10 @@ test('status changes during history sync reject a now-stale question', async () 
   assert.equal(await send(repo), 'unavailable');
   assert.equal(history.toJSON()[0].items[0].permissionRequest.outcome, undefined);
 });
+
+test('tab questions answer only the tab request', async () => {
+  const { repo, meta, history } = fixture();
+  meta.parentSessionId = 'root';
+  assert.equal(await send(repo), 'answered');
+  assert.equal(history.toJSON()[0].items[0].permissionRequest.outcome.optionId, 'answer');
+});

@@ -235,6 +235,7 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func signOut() {
+        attemptedTabWrites.removeAll()
         authenticationGeneration += 1
         tokenStore.delete()
         uploadedAttachments.removeAll()
@@ -401,7 +402,7 @@ final class HTTPLodyClient: LodyClient {
         return result
     }
 
-    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
         try Task.checkCancellation()
         let generation = authenticationGeneration
         guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
@@ -409,7 +410,7 @@ final class HTTPLodyClient: LodyClient {
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
         let result = try await bridge.mentionSkills(templateSessionID: templateSessionID, agentConfigID: agentConfigID,
-                                                    userID: userID, workspaceID: workspaceID, access: access)
+                                                    userID: userID, projectID: projectID, workspaceID: workspaceID, access: access)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account?.id == userID else { throw LodyClientError.signedOut }
         return result
@@ -616,23 +617,94 @@ final class HTTPLodyClient: LodyClient {
         return pending.runConfig
     }
 
+    func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
+                         workspaceID: String) async throws -> SessionProjectResult {
+        guard account != nil else { throw LodyClientError.signedOut }
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.sessionProjects(templateSessionID: templateSessionID, action: action,
+            path: path, cursor: cursor, workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return result
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
+        projectID: String? = nil,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         guard account != nil else { throw LodyClientError.signedOut }
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
         let options = try await bridge.newSessionOptions(
-            templateSessionID: templateSessionID, agentConfigID: agentConfigID,
+            templateSessionID: templateSessionID, agentConfigID: agentConfigID, projectID: projectID,
             workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         return options
+    }
+
+    func newSessionTabOptions(parentSessionID: String, workspaceID: String) async throws -> NewSessionOptions {
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.newSessionOptions(templateSessionID: parentSessionID, agentConfigID: nil,
+            workspaceID: workspaceID, access: access, isTab: true)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return result
+    }
+
+    private var attemptedTabWrites: Set<String> = []
+
+    var supportsSessionTabs: Bool { true }
+
+    func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
+        guard let userID = account?.id, !userID.isEmpty else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let attachments: [UploadedAttachment]
+        do {
+            attachments = try await uploadAttachments(request.attachments, sessionID: request.sessionID,
+                workspaceID: workspaceID, expectedGeneration: generation)
+        } catch {
+            guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+            if !attemptedTabWrites.contains(request.sessionID), !Task.isCancelled {
+                throw LodyClientError.sessionCreationRejected
+            }
+            throw error
+        }
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        attemptedTabWrites.insert(request.sessionID)
+        let result = try await bridge.startSessionTab(request, attachments: attachments, parentSessionID: parentSessionID, userID: userID,
+                                                     workspaceID: workspaceID, access: access)
+        guard generation == authenticationGeneration else { throw LodyClientError.signedOut }
+        if result == "rejected" {
+            attemptedTabWrites.remove(request.sessionID)
+            throw LodyClientError.sessionCreationRejected
+        }
+        guard result == "sent" else { throw LodyClientError.deliveryUnconfirmed }
+        // The model may retain this request after its caller leaves the page.
+        // Keep the write marker until sign-out so later upload failures cannot
+        // discard an already-published tab's retry identity.
     }
 
     func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart] {
@@ -748,7 +820,7 @@ final class HTTPLodyClient: LodyClient {
         let result = try await bridge.startSession(
             pending.text, attachments: uploaded, sessionID: pending.sessionID, turnID: pending.turnID, userID: key.userID,
             agentConfigID: pending.agentConfigID, selections: pending.selections,
-            templateSessionID: pending.templateSessionID,
+            templateSessionID: pending.templateSessionID, projectID: key.projectID,
             workspaceID: workspaceID, access: access
         )
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }

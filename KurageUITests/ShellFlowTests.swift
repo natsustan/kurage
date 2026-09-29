@@ -786,6 +786,101 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testNewChatChoosesProjectAndMachineFolder() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+
+        let newChat = app.buttons["new-chat"]
+        XCTAssertTrue(newChat.waitForExistence(timeout: 5))
+        XCTAssertTrue(newChat.isHittable)
+        tap(newChat)
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Build the new app")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(field.frame.maxY, app.keyboards.firstMatch.frame.minY)
+        attachScreen(app, name: "New chat project row with focused draft")
+        let project = app.buttons["new-session-project"]
+        tap(project)
+        // UIKit's native menu preserves these project labels, but not the
+        // identifiers attached to the dynamically generated SwiftUI buttons.
+        let prism = app.buttons["prism"]
+        XCTAssertTrue(prism.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["kurage"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        XCTAssertFalse(app.navigationBars["Choose Project"].exists)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+        XCTAssertTrue(app.buttons["choose-machine-folder"].label.contains("Add new folder"))
+        attachScreen(app, name: "New chat anchored project menu")
+        tap(prism)
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        XCTAssertTrue(project.label.contains("prism"))
+        XCTAssertEqual(field.value as? String, "Build the new app")
+
+        tap(project)
+        let chooseFolder = app.buttons["choose-machine-folder"]
+        XCTAssertTrue(chooseFolder.waitForExistence(timeout: 5))
+        XCTAssertTrue(chooseFolder.label.contains("Add new folder"))
+        tap(chooseFolder)
+        let projectsFolder = app.buttons["folder-projects"]
+        XCTAssertTrue(projectsFolder.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Choose Folder"].exists)
+        XCTAssertFalse(app.navigationBars["Choose Project"].exists)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        attachScreen(app, name: "Connected machine folder choices")
+        // The trailing blank area must activate the row, not only its label.
+        XCTAssertTrue(projectsFolder.isHittable)
+        projectsFolder.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let currentFolder = app.buttons["folder-Current folder"]
+        XCTAssertTrue(currentFolder.waitForExistence(timeout: 5))
+        for _ in 0..<2 {
+            tap(currentFolder)
+            XCTAssertTrue(currentFolder.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+            XCTAssertEqual(app.staticTexts["folder-path"].label, "/Users/demo/projects")
+            XCTAssertFalse(app.descendants(matching: .any)["folder-loading"].exists)
+        }
+        let newAppFolder = app.buttons["folder-New App"]
+        XCTAssertTrue(newAppFolder.waitForExistence(timeout: 5))
+        let aliasFolder = app.buttons["folder-New App alias"]
+        XCTAssertTrue(aliasFolder.exists)
+        attachScreen(app, name: "Machine folder aliases have distinct rows")
+        tap(newAppFolder)
+        XCTAssertTrue(app.staticTexts["No subfolders"].waitForExistence(timeout: 5))
+        tap(app.buttons["folder-parent"])
+        XCTAssertTrue(aliasFolder.waitForExistence(timeout: 5))
+        XCTAssertTrue(newAppFolder.exists)
+        tap(aliasFolder)
+        XCTAssertTrue(app.staticTexts["No subfolders"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["folder-path"].label, "/Users/demo/projects/New App")
+        tap(app.buttons["folder-parent"])
+        XCTAssertTrue(newAppFolder.waitForExistence(timeout: 5))
+        tap(app.buttons["folder-parent"])
+        XCTAssertTrue(projectsFolder.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["folder-path"].label, "/Users/demo")
+        tap(projectsFolder)
+        XCTAssertTrue(newAppFolder.waitForExistence(timeout: 5))
+        tap(newAppFolder)
+        XCTAssertTrue(app.staticTexts["No subfolders"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Selected machine folder")
+        tap(app.buttons["choose-current-folder"])
+
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        XCTAssertTrue(project.label.contains("New App"))
+        XCTAssertFalse(app.staticTexts["/Users/demo/projects/New App"].exists)
+        XCTAssertEqual(field.value as? String, "Build the new app")
+        let send = app.buttons["new-session-send"]
+        XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        attachScreen(app, name: "New chat in selected machine folder")
+        tap(send)
+        XCTAssertTrue(app.staticTexts["Build the new app"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Machine folder session started")
+    }
+
+    @MainActor
     func testProjectRowStartsNewSessionWithChosenModel() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -1166,6 +1261,8 @@ extension ShellFlowTests {
         tap(app.buttons["new-session-local:machine-1:prism"])
         let add = app.buttons["add-attachment"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
+        let composer = app.otherElements["new-session-composer"]
+        let initialFrame = composer.frame
         for shouldSend in [false, true] {
             tap(add)
             tap(app.buttons["Photos"])
@@ -1184,6 +1281,10 @@ extension ShellFlowTests {
             XCTAssertTrue(remove.waitForExistence(timeout: 10))
             let send = app.buttons["new-session-send"]
             XCTAssertTrue(send.isEnabled)
+            XCTAssertGreaterThan(composer.frame.height, initialFrame.height + 100)
+            XCTAssertLessThan(composer.frame.minY, initialFrame.minY - 100)
+            XCTAssertEqual(composer.frame.maxY, initialFrame.maxY, accuracy: 2)
+            XCTAssertTrue(composer.frame.contains(send.frame))
             attachScreen(app, name: "photo-attachment-preview")
             if shouldSend {
                 tap(send)
@@ -1195,6 +1296,7 @@ extension ShellFlowTests {
                 tap(remove)
                 XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
                 XCTAssertFalse(send.isEnabled)
+                XCTAssertEqual(composer.frame.maxY, initialFrame.maxY, accuracy: 2)
                 attachScreen(app, name: "photo-attachment-removed")
             }
         }

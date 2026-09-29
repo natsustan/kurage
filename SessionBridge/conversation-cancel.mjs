@@ -5,7 +5,7 @@ function synced(report) {
 export async function cancelSession(repo, sessionID) {
   const docID = `session-${sessionID}`;
   const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
-  if (!row || row.meta.isArchived || row.meta.parentSessionId) {
+  if (!row || row.meta.isArchived) {
     throw new Error('Session is unavailable in this workspace');
   }
   const handle = await repo.openPersistedDoc(docID);

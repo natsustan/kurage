@@ -6,7 +6,10 @@ export async function updateSessionMetadata(repo, sessionID, change, signal) {
   signal?.throwIfAborted();
   if (!row || row.deleted || row.exists === false || row.e === false || !row.meta || row.meta.isArchived) return 'missing';
   let patch;
-  if (Number.isFinite(change.lastReadAt)) {
+  if (typeof change.isTabClosed === 'boolean') {
+    if (!row.meta.parentSessionId || row.meta.childSessionPlacement === 'side-panel') return 'invalid';
+    patch = { isTabClosed: change.isTabClosed };
+  } else if (Number.isFinite(change.lastReadAt)) {
     patch = { lastReadAt: Math.max(change.lastReadAt, Number.isFinite(row.meta.lastReadAt) ? row.meta.lastReadAt : change.lastReadAt) };
   } else if (typeof change.isPinned === 'boolean') {
     patch = { isPinned: change.isPinned };

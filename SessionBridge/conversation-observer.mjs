@@ -1,3 +1,4 @@
+import { projectSessionTabs } from './session-tabs.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
@@ -106,6 +107,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let stopped = signal.aborted;
   let ready = false;
   let historyChanged = true;
+  let tabsChanged = true;
+  let sessionTabs = [];
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -159,6 +162,14 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         // markers to history versions (child activity can update the parent too).
         // A successful stable pull certifies this snapshot; native visibility and
         // bottom layout decide whether to actually write a receipt.
+        if (tabsChanged) {
+          tabsChanged = false;
+          sessionTabs = projectSessionTabs(await repo.listDoc(), sessionID);
+          if (stopped) return;
+        }
+        // Native consumers buffer complete updates; retain tabs when history-only
+        // patches supersede the metadata update before Swift consumes it.
+        update.sessionTabs = sessionTabs;
         update.activity = projectSessionActivity(meta.meta.status);
         update.lastMessageAt = lastMessageAt === pulledMessageAt ? pulledMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
@@ -194,8 +205,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
     });
     if (stopped) return;
-    const watch = repo.watch(queue, {
-      docIds: [docID],
+    const watch = repo.watch(() => { tabsChanged = true; queue(); }, {
       kinds: ['doc-metadata', 'doc-existence-changed'],
     });
     own(() => watch.unsubscribe());

@@ -19,6 +19,8 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var projectID: String? = nil
     var projectName: String? = nil
     var machineName: String? = nil
+    var parentSessionID: String? = nil
+    var isTabClosed: Bool? = nil
     var isPinned: Bool? = nil
     var lastMessageAt: Double? = nil
     var lastReadAt: Double? = nil
@@ -603,6 +605,7 @@ struct ConversationUpdate: Equatable, Sendable {
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
     var lastMessageAt: Double? = nil
+    var sessionTabs: [SessionSummary]? = nil
 }
 
 enum ConversationSyncState: String, Decodable, Sendable {
@@ -626,6 +629,7 @@ struct ConversationPatch: Decodable {
     var runConfig: SessionRunConfig? = nil
     var contextWindowUsage: ContextWindowUsage? = nil
     var lastMessageAt: Double? = nil
+    var sessionTabs: [SessionSummary]? = nil
 
     func applying(to previous: Conversation) throws -> ConversationUpdate {
         guard previous.sessionID == sessionID, Set(order).count == order.count else {
@@ -644,7 +648,7 @@ struct ConversationPatch: Decodable {
                                        subtasks: replacesSubtasks == true ? subtasks : previous.subtasks,
                                        questions: questions),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
-            runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt
+            runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt, sessionTabs: sessionTabs
         )
     }
 }
@@ -661,4 +665,39 @@ struct SessionCache: Codable, Equatable, Sendable {
 struct SessionArchiveResult: Decodable, Sendable {
     let status: String
     let sessionIDs: [String]
+}
+
+
+struct SessionProject: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let name: String
+    let rootPath: String
+    let templateSessionID: String
+}
+
+struct MachineDirectory: Codable, Equatable, Sendable {
+    struct Entry: Codable, Equatable, Identifiable, Sendable {
+        struct ID: Hashable, Sendable {
+            let name: String
+            let absolutePath: String
+        }
+        // Lody resolves symlinks: distinct rows can share the same canonical path.
+        var id: ID { ID(name: name, absolutePath: absolutePath) }
+        let name: String
+        let absolutePath: String
+        var error: String? = nil
+    }
+    let path: String
+    let parentPath: String?
+    var entries: [Entry]
+    let truncated: Bool
+    let nextCursor: String?
+}
+
+enum SessionProjectAction: String, Sendable { case catalog, browse, select }
+
+struct SessionProjectResult: Codable, Sendable {
+    var projects: [SessionProject]? = nil
+    var directory: MachineDirectory? = nil
+    var project: SessionProject? = nil
 }

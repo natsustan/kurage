@@ -150,13 +150,13 @@ export async function respondQuestion(repo, sessionID, turnID, requestID, answer
   };
   await sync('meta');
   const row = await repo.getDocMeta(docID);
-  if (!row || row.deleted || row.meta?.isArchived || row.meta?.parentSessionId) return 'unavailable';
+  if (!row || row.deleted || row.meta?.isArchived) return 'unavailable';
   const { doc } = await repo.openPersistedDoc(docID);
   await sync('doc');
   await sync('meta');
   const current = await repo.getDocMeta(docID);
   signal?.throwIfAborted();
-  if (!current || current.deleted || current.meta?.isArchived || current.meta?.parentSessionId) return 'unavailable';
+  if (!current || current.deleted || current.meta?.isArchived) return 'unavailable';
   const history = doc.getList('history');
   const locate = () => {
     const entries = history.toJSON();
