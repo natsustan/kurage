@@ -176,7 +176,7 @@ struct ConversationContent: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if let onNewTab {
                         Button(action: onNewTab) {
-                            Image(systemName: "bubble.left.and.bubble.right")
+                            Image("add")
                         }
                         .accessibilityLabel("New tab")
                         .accessibilityIdentifier("new-session-tab")
@@ -212,6 +212,7 @@ struct ConversationContent: View {
                     machineName: session?.machineName,
                     connectionStatus: showsConnectionIndicator ? connectionStatus : nil
                 )
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             if (observedActivity ?? session?.activity) == .running {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -520,7 +521,7 @@ private struct ConversationNavigationTitle: View {
     }
 
     var body: some View {
-        VStack(spacing: 1) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 4) {
                 Text(title)
                     .font(.headline)

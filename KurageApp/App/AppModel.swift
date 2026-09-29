@@ -34,17 +34,19 @@ final class AppModel {
         selectedWorkspaceID.flatMap { pendingTabs[$0]?[rootID] }
     }
 
-    func newSessionTabOptions(rootID: String) async throws -> NewSessionOptions {
+    func newSessionTabOptions(rootID: String, agentConfigID: String?) async throws -> NewSessionOptions {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let selection = workspaceGeneration
-        let result = try await client.newSessionTabOptions(parentSessionID: rootID, workspaceID: workspaceID)
+        let result = try await client.newSessionTabOptions(parentSessionID: rootID, agentConfigID: agentConfigID,
+                                                           workspaceID: workspaceID)
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
         return result
     }
 
-    func startSessionTab(_ text: String, attachments: [ComposerAttachment] = [], selections: [RunConfigChoice] = [], rootID: String) async throws -> String {
+    func startSessionTab(_ text: String, attachments: [ComposerAttachment] = [], selections: [RunConfigChoice] = [],
+                         agentConfigID: String? = nil, rootID: String) async throws -> String {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         guard supportsSessionTabs, supportsSessionCreation, let workspaceID = selectedWorkspaceID,
@@ -57,7 +59,8 @@ final class AppModel {
         if let pending = pendingTabs[workspaceID]?[rootID], pending.text != text || pending.attachments != attachments {
             throw LodyClientError.previousSendPending(pending.text)
         }
-        let request = pendingTabs[workspaceID]?[rootID] ?? SessionTabStart(text: text, attachments: attachments, selections: selections)
+        let request = pendingTabs[workspaceID]?[rootID] ??
+            SessionTabStart(text: text, attachments: attachments, selections: selections, agentConfigID: agentConfigID)
         pendingTabs[workspaceID, default: [:]][rootID] = request
         do {
             try await client.startSessionTab(request, parentSessionID: rootID, workspaceID: workspaceID)
@@ -73,7 +76,7 @@ final class AppModel {
         var tabs = sessionTabs(rootID: rootID)
         if !tabs.contains(where: { $0.id == request.sessionID }) {
             tabs.append(SessionSummary(id: request.sessionID, title: String((text.isEmpty ? attachments.first?.fileName ?? "New tab" : text).prefix(50)),
-                agentName: root.agentName, activity: .idle, preview: text,
+                agentName: request.agentConfigID ?? root.agentName, activity: .idle, preview: text,
                 projectID: root.projectID, projectName: root.projectName, machineName: root.machineName,
                 parentSessionID: rootID))
         }

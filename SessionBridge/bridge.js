@@ -33,6 +33,10 @@ const snapshotCodec = {
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
+// Auth scope of the one-shot read currently running on the shared replica.
+// Streams tokens outlive single operations, so binding happens per operation
+// and is released inside the queue before the next one starts.
+let activeWorkspaceOperation;
 
 // Only a replica that authors a new session may create its document stream.
 async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false, operationID, signal } = {}) {
@@ -45,10 +49,15 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams 
         ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
       flockDocStreamId: (flockDocID) => flockDocID,
       auth: async context => {
+        const scoped = activeWorkspaceOperation ?? { operationID, signal };
         const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-          command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+          command: 'auth', workspaceID, operationID: scoped.operationID, refresh: context?.reason === 'unauthorized',
         });
-        if (signal) nativeFetch.bindSignal(access.token, signal);
+        if (scoped === activeWorkspaceOperation) {
+          if (scoped.signal && !scoped.signal.aborted) nativeFetch.bindSignal(access.token, scoped.signal);
+        } else if (signal) {
+          nativeFetch.bindSignal(access.token, signal);
+        }
         return access.token;
       },
       baseUrl: gatewayBaseURL,
@@ -68,7 +77,7 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
-function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal) {
+function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal, scoped) {
   // The session list has already synced metadata. Keep its in-memory repo so
   // opening a conversation needs only the session document sync.
   const operation = workspaceOperation.then(async () => {
@@ -85,13 +94,31 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
       state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
       cachedWorkspace = state;
     }
-    if (refreshMeta || !state.metaReady) {
-      const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
-      if (!report.ok) throw new Error('Workspace metadata sync failed');
-      state.metaReady = true;
+    const syncMeta = async () => {
+      if (refreshMeta || !state.metaReady) {
+        const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+        if (!report.ok) throw new Error('Workspace metadata sync failed');
+        state.metaReady = true;
+      }
+    };
+    if (!scoped) {
+      await syncMeta();
+      signal?.throwIfAborted();
+      return work(state.repo);
     }
-    signal?.throwIfAborted();
-    return work(state.repo);
+    // A one-shot read wraps its whole sync in its auth scope: Streams tokens
+    // outlive single operations, so binding happens per operation and is
+    // released inside the queue before the next one starts.
+    activeWorkspaceOperation = { operationID: scoped.operationID, signal: scoped.signal };
+    try {
+      await syncMeta();
+      signal?.throwIfAborted();
+      const result = await work(state.repo);
+      scoped.abort?.();
+      return result;
+    } finally {
+      if (activeWorkspaceOperation?.signal === scoped.signal) activeWorkspaceOperation = undefined;
+    }
   });
   workspaceOperation = operation.catch(() => {});
   return operation;
@@ -315,9 +342,14 @@ window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentCon
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
+    // Options are a pure read. Reuse the synced workspace replica — the session
+    // list keeps its metadata fresh and an open conversation already live-syncs
+    // the parent document — instead of rebuilding every document from the cloud
+    // on each load. The write path still uses its own replica and revalidates
+    // the template and choices at write time.
+    return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo =>
       JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal, projectID ?? undefined, tab)),
-    { operationID, signal: controller.signal }, controller.signal);
+    false, controller.signal, { operationID, signal: controller.signal, abort: () => controller.abort() });
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);

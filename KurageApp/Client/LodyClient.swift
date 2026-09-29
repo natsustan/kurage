@@ -14,6 +14,8 @@ struct SessionTabStart: Equatable, Sendable {
     let text: String
     var attachments: [ComposerAttachment] = []
     var selections: [RunConfigChoice] = []
+    /// Another agent on the parent's machine; `nil` keeps the parent's.
+    var agentConfigID: String?
 }
 
 /// A process-local creation that must resume its existing session and first turn.
@@ -59,7 +61,9 @@ protocol LodyClient: AnyObject {
     var supportsSessionCreation: Bool { get }
 
     var supportsSessionTabs: Bool { get }
-    func newSessionTabOptions(parentSessionID: String, workspaceID: String) async throws -> NewSessionOptions
+    /// A tab inherits the parent's machine and project; `agentConfigID` picks
+    /// another agent configured on that machine.
+    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
@@ -132,7 +136,7 @@ protocol LodyClient: AnyObject {
 
 extension LodyClient {
     var supportsSessionTabs: Bool { false }
-    func newSessionTabOptions(parentSessionID: String, workspaceID: String) async throws -> NewSessionOptions {
+    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected
     }
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {

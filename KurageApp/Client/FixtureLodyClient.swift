@@ -169,17 +169,21 @@ final class FixtureLodyClient: LodyClient {
             }.sorted { ($0.id == rootID ? "" : $0.id) < ($1.id == rootID ? "" : $1.id) }
     }
 
-    func newSessionTabOptions(parentSessionID: String, workspaceID: String) async throws -> NewSessionOptions {
+    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions {
         try requireAccount()
         try requireWorkspace(workspaceID)
         let parent = try record(parentSessionID)
         guard parent.parentSessionID == nil, !archivedSessionIDs.contains(parentSessionID) else {
             throw LodyClientError.sessionMissing
         }
-        let agent = parent.summary.agentName
-        return NewSessionOptions(machineName: parent.summary.machineName ?? "Machine", agentConfigID: agent,
-            providers: [.init(value: agent, label: agent == "codex" ? "Codex" : "Claude Code")],
-            runConfig: agent == "codex" ? .fixture : .fixtureModelOnly)
+        let providers = [
+            SessionRunConfig.Value(value: "claude", label: "Claude Code"),
+            SessionRunConfig.Value(value: "codex", label: "Codex"),
+        ]
+        let chosen = agentConfigID ?? parent.summary.agentName
+        guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
+        return NewSessionOptions(machineName: parent.summary.machineName ?? "Machine", agentConfigID: chosen,
+            providers: providers, runConfig: chosen == "codex" ? .fixture : .fixtureModelOnly)
     }
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
@@ -197,7 +201,8 @@ final class FixtureLodyClient: LodyClient {
             }
             return
         }
-        let options = try await newSessionTabOptions(parentSessionID: parentSessionID, workspaceID: workspaceID)
+        let options = try await newSessionTabOptions(parentSessionID: parentSessionID, agentConfigID: request.agentConfigID,
+                                                     workspaceID: workspaceID)
         var config = options.runConfig ?? NewSessionRunConfig()
         for choice in request.selections {
             if choice.configOptionID == config.model?.configOptionID { config.selectModel(choice.value) }
@@ -207,7 +212,7 @@ final class FixtureLodyClient: LodyClient {
             throw LodyClientError.sessionCreationRejected
         }
         let summary = SessionSummary(id: request.sessionID, title: String(request.text.prefix(50)),
-                                 agentName: parent.summary.agentName, activity: .idle, preview: request.text,
+                                 agentName: options.agentConfigID, activity: .idle, preview: request.text,
                                  projectID: parent.summary.projectID, projectName: parent.summary.projectName,
                                  machineName: parent.summary.machineName, parentSessionID: parentSessionID)
         records.append(SessionRecord(summary: summary,

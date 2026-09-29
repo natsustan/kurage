@@ -72,7 +72,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     throw new Error('Project is unavailable for a new session');
   }
 
-  if (tab && (projectID || agentConfigID)) throw new Error('Tab inherits its parent agent and project');
+  // A tab inherits its parent project; it may run another agent from the machine.
+  if (tab && projectID) throw new Error('Tab inherits its parent project');
   let targetMeta = meta;
   if (projectID !== undefined) {
     const prefix = `local:${meta.machineId}:`;
@@ -108,10 +109,17 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   const chosenID = text(agentConfigID) ?? meta.agentConfigId;
   const agent = providers.find(provider => provider.id === chosenID);
   if (!agent) throw new Error('Provider is unavailable for a new session');
-  if (tab) providers = [agent];
-  const baseline = !tab && text(agent.id)
-    ? await readBaseline(repo, rows, meta, agent.id, signal)
-    : await readDocumentBaseline(repo, templateDocID, signal);
+  // A tab on the parent's agent keeps the parent's exact run configuration;
+  // a tab on another agent starts from that agent's most recent use, like a
+  // new session does.
+  const inheritsAgent = !text(agentConfigID) || agentConfigID === meta.agentConfigId;
+  const baseline = !tab
+    ? (text(agent.id)
+        ? await readBaseline(repo, rows, meta, agent.id, signal)
+        : await readDocumentBaseline(repo, templateDocID, signal))
+    : (inheritsAgent
+        ? await readDocumentBaseline(repo, templateDocID, signal)
+        : await readBaseline(repo, rows, meta, agent.id, signal));
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   return {
@@ -174,8 +182,8 @@ export async function startSession(repo, workspaceID, {
     // Archiving the source must not strand a first turn already authored by this request.
     // Only a synced, matching turn may resume from an archived template.
     if (parentSessionID) {
-      if (parentSessionID !== templateSessionID || projectID || agentConfigID) throw new Error('Invalid tab parent');
-      template = await readTemplate(repo, workspaceID, parentSessionID, undefined, undefined, { tab: true });
+      if (parentSessionID !== templateSessionID || projectID) throw new Error('Invalid tab parent');
+      template = await readTemplate(repo, workspaceID, parentSessionID, agentConfigID, undefined, { tab: true });
     } else {
       template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
         { allowArchived: Boolean(existing), projectID });

@@ -654,14 +654,14 @@ final class HTTPLodyClient: LodyClient {
         return options
     }
 
-    func newSessionTabOptions(parentSessionID: String, workspaceID: String) async throws -> NewSessionOptions {
+    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions {
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        let result = try await bridge.newSessionOptions(templateSessionID: parentSessionID, agentConfigID: nil,
+        let result = try await bridge.newSessionOptions(templateSessionID: parentSessionID, agentConfigID: agentConfigID,
             workspaceID: workspaceID, access: access, isTab: true)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }

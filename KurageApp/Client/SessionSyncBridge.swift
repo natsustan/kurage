@@ -202,6 +202,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         var value: [String: Any] = [
             "sessionID": request.sessionID, "turnID": request.turnID,
             "timestamp": request.timestamp, "text": request.text,
+            "agentConfigID": request.agentConfigID ?? NSNull(),
             "attachments": try attachments.map { try $0.bridgeValue() },
             "selections": request.selections.map { choice -> [String: Any] in
                 ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]

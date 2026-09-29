@@ -6,13 +6,15 @@
 
 ## Session 多 tab（2026-09-29）
 
-- 交互修订：只有多个打开的会话时，详情标题下才显示横向玻璃药丸 tab 栏；单会话不常驻 Main 占位。顶部「···」左侧 chat 图标进入 New Tab 页面，复用 New Session 的底部输入框、附件、提及和 model/reasoning 菜单；机器和项目仅显示继承信息，不提供项目或 Agent 切换。创建成功返回同一详情并切到新 tab。
+- 交互修订：只有多个打开的会话时，详情标题下才显示横向玻璃药丸 tab 栏；单会话不常驻 Main 占位。顶部「···」左侧 chat 图标进入 New Tab 页面，复用 New Session 的底部输入框、附件、提及和 model/reasoning 菜单；机器和项目仅显示继承信息，不提供项目切换。Provider 与 New Session 一样可切换（2026-09-29 修订）：菜单列出父会话机器上的全部 Agent，选中的 provider 决定首轮 model/reasoning 与写入的 `agentConfigId`；沿用父 Agent 时保持继承父会话的精确首轮配置。创建成功返回同一详情并切到新 tab。
 - 各 tab 的文字、提及、附件草稿和下一轮配置在本次详情访问期间独立保留；切换重新定位到所选会话的最新消息，仅当前正文订阅保持活动。列表仍只显示根 Session。多个药丸使用系统 `GlassEffectContainer` / `glassEffect`，当前 tab 带轻微强调色。
 - 新建沿用主会话的机器、Agent 和完整 project/worktree 上下文，第一轮默认取主会话有效配置，model/reasoning 选项来自同一 Agent 的机器能力；页面选择与写入验证共用投影，支持每模型的 reasoning 约束。不复制历史、不恢复主会话的 provider session。附件沿用现有上传链路；先同步新 Session 正文，再发布 `parentSessionId` / `latestUserMsgId` metadata；只有创建副本可创建 Streams 流。未确认请求在进程内保留会话／turn ID、原文、附件与首次配置，Retry 继续原请求；离开创建页取消调用者，阻止迟到导航。
 - 关闭与重开：长按子 tab 的 Close tab 写 `isTabClosed`，不归档、不删除、不停止；当前 tab 关闭后回主会话，仅剩一个 tab 时收起药丸栏。「··· → Closed tabs」可重新打开。其它端的新增、关闭和状态变化经现有 metadata room 更新；剔除归档、删除、`childSessionPlacement: side-panel` 及仅有 opened-by 关系的会话。关闭未发草稿在本次详情内保留，退出详情后释放。
 - 原生状态：tab metadata 随完整 conversation update 传递，只有 metadata 变化才扫描目录，正文增长不重复扫描；缓存信息随之后的正文更新继续携带，防止 `bufferingNewest` 丢失状态。按账号／工作区隔离，退出登录清空；新建页面显示期间暂停详情已读回执。发送、停止和问答使用当前 tab 的独立 Session ID，保留原有空闲发送与重试限制。
 - 协议参考：本机 Lody `packages/shared/src/schema.ts` 的 `parentSessionId` / `childSessionPlacement`，`components/src/hooks/use-session-actions.ts` 的创建和 `setSessionTabClosed`，`components/src/components/sessions/session-detail.tsx` 的 tab 分组，以及 `apps/cli/src/session/session-manager.ts` 的共享父会话工作目录解析。subagent 的投影、模型和面板不变。
 - 此次交互修订验证进行中：208 项 JS 测试通过，frozen lockfile 安装及 bundle 重建完成，Simulator 构建通过；Swift 和更新后的浅色／深色大字号 UI 回归正在运行。之前布局的验证不作为此次结果。真实账号的首轮 model/reasoning 生效、同目录派发、跨端 tab 更新、网络恢复与后台恢复仍待实测。
+- Provider 切换修订验证（2026-09-29）：frozen lockfile 安装、209 项 JS 测试（含 3 项新的 tab provider 用例）与 bundle 重建通过；164 项 KurageTests 通过（含新增 provider 切换与 retry 保留用例）。未验证：真实账号上 tab 切换 provider 的首轮生效、另一 Agent 的 baseline 取自最近会话的实际值、UI 浅色／深色与大字号回归、网络与后台恢复。
+- 选项加载性能修订（2026-09-29）：New Session／New Tab 的选项读取原先每次都新建仅内存临时副本，从云端冷启动同步整份 workspace metadata、模板会话完整文档和机器 Flock 后销毁，进入页面和切换 provider 都重复整套网络往返。现改为复用会话列表／详情页共享的 workspace 副本（meta 已同步、父会话文档已 live 同步、Flock 已被列表刷新打开），重复加载基本本地完成；写入路径（startSession）保持独立副本并在写入时重新验证模板与选项，陈旧选项最多被拒后提示刷新。取消语义保留：一次性读取在共享副本的执行段内注册认证作用域（按 operation ID 的别名 token 绑定本次 AbortSignal，队列内完成即释放），取消仍中止进行中的原生请求，后续操作不会继承绑定。bridge 测试更新为 213 项（共享副本复用、取消保留作用域、tab 转发不销毁共享副本），Swift 164 项含 StreamFetchHandler 取消用例全部通过；真实账号上首次冷缓存与弱网取消仍待实测。
 
 ## 当前状态
 

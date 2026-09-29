@@ -159,8 +159,12 @@ struct NewSessionView: View {
                 )
                 .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
             } else {
-                Label(projectName, systemImage: "folder")
-                    .accessibilityIdentifier("inherited-tab-project")
+                Label {
+                    Text(projectName).lineLimit(1)
+                } icon: {
+                    NewSessionIcon(imageName: "folder-open")
+                }
+                .accessibilityIdentifier("inherited-tab-project")
             }
             if let pendingStart {
                 Text(pendingStart.displayText)
@@ -216,7 +220,7 @@ struct NewSessionView: View {
             guard isCurrentWorkspace else { throw CancellationError() }
             let loaded: NewSessionOptions
             if let rootID = route.parentSessionID {
-                loaded = try await model.newSessionTabOptions(rootID: rootID)
+                loaded = try await model.newSessionTabOptions(rootID: rootID, agentConfigID: providerID)
             } else {
                 loaded = try await model.newSessionOptions(
                     templateSessionID: templateSessionID, agentConfigID: providerID, projectID: projectID
@@ -248,7 +252,9 @@ struct NewSessionView: View {
         let selections = runConfig?.selections ?? []
         performStart {
             if let rootID = route.parentSessionID {
-                return try await model.startSessionTab(text, attachments: sentAttachments, selections: selections, rootID: rootID)
+                return try await model.startSessionTab(text, attachments: sentAttachments, selections: selections,
+                                                       agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+                                                       rootID: rootID)
             }
             return try await model.startSession(
                 text, attachments: sentAttachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,

@@ -449,7 +449,7 @@ test('cancelling an unobserved search read unloads its document', async () => {
 });
 
 
-test('new-session options cancel metadata sync and destroy the temporary reader', async () => {
+test('new-session options cancel their sync and keep the shared reader', async () => {
   let entered;
   const ready = new Promise(resolve => { entered = resolve; });
   let observedSignal;
@@ -463,25 +463,24 @@ test('new-session options cancel metadata sync and destroy the temporary reader'
   window.kurageCancel('options-1');
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(observedSignal.aborted, true);
-  assert.equal(repos[0].destroyed, true);
+  // The workspace reader survives so a retry reuses the already-synced replica.
+  assert.equal(repos[0].destroyed, false);
 });
 
-test('new-session options forward cancellation after metadata sync and release their reader', async () => {
-  let entered;
-  const ready = new Promise(resolve => { entered = resolve; });
-  const { window, repos } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
-    newSessionOptions: async (repo, workspace, template, agent, signal) => {
-      assert.equal(workspace, 'ws');
-      assert.equal(template, 'template');
-      entered();
-      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
-    },
+test('new-session options reuse the synced reader without resyncing metadata', async () => {
+  const scopes = [];
+  const { window, repos } = makeBridge(options => {
+    scopes.push(options.scope);
+    return { ok: true, outcome: 'synced' };
+  }, undefined, undefined, undefined, {
+    newSessionOptions: async () => ({ agentConfigID: 'codex', providers: [], runConfig: {} }),
   });
-  const pending = window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2');
-  await ready;
-  window.kurageCancel('options-2');
-  await assert.rejects(pending, { name: 'AbortError' });
-  assert.equal(repos[0].destroyed, true);
+  const first = JSON.parse(await window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-1'));
+  assert.equal(first.agentConfigID, 'codex');
+  const second = JSON.parse(await window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2'));
+  assert.equal(second.agentConfigID, 'codex');
+  assert.equal(repos.length, 1);
+  assert.equal(scopes.filter(scope => scope === 'meta').length, 1);
 });
 
 
@@ -602,7 +601,7 @@ test('new-folder skill mentions use the selected project on the template machine
 });
 
 test('tab configuration forwards its mode and scope without a project override or writable streams', async () => {
-  const { window, repos, transports } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+  const { window, repos, transports } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
     newSessionOptions: async (_repo, workspace, parent, agent, signal, project, tab) => {
       assert.equal(workspace, 'workspace-tab');
       assert.equal(parent, 'parent');
@@ -617,5 +616,6 @@ test('tab configuration forwards its mode and scope without a project override o
     'https://gateway.lody.ai', 'tab-config', null, true);
   assert.equal(JSON.parse(result).agentConfigID, 'codex');
   assert.equal(transports[0].createStreamIfMissing, false);
-  assert.equal(repos[0].destroyed, true);
+  // The shared reader stays for later loads.
+  assert.equal(repos[0].destroyed, false);
 });

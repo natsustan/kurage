@@ -557,11 +557,20 @@ test('explicitly reselecting the template project retains its GitHub association
     { kind: 'local', localProjectId: 'proj', githubRepoFullName: 'org/repo' });
 });
 
-test('tab options expose only the inherited agent and allow independent first-turn model and reasoning', async () => {
+test('tab options offer the machine providers and inherit the parent run configuration', async () => {
   const { repo, docs, rows } = fixture();
   const options = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, true);
-  assert.deepEqual(options.providers, [{ value: 'cfg', label: 'Codex' }]);
+  assert.deepEqual(options.providers, [
+    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+  ]);
+  assert.equal(options.agentConfigID, 'cfg');
   assert.equal(options.runConfig.model.value, 'gpt-5.5');
+  // Another machine's agent is never offered.
+  await assert.rejects(newSessionOptions(repo, 'ws', 'template', 'foreign', undefined, undefined, true),
+    /unavailable/);
+  const claude = await newSessionOptions(repo, 'ws', 'template', 'claude', undefined, undefined, true);
+  assert.equal(claude.agentConfigID, 'claude');
+  assert.equal(claude.runConfig.model.value, 'opus');
   const selections = [{ configOptionID: null, value: 'gpt-5.4-mini' },
     { configOptionID: 'reasoning_effort', value: 'low' }];
   // Builtin model choice uses modelId (no config option ID).
@@ -575,11 +584,32 @@ test('tab options expose only the inherited agent and allow independent first-tu
   assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, input);
 });
 
-test('tab writes revalidate choices and never substitute a project or provider', async () => {
+test('a tab on another provider starts from that agent and its most recent run configuration', async () => {
+  const { repo, rows, docs } = fixture();
+  // Another machine's agent cannot run a tab on this one.
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'foreign' }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
+  assert.equal(docs.get('session-new')?.getList('history').length ?? 0, 0);
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'claude' }), 'sent');
+  const meta = rows.get('session-new');
+  assert.equal(meta.agentConfigId, 'claude');
+  assert.equal(meta.agentType, 'claude');
+  assert.equal(meta.parentSessionId, 'template');
+  assert.deepEqual(meta.project, rows.get('session-template').project);
+  const input = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(input.modelId, 'opus');
+  assert.equal(input.modeId, 'acceptEdits');
+  assert.equal(input.agentRoleId, undefined);
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'claude' }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+});
+
+test('tab writes revalidate choices and never substitute the parent project', async () => {
   const { repo, rows } = fixture();
   assert.equal(await start(repo, { parentSessionID: 'template',
     selections: [{ configOptionID: null, value: 'missing-model' }] }), 'rejected');
   assert.equal(rows.has('session-new'), false);
-  await assert.rejects(newSessionOptions(repo, 'ws', 'template', 'claude', undefined, undefined, true), /inherits/);
+  assert.equal(await start(repo, { parentSessionID: 'template', projectID: 'local:mac:proj' }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
   await assert.rejects(newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:other', true), /inherits/);
 });

@@ -57,8 +57,8 @@ struct SessionTabsTests {
         let client = FixtureLodyClient(startsSignedIn: true, failTabStartOnce: true)
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
-        let options = try await model.newSessionTabOptions(rootID: "session-long")
-        #expect(options.providers.count == 1)
+        let options = try await model.newSessionTabOptions(rootID: "session-long", agentConfigID: nil)
+        #expect(options.providers.count == 2)
         var config = try #require(options.runConfig)
         let different = try #require(config.model?.options.last)
         config.selectModel(different.value)
@@ -73,6 +73,32 @@ struct SessionTabsTests {
         for try await update in stream {
             #expect(update.runConfig?.model?.value == different.value)
             #expect(update.conversation.turns.count == 1)
+        }
+    }
+
+    @Test func tabProviderSwitchAppliesTheChosenAgentAndRetryKeepsIt() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failTabStartOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let options = try await model.newSessionTabOptions(rootID: "session-long", agentConfigID: nil)
+        #expect(options.providers.map(\.value) == ["claude", "codex"])
+        #expect(options.agentConfigID == "codex")
+        let claude = try await model.newSessionTabOptions(rootID: "session-long", agentConfigID: "claude")
+        #expect(claude.agentConfigID == "claude")
+        #expect(claude.runConfig?.reasoning == nil)
+        #expect(claude.runConfig?.model?.value == "sonnet")
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSessionTab("On Claude", agentConfigID: "claude", rootID: "session-long")
+        }
+        let pending = try #require(model.pendingSessionTab(rootID: "session-long"))
+        #expect(pending.agentConfigID == "claude")
+        let tabID = try await model.startSessionTab("On Claude", rootID: "session-long")
+        #expect(tabID == pending.sessionID)
+        #expect(model.sessionSummary(tabID)?.agentName == "claude")
+        let stream = try await client.observeConversation(sessionID: tabID, workspaceID: "ws-demo")
+        for try await update in stream {
+            #expect(update.runConfig?.model?.value == "sonnet")
+            #expect(update.runConfig?.reasoning == nil)
         }
     }
 
