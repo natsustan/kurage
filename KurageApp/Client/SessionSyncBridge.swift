@@ -127,9 +127,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
 
     func sendText(_ text: String, attachments: [UploadedAttachment] = [], turnID: String, userID: String, runConfig: RunConfigChoice?,
                   sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
-        let choice: Any = runConfig.map { choice -> [String: Any] in
-            ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
-        } ?? NSNull()
+        let choice: Any = runConfig.map { $0.bridgeValue() } ?? NSNull()
         return try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig, attachments))",
             workspaceID: workspaceID,
@@ -185,9 +183,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
             "templateSessionID": templateSessionID, "projectID": projectID, "agentConfigID": agentConfigID ?? NSNull(),
             "sessionID": sessionID, "turnID": turnID, "attachments": try attachments.map { try $0.bridgeValue() },
             "userID": userID, "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
-            "selections": selections.map { choice -> [String: Any] in
-                ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
-            },
+            "selections": selections.map { $0.bridgeValue() },
         ]
         return try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageStartSession(workspaceID, baseURL, request))",
@@ -199,18 +195,15 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
 
     func startSessionTab(_ request: SessionTabStart, attachments: [UploadedAttachment], parentSessionID: String, userID: String,
                          workspaceID: String, access: StreamsAccess) async throws -> String {
-        var value: [String: Any] = [
-            "sessionID": request.sessionID, "turnID": request.turnID,
-            "timestamp": request.timestamp, "text": request.text,
+        // A tab's parent doubles as the template that supplies machine and project.
+        let value: [String: Any] = [
+            "templateSessionID": parentSessionID, "parentSessionID": parentSessionID,
             "agentConfigID": request.agentConfigID ?? NSNull(),
+            "sessionID": request.sessionID, "turnID": request.turnID,
             "attachments": try attachments.map { try $0.bridgeValue() },
-            "selections": request.selections.map { choice -> [String: Any] in
-                ["configOptionID": choice.configOptionID ?? NSNull(), "value": choice.value]
-            },
+            "userID": userID, "text": request.text, "timestamp": request.timestamp,
+            "selections": request.selections.map { $0.bridgeValue() },
         ]
-        value["parentSessionID"] = parentSessionID
-        value["templateSessionID"] = parentSessionID
-        value["userID"] = userID
         return try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageStartSession(workspaceID, baseURL, request))",
             workspaceID: workspaceID, access: access, arguments: ["request": value]
@@ -744,5 +737,11 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         _ = try await webView.callAsyncJavaScript(
             "await window.kurageFetchEvent(event)", arguments: ["event": payload], in: nil, contentWorld: .page
         )
+    }
+}
+
+extension RunConfigChoice {
+    func bridgeValue() -> [String: Any] {
+        ["configOptionID": configOptionID ?? NSNull(), "value": value]
     }
 }

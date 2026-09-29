@@ -43,7 +43,9 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
     await new Promise(setImmediate);
   };
   return { doc, updates, controller, start, flush, rooms, repo,
-    metadataChanged: () => metaListener?.(), releases: () => releases };
+    metadataChanged: (docId = 'session-abc', patch = {}) =>
+      metaListener?.({ kind: 'doc-metadata', docId, patch, by: 'sync' }),
+    releases: () => releases };
 }
 
 test('cached history acknowledges a stable synced marker without another content change', async () => {
@@ -707,5 +709,15 @@ test('metadata changes update the tab group while history changes do not rescan 
   h.metadataChanged();
   await h.flush();
   assert.equal(h.updates.at(-1).sessionTabs[1].isTabClosed, true);
+  // Status churn on the observed session's own row stays visible; churn on an
+  // unrelated session in the same workspace must not republish this one.
+  const published = h.updates.length;
+  h.metadataChanged('session-other', { status: { type: 'running' } });
+  await h.flush();
+  assert.equal(h.updates.length, published);
+  // A tab this session has not seen yet can still announce itself.
+  h.metadataChanged('session-appearing', { parentSessionId: 'abc' });
+  await h.flush();
+  assert.equal(h.updates.length, published + 1);
   h.controller.abort();
 });

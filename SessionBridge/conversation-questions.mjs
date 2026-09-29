@@ -1,7 +1,8 @@
 // Protocol reference: Lody shared/acp/ask-user-question.ts and history-writer.ts.
+import { isSessionTab } from './session-tabs.mjs';
+import { canonical } from './conversation-send.mjs';
+
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const canonical = value => JSON.stringify(value, (_key, item) => record(item)
-  ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
 export function parseQuestionMeta(meta) {
   let source, raw;
@@ -149,14 +150,17 @@ export async function respondQuestion(repo, sessionID, turnID, requestID, answer
     if (result.outcome !== 'synced') throw new Error('Question sync unconfirmed');
   };
   await sync('meta');
+  const rows = await repo.listDoc();
   const row = await repo.getDocMeta(docID);
-  if (!row || row.deleted || row.meta?.isArchived) return 'unavailable';
+  if (!row || row.deleted || row.meta?.isArchived ||
+      (row.meta?.parentSessionId && !isSessionTab(row, rows))) return 'unavailable';
   const { doc } = await repo.openPersistedDoc(docID);
   await sync('doc');
   await sync('meta');
   const current = await repo.getDocMeta(docID);
   signal?.throwIfAborted();
-  if (!current || current.deleted || current.meta?.isArchived) return 'unavailable';
+  if (!current || current.deleted || current.meta?.isArchived ||
+      (current.meta?.parentSessionId && !isSessionTab(current, rows))) return 'unavailable';
   const history = doc.getList('history');
   const locate = () => {
     const entries = history.toJSON();

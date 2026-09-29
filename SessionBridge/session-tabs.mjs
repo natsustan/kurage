@@ -1,5 +1,15 @@
 import { projectSessionActivity } from './session-activity.mjs';
 
+// A tab is a child of the root that is not a side panel and is not nested under
+// another child. Rows that carry a missing parent stay permissive: an archived
+// or deleted root must not turn a visible tab into an unusable one.
+export function isSessionTab(row, rows) {
+  const parentID = row?.meta?.parentSessionId;
+  if (!parentID || row.meta.childSessionPlacement === 'side-panel') return false;
+  const parent = rows.find(entry => entry.docId === `session-${parentID}`);
+  return !parent || !parent.meta?.parentSessionId;
+}
+
 export function projectSessionTabs(rows, sessionID) {
   const sessions = rows.filter(row => row.docId?.startsWith('session-') &&
     !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta?.isArchived);
@@ -12,7 +22,7 @@ export function projectSessionTabs(rows, sessionID) {
     row.meta.childSessionPlacement !== 'side-panel').sort((a, b) =>
     (a.meta.createdAt ?? '').localeCompare(b.meta.createdAt ?? '') || a.docId.localeCompare(b.docId))]
     .map(row => ({
-      id: row.docId.slice(8), title: row.meta.title || 'Untitled session',
+      id: row.docId.slice('session-'.length), title: row.meta.title || 'Untitled session',
       agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
       activity: projectSessionActivity(row.meta.status), preview: '',
       parentSessionID: row.meta.parentSessionId ?? null,

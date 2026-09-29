@@ -13,8 +13,6 @@ struct SessionProjectMenu: View {
     @State private var attempt = 0
     @State private var catalogLoadID = UUID()
     @State private var folderSource: SessionProject?
-    @ScaledMetric(relativeTo: .body) private var iconWidth = 28
-    @ScaledMetric(relativeTo: .body) private var iconSize = 20
 
     private var menuProjects: [SessionProject] {
         projects.contains(where: { $0.id == current.id }) ? projects : [current] + projects
@@ -41,10 +39,7 @@ struct SessionProjectMenu: View {
                 .accessibilityIdentifier("choose-machine-folder")
         } label: {
             HStack(spacing: 8) {
-                Image("folder-open")
-                    .resizable().scaledToFit()
-                    .frame(width: iconSize, height: iconSize)
-                    .frame(width: iconWidth)
+                NewSessionIcon(imageName: "folder-open")
                 Text(current.name).lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down").font(.caption)
             }

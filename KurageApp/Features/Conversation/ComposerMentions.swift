@@ -18,15 +18,23 @@ struct ComposerMentionState {
     private(set) var ranges: [Range] = []
     private var previousText = ""
 
-    mutating func reconcile(_ text: String) {
-        guard text != previousText else { return }
-        let old = Array(previousText.utf16)
-        let new = Array(text.utf16)
+    var hasSkillMentions: Bool {
+        ranges.contains { if case .skill = $0.kind { return true } else { return false } }
+    }
+
+    private static func editRange(from oldText: String, to newText: String)
+        -> (old: [UInt16], prefix: Int, oldEnd: Int, newEnd: Int) {
+        let old = Array(oldText.utf16)
+        let new = Array(newText.utf16)
         let prefix = zip(old, new).prefix { $0 == $1 }.count
         let suffix = zip(old.dropFirst(prefix).reversed(), new.dropFirst(prefix).reversed())
             .prefix { $0 == $1 }.count
-        let oldEnd = old.count - suffix
-        let newEnd = new.count - suffix
+        return (old, prefix, old.count - suffix, new.count - suffix)
+    }
+
+    mutating func reconcile(_ text: String) {
+        guard text != previousText else { return }
+        let (_, prefix, oldEnd, newEnd) = Self.editRange(from: previousText, to: text)
         let change = newEnd - oldEnd
         ranges = ranges.compactMap { range in
             if range.end <= prefix { return range }
@@ -44,13 +52,7 @@ struct ComposerMentionState {
     /// Expand a user deletion to the boundaries of every selected mention it
     /// touches. Plain typing and IME composition still use normal reconciliation.
     mutating func edit(_ text: String) -> (text: String, caret: Int?) {
-        let old = Array(previousText.utf16)
-        let new = Array(text.utf16)
-        let prefix = zip(old, new).prefix { $0 == $1 }.count
-        let suffix = zip(old.dropFirst(prefix).reversed(), new.dropFirst(prefix).reversed())
-            .prefix { $0 == $1 }.count
-        let oldEnd = old.count - suffix
-        let newEnd = new.count - suffix
+        let (old, prefix, oldEnd, newEnd) = Self.editRange(from: previousText, to: text)
         guard oldEnd > prefix, newEnd == prefix else {
             reconcile(text)
             return (text, nil)
@@ -113,6 +115,45 @@ struct ComposerMentionState {
             result.replaceSubrange(start..<end, with: prompt)
         }
         return result
+    }
+
+    /// Re-point skill mentions at the skills the current source offers, dropping
+    /// the ones it no longer has. A dropped token leaves the text as well: sent
+    /// as plain words it would silently mean something else than the mention the
+    /// user picked — and project skill paths are relative to their project.
+    mutating func resolveSkills(_ skills: [MentionSkill], in text: String) -> String? {
+        let paths = Dictionary(skills.map { ($0.token, $0.path) }, uniquingKeysWith: { first, _ in first })
+        var kept: [Range] = []
+        var dropped: [Range] = []
+        for range in ranges {
+            guard case .skill(let token, let path) = range.kind else {
+                kept.append(range)
+                continue
+            }
+            guard let updated = paths[token] else {
+                dropped.append(range)
+                continue
+            }
+            var range = range
+            if updated != path { range.kind = .skill(token: token, path: updated) }
+            kept.append(range)
+        }
+        ranges = kept
+        guard !dropped.isEmpty else { return nil }
+        var units = Array(text.utf16)
+        for range in dropped.sorted(by: { $0.start > $1.start }) {
+            guard range.start >= 0, range.end <= units.count else { continue }
+            // The composer inserts a trailing space after every token.
+            let end = range.end < units.count && units[range.end] == 0x20 ? range.end + 1 : range.end
+            units.removeSubrange(range.start..<end)
+            for index in ranges.indices where ranges[index].start >= end {
+                ranges[index].start -= end - range.start
+                ranges[index].end -= end - range.start
+            }
+        }
+        let rewritten = String(decoding: units, as: UTF16.self)
+        previousText = rewritten
+        return rewritten
     }
 
     mutating func clear() {

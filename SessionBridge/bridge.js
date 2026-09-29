@@ -35,11 +35,13 @@ let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
 // Auth scope of the one-shot read currently running on the shared replica.
 // Streams tokens outlive single operations, so binding happens per operation
-// and is released inside the queue before the next one starts.
+// and is released inside the queue before the next one starts. Only the shared
+// replica reads it — it is the one replica that has no scope of its own.
 let activeWorkspaceOperation;
 
 // Only a replica that authors a new session may create its document stream.
-async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false, operationID, signal } = {}) {
+async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
+  { createStreams = false, operationID, signal, usesActiveOperation = false } = {}) {
   const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
   try {
     const transport = new StreamsTransportAdapter({
@@ -49,15 +51,16 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams 
         ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
       flockDocStreamId: (flockDocID) => flockDocID,
       auth: async context => {
-        const scoped = activeWorkspaceOperation ?? { operationID, signal };
+        // Only the shared workspace replica adopts the one-shot read's scope;
+        // it was created without one. Replicas that carry their own scope keep
+        // it, so a concurrent write or standalone read can never inherit
+        // another operation's token binding or get cancelled with it.
+        const ownScope = { operationID, signal };
+        const scoped = usesActiveOperation ? activeWorkspaceOperation ?? ownScope : ownScope;
         const access = await window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'auth', workspaceID, operationID: scoped.operationID, refresh: context?.reason === 'unauthorized',
         });
-        if (scoped === activeWorkspaceOperation) {
-          if (scoped.signal && !scoped.signal.aborted) nativeFetch.bindSignal(access.token, scoped.signal);
-        } else if (signal) {
-          nativeFetch.bindSignal(access.token, signal);
-        }
+        if (scoped.signal && !scoped.signal.aborted) nativeFetch.bindSignal(access.token, scoped.signal);
         return access.token;
       },
       baseUrl: gatewayBaseURL,
@@ -90,7 +93,7 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
     }
     signal?.throwIfAborted();
     if (!state) {
-      const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
+      const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL, { usesActiveOperation: true });
       state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
       cachedWorkspace = state;
     }
@@ -313,16 +316,9 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
 
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments);
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageSendText = (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments));
 
 async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
   signal?.throwIfAborted();
@@ -360,27 +356,12 @@ window.kurageStartSession = (workspaceID, gatewayBaseURL, request) =>
   withSyncedWriteRepo(workspaceID, gatewayBaseURL,
     repo => startSession(repo, workspaceID, request), { createStreams: true });
 
-window.kurageCancelSession = async (workspaceID, sessionID, gatewayBaseURL) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await cancelSession(repo, sessionID);
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageCancelSession = (workspaceID, sessionID, gatewayBaseURL) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL, repo => cancelSession(repo, sessionID));
 
-window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return JSON.stringify(await archiveSession(repo, sessionID));
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageArchiveSession = (workspaceID, sessionID, gatewayBaseURL) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => archiveSession(repo, sessionID).then(JSON.stringify));
 
 window.kurageRestoreArchivedSession = async (workspaceID, sessionID, gatewayBaseURL) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
@@ -466,35 +447,47 @@ window.kurageUpdateSessionMetadata = async (workspaceID, sessionID, gatewayBaseU
 
 window.kurageRespondQuestion = async (workspaceID, sessionID, baseURL, turnID, requestID, answers, operationID) => {
   const controller = new AbortController();
-  sessionRefreshes.set(operationID, controller);
+  if (operationID) sessionRefreshes.set(operationID, controller);
   try {
     return await withSyncedWriteRepo(workspaceID, baseURL,
       repo => respondQuestion(repo, sessionID, turnID, requestID, answers, controller.signal),
       { operationID, signal: controller.signal }, controller.signal);
   } finally {
     controller.abort();
-    sessionRefreshes.delete(operationID);
+    if (operationID) sessionRefreshes.delete(operationID);
   }
 };
 
 window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessionID, action, path, cursor, operationID) => {
   const controller = new AbortController();
-  sessionRefreshes.set(operationID, controller);
+  if (operationID) sessionRefreshes.set(operationID, controller);
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
-    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(
-      await sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor, {
-        baseURL: gatewayBaseURL,
-        auth: async () => {
-          const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-            command: 'auth', workspaceID, operationID,
-          });
-          return access.token;
-        },
-      }, controller.signal)), { operationID, signal: controller.signal }, controller.signal);
+    const access = {
+      baseURL: gatewayBaseURL,
+      auth: async () => {
+        const token = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, operationID,
+        });
+        return token;
+      },
+    };
+    const run = repo => sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor,
+      access, controller.signal);
+    // Catalog and browse are pure reads; only select registers the project and
+    // needs its own replica. Reads share the synced workspace replica instead
+    // of rebuilding one per menu appearance, retry, and foreground return.
+    if (action === 'select') {
+      return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+        { operationID, signal: controller.signal }, controller.signal);
+    }
+    // Browse pages need only the template's machine ID; re-syncing workspace
+    // metadata per page adds a round trip without changing the directory read.
+    return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+      action === 'catalog', controller.signal, { operationID, signal: controller.signal, abort: () => controller.abort() });
   } finally {
     clearTimeout(timeout);
     controller.abort();
-    sessionRefreshes.delete(operationID);
+    if (operationID) sessionRefreshes.delete(operationID);
   }
 };

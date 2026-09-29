@@ -1,4 +1,4 @@
-import { canRestoreArchivedSession, readLocalProjectState } from './session-archive.mjs';
+import { activityTime, canRestoreArchivedSession, readLocalProjectState } from './session-archive.mjs';
 import { appendUserTurn, assertSameTurn, sendText, synced } from './conversation-send.mjs';
 import {
   applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig,
@@ -12,8 +12,6 @@ const TITLE_LENGTH = 50;
 const isRootSession = (row, allowArchived = false) => row.docId?.startsWith('session-') &&
   !row.docId.startsWith('session-comment-') && !row.deleted &&
   (allowArchived || !row.meta?.isArchived) && !row.meta?.parentSessionId;
-const activityAt = meta => Number.isFinite(meta?.lastMessageAt)
-  ? meta.lastMessageAt : Date.parse(meta?.createdAt ?? '') || 0;
 
 // Agent configs are scoped to their machine's Flock document.
 function readProviders(flock, machineID) {
@@ -34,7 +32,7 @@ async function readBaseline(repo, rows, meta, agentConfigID, signal) {
   const candidates = rows
     .filter(row => isRootSession(row) && row.meta.machineId === meta.machineId &&
       row.meta.agentConfigId === agentConfigID)
-    .sort((a, b) => activityAt(b.meta) - activityAt(a.meta));
+    .sort((a, b) => activityTime(b.meta) - activityTime(a.meta));
   const source = candidates[0];
   if (!source) return {};
   return readDocumentBaseline(repo, source.docId, signal);
@@ -59,7 +57,8 @@ async function readDocumentBaseline(repo, docID, signal) {
 // A new session reuses the machine and local project of a recent root session
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.
-async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { allowArchived = false, projectID, tab = false } = {}) {
+async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal,
+  { allowArchived = false, projectID, tab = false, includeBaseline = true } = {}) {
   signal?.throwIfAborted();
   const rows = await repo.listDoc();
   const templateDocID = `session-${templateSessionID}`;
@@ -113,7 +112,10 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   // a tab on another agent starts from that agent's most recent use, like a
   // new session does.
   const inheritsAgent = !text(agentConfigID) || agentConfigID === meta.agentConfigId;
-  const baseline = !tab
+  // A confirmed retry only needs the meta/agent halves; the baseline doc sync
+  // serves the first turn's inherited configuration and can be skipped.
+  const baseline = !includeBaseline ? {}
+    : !tab
     ? (text(agent.id)
         ? await readBaseline(repo, rows, meta, agent.id, signal)
         : await readDocumentBaseline(repo, templateDocID, signal))
@@ -183,10 +185,11 @@ export async function startSession(repo, workspaceID, {
     // Only a synced, matching turn may resume from an archived template.
     if (parentSessionID) {
       if (parentSessionID !== templateSessionID || projectID) throw new Error('Invalid tab parent');
-      template = await readTemplate(repo, workspaceID, parentSessionID, agentConfigID, undefined, { tab: true });
+      template = await readTemplate(repo, workspaceID, parentSessionID, agentConfigID, undefined,
+        { tab: true, includeBaseline: !existing });
     } else {
       template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, undefined,
-        { allowArchived: Boolean(existing), projectID });
+        { allowArchived: Boolean(existing), projectID, includeBaseline: !existing });
     }
     if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }, ...attachments],

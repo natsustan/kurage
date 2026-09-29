@@ -132,6 +132,5 @@ private struct SessionTabBar: View {
         }
         .accessibilityIdentifier("session-tab-bar")
     }
-
 }
 

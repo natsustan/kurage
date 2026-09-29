@@ -210,7 +210,9 @@ struct NewSessionView: View {
         selectedProject = project
         configuration = NewSessionConfiguration()
         request = LoadRequest(attempt: request.attempt + 1)
-        mentions.clear()
+        // The draft is preserved, so its mentions must be too: clearing them
+        // here sent `$skill` as plain words. The composer reloads this project's
+        // skills and re-points or drops the mentions it can no longer resolve.
         banner = nil
     }
 
@@ -220,7 +222,7 @@ struct NewSessionView: View {
             guard isCurrentWorkspace else { throw CancellationError() }
             let loaded: NewSessionOptions
             if let rootID = route.parentSessionID {
-                loaded = try await model.newSessionTabOptions(rootID: rootID, agentConfigID: providerID)
+                loaded = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: providerID, isTab: true)
             } else {
                 loaded = try await model.newSessionOptions(
                     templateSessionID: templateSessionID, agentConfigID: providerID, projectID: projectID
@@ -298,7 +300,7 @@ struct NewSessionView: View {
 }
 
 /// Keeps the detail titles aligned across asset images of different widths.
-private struct NewSessionIcon: View {
+struct NewSessionIcon: View {
     let imageName: String
     @ScaledMetric(relativeTo: .body) private var width = 28
     @ScaledMetric(relativeTo: .body) private var iconSize = 20

@@ -109,6 +109,26 @@ struct ComposerMentionsTests {
         #expect(state.ranges.isEmpty)
     }
 
+    @Test func skillMentionsFollowTheSourceAndDropWhatItLost() {
+        var state = ComposerMentionState()
+        var text = "Ask "
+        (text, _) = state.insert("$review", kind: .skill(token: "review", path: ".claude/skills/review/SKILL.md"),
+                                 replacing: text.endIndex..<text.endIndex, in: text)
+        (text, _) = state.insert("@chat", kind: .session(id: "chat", title: "Chat"),
+                                 replacing: text.endIndex..<text.endIndex, in: text)
+        // The same token in another project expands through that project's path.
+        let moved = state.resolveSkills([MentionSkill(token: "review", name: "Review", description: "",
+                                                     path: ".agents/skills/review/SKILL.md")], in: text)
+        #expect(moved == nil)
+        #expect(state.expanded(text) ==
+                "Ask use /review [Skill Path](.agents/skills/review/SKILL.md) [@Chat](session://chat) ")
+        // A skill the new source does not offer leaves the text along with its
+        // token, while the session mention survives.
+        let rewritten = state.resolveSkills([], in: text)
+        #expect(rewritten == "Ask @chat ")
+        #expect(rewritten.map(state.expanded) == "Ask [@Chat](session://chat) ")
+    }
+
     @Test func queryUsesCaretBeforeTrailingText() {
         let text = "Please @rev later"
         let caret = text.range(of: "@rev")!.upperBound

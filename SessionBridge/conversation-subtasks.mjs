@@ -1,8 +1,8 @@
 // Native agent tasks are history items, never child Session metadata. Codex
 // publishes one `subagent_task` per subagent lifecycle activity (start /
-// interact / complete / interrupt), each keyed by its own activity id, so the
-// panel groups them into the subagent they belong to and keeps the activities
-// as that subagent's steps.
+// interact / interrupt), each keyed by its own activity id, so the panel groups
+// them into the subagent they belong to and keeps the activities as that
+// subagent's steps.
 const SUBAGENT_TASK_STATUSES = ['pending', 'in_progress', 'completed', 'failed'];
 
 const visibleText = value => typeof value === 'string' && value.trim() ? value : undefined;
@@ -20,13 +20,15 @@ const activityActor = item => {
 };
 
 // An activity item completes as soon as its call returns, so its own status
-// cannot say whether the subagent is still alive. Only a complete/interrupt
-// activity ends it; a start or interaction means it is running.
-const activityStatus = description => {
-  const title = description.toLowerCase();
-  if (title.startsWith('complete')) return 'completed';
-  return title.startsWith('interrupt') ? 'failed' : 'in_progress';
-};
+// cannot say whether the subagent is still alive. Codex names its activities
+// "Start subagent X", "Interact with subagent X", and "Interrupt subagent X" —
+// it has no completion activity, so a subagent that finishes on its own emits
+// nothing further. An interrupt ends it as failed; otherwise the turn ending is
+// what ends it.
+const interrupted = description => description.toLowerCase().startsWith('interrupt');
+const turnEnded = entry => entry.finished === true || entry.endedAt != null;
+const activityStatus = (description, entry) =>
+  interrupted(description) ? 'failed' : turnEnded(entry) ? 'completed' : 'in_progress';
 
 export function projectSubtasks(history) {
   const groups = new Map();
@@ -69,7 +71,7 @@ export function projectSubtasks(history) {
       // A later step wins per field, but a step that carries no value leaves the
       // subagent's earlier detail (its prompt, result, usage) in place.
       if (!actor && description) group.title = description;
-      group.status = actor && description ? activityStatus(description) : step.status;
+      group.status = actor && description ? activityStatus(description, entry) : step.status;
       if (summary) group.summary = summary;
       if (error) group.error = error;
       const lastToolName = visibleText(item.lastToolName);

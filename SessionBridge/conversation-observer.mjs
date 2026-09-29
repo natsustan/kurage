@@ -120,6 +120,9 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   const own = dispose => { if (stopped) dispose(); else cleanup.push(dispose); };
   try {
     const docID = `session-${sessionID}`;
+    // Documents whose metadata can change this session's tab projection: the
+    // session itself, its root, and the root's tabs. Grows with each projection.
+    const tabScope = new Set([docID]);
     const metadata = await repo.getDocMeta(docID);
     if (stopped) return;
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
@@ -166,6 +169,11 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
           tabsChanged = false;
           sessionTabs = projectSessionTabs(await repo.listDoc(), sessionID);
           if (stopped) return;
+          // This session, its root, and the root's tabs are the only documents
+          // whose metadata can change the projection. The scope only grows: a
+          // root that drops out of an empty projection must still be watched
+          // for the change that brings it back.
+          for (const tab of sessionTabs) tabScope.add(`session-${tab.id}`);
         }
         // Native consumers buffer complete updates; retain tabs when history-only
         // patches supersede the metadata update before Swift consumes it.
@@ -205,7 +213,28 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
     });
     if (stopped) return;
-    const watch = repo.watch(() => { tabsChanged = true; queue(); }, {
+    // Status, usage, and title churn on unrelated sessions cannot change this
+    // projection, and republishing for it is what a busy workspace does all
+    // day. Existence changes and tab membership fields always pass: they can
+    // introduce or retire a tab this session has not seen yet.
+    const MEMBERSHIP_FIELDS = ['parentSessionId', 'childSessionPlacement', 'isArchived'];
+    const TAB_FIELDS = [...MEMBERSHIP_FIELDS, 'title', 'agentType', 'cliType', 'status',
+      'isTabClosed', 'lastMessageAt', 'lastReadAt', 'createdAt'];
+    const watch = repo.watch(event => {
+      if (event.kind === 'doc-metadata') {
+        const fields = Object.keys(event.patch ?? {});
+        if (!tabScope.has(event.docId)) {
+          if (!MEMBERSHIP_FIELDS.some(field => fields.includes(field))) return;
+        } else if (fields.length > 0 && !fields.some(field => TAB_FIELDS.includes(field))) {
+          // An in-scope patch that names no projected field (usage, dispatch
+          // pointers) still republishes; it just cannot change the tab list.
+          queue();
+          return;
+        }
+      }
+      tabsChanged = true;
+      queue();
+    }, {
       kinds: ['doc-metadata', 'doc-existence-changed'],
     });
     own(() => watch.unsubscribe());

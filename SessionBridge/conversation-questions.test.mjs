@@ -29,6 +29,8 @@ function fixture(nested = false) {
   const meta = { status: { type: 'requestPermission' } };
   const repo = {
     getDocMeta: async id => id === 'session-chat' ? { meta } : null,
+    listDoc: async () => [{ docId: 'session-chat', meta },
+      ...(meta.parentSessionId ? [{ docId: `session-${meta.parentSessionId}`, meta: {} }] : [])],
     openPersistedDoc: async () => ({ doc }),
     sync: async () => ({ outcome: 'synced' }),
   };

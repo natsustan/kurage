@@ -70,6 +70,10 @@ struct ConversationContent: View {
     @State private var bottomMessageAt: Double?
     @State private var loadedMessageAt: Double?
 
+    /// The live observation is fresher than the session list or the tab
+    /// projection, which both lag behind a turn that just started or ended.
+    private var isRunning: Bool { (observedActivity ?? session?.activity) == .running }
+
     private var readReceiptTimestamp: Double? {
         guard isVisible, isReading, scenePhase == .active, isCurrentWorkspace,
               connectionStatus == nil, selectedSubtask == nil,
@@ -98,7 +102,7 @@ struct ConversationContent: View {
             fileChanges: displayedConversation?.fileChanges ?? [],
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
             isLoading: displayedConversation == nil,
-            isRunning: (session?.activity ?? observedActivity) == .running,
+            isRunning: isRunning,
             scrollRequestID: scrollRequestID,
             messageTimestamp: loadedMessageAt,
             onBottomMessage: { bottomMessageAt = $0 },
@@ -110,10 +114,10 @@ struct ConversationContent: View {
         ) {
             ConversationFooter(
                 permission: displayedConversation?.permission,
-                question: (observedActivity ?? session?.activity) == .running ? displayedConversation?.questions?.first : nil,
+                question: isRunning ? displayedConversation?.questions?.first : nil,
                 questionReady: !isReadOnly && isCurrentWorkspace && scenePhase == .active &&
                     connectionStatus == nil && observedWorkspaceID == model.selectedWorkspaceID &&
-                    (observedActivity ?? session?.activity) == .running && model.supportsQuestionResponses,
+                    isRunning && model.supportsQuestionResponses,
                 onQuestionResponse: { request, answers in
                     try await model.respondToQuestion(request, answers: answers, sessionID: sessionID,
                                                       workspaceGeneration: workspaceGeneration)
@@ -128,7 +132,7 @@ struct ConversationContent: View {
                 draft: $draft, mentions: $mentions, attachments: $attachments,
                 isSending: isSending,
                 isCancelling: isCancelling,
-                isSessionRunning: (observedActivity ?? session?.activity) == .running,
+                isSessionRunning: isRunning,
                 banner: banner,
                 connectionMessage: showsConnectionMessage ? connectionStatus : nil,
                 supportsTextSending: !isReadOnly && model.supportsTextSending,
@@ -214,7 +218,7 @@ struct ConversationContent: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if (observedActivity ?? session?.activity) == .running {
+            if isRunning {
                 ToolbarItem(placement: .topBarTrailing) {
                     ProgressView()
                         .controlSize(.small)
@@ -340,7 +344,7 @@ struct ConversationContent: View {
     private func sendDraft() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               model.supportsTextSendingWhileRunning ||
-                (observedActivity ?? session?.activity) != .running else { return }
+                !isRunning else { return }
         let originalDraft = draft
         let originalMentions = mentions
         let text = mentions.expanded(draft)
@@ -430,7 +434,7 @@ struct ConversationContent: View {
 
     private func cancelSession() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
-              (observedActivity ?? session?.activity) == .running else { return }
+              isRunning else { return }
         isCancelling = true
         banner = nil
         Task {

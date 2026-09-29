@@ -270,3 +270,14 @@
 
 - 新建页选择项目后仅显示项目名称，移除额外的本地路径行。目录面板加载／确认仅显示居中转圈，移除材质底色及可见说明文字，保留辅助功能标签。
 - 目录行使用明确的上下 4pt 内边距，默认行高约 52pt；图标与文字间距缩为 12pt，保持整行可点击和大字号自适应。
+
+## 审查修复轮（2026-09-29）
+
+- 桥接鉴权作用域隔离：页面级 `activeWorkspaceOperation` 改为只由共享工作区副本读取（`createWorkspaceRepo` 的 `usesActiveOperation`），写副本与独立副本始终使用自身作用域。此前与一次性读取并发时，发送／取消／归档／问答等副本会借用读取的 operationID 与取消信号，读取结束即被 `endOperation` 与 abort 波及。项目菜单的 catalog／browse 改为复用共享副本（select 仍用独立写副本），`describe` 改为单趟遍历建立 localProjectId→最近会话映射。
+- 会话观察的 metadata watcher 恢复按文档过滤：只有本会话、其根会话与根的子 tab 会触发重投影，`doc-existence-changed` 与携带 `parentSessionId`／`childSessionPlacement`／`isArchived` 的补丁始终放行。此前工作区任意会话的状态、用量与标题变化都会重扫目录并重新发布本会话快照。
+- 子代理状态：Codex 只产生 `started`／`interacted`／`interrupted` 三种活动，没有完成活动，`Complete subagent` 前缀分支为死代码已删除。子代理在被中断时为 failed，否则随所在 turn 结束（`finished`／`endedAt`）变为 completed，turn 运行期间保持 running，turn 结束后的子代理不再永远显示运行中。
+- 发送／取消／问答恢复对子会话的限制，并收窄为「非 tab 的子会话」（side-panel 与嵌套孙会话），与 tab 定义（`isSessionTab`）一致。当前 UI 无法到达这些会话，属防御性一致性。
+- 提及：切换项目不再清空绑定。输入区在草稿含技能提及时，即使未打开候选菜单也会按新来源重新加载技能并解析：同 token 的技能指向新项目路径，新来源没有的技能连同草稿 token 一起移除（会话提及是绝对链接，保持不变）。代价是含技能提及的草稿在来源变化时多一次技能 RPC。
+- 原生：tab 投影为空时不再覆盖已缓存列表（根会话在其它端被归档时曾清空 tab 栏并把用户弹回 Main）；`markSessionRead` 去重覆盖 tab；`startSession` 的模板／项目配对改为按当前会话列表判断（模板属于该项目，或该项目尚无任何会话），不再依赖目录读取缓存，修复目录刷新后与操作无关的 notConnected；`sessionSummary`／`sessionTabs` 改查 `sessions` 索引；运行状态统一为 `observedActivity ?? session.activity`；`attemptedTabWrites` 按账号／工作区／会话登记；`newSessionTabOptions` 合并进 `newSessionOptions(isTab:)`，fixture 复用同一选项读取与 run-config 应用逻辑。
+- 已知未修：`ConversationTabsView` 的 `.id(activeID)` 仍随切 tab 重建会话子树（移除需要逐项重置约 18 项会话语义状态，需单独验证）；被旧版客户端「关闭并归档」的 tab 仍不能在 Closed tabs 中重开（Lody `reopenSessionTab` 会先 restoreSession）；live 客户端「上传失败且从未写入」分支仍无测试覆盖。
+- 本轮验证：frozen lockfile 安装、213 项 JS 测试与 bundle 重建通过；165 项 KurageTests 通过（含新增的技能提及重解析用例，首轮因 fixture 与 AppModel 的配对校验口径不一致失败一条，改为按会话列表判断后全通过）；4 项相关 fixture UI 测试通过（tab 创建/切换/关闭/重开与草稿独立、技能与当前项目会话提及、新建页项目提及、提及整体删除）。真实账号上的并发取消、跨端 tab 状态与根会话归档路径仍未实测。

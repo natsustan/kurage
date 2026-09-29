@@ -61,9 +61,6 @@ protocol LodyClient: AnyObject {
     var supportsSessionCreation: Bool { get }
 
     var supportsSessionTabs: Bool { get }
-    /// A tab inherits the parent's machine and project; `agentConfigID` picks
-    /// another agent configured on that machine.
-    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws
 
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
@@ -95,10 +92,13 @@ protocol LodyClient: AnyObject {
     /// `agentConfigID` picks another agent on that machine; `nil` keeps the template's.
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
                          workspaceID: String) async throws -> SessionProjectResult
+    /// `isTab` reads the options a tab inherits: the template is the parent
+    /// session and only that agent's run configuration stays editable.
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
         projectID: String?,
+        isTab: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions
     func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
@@ -136,9 +136,7 @@ protocol LodyClient: AnyObject {
 
 extension LodyClient {
     var supportsSessionTabs: Bool { false }
-    func newSessionTabOptions(parentSessionID: String, agentConfigID: String?, workspaceID: String) async throws -> NewSessionOptions {
-        throw LodyClientError.notConnected
-    }
+
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
         throw LodyClientError.notConnected
     }
@@ -197,6 +195,7 @@ extension LodyClient {
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
         projectID: String?,
+        isTab: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected

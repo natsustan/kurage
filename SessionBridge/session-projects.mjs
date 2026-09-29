@@ -9,12 +9,22 @@ export async function sessionProjects(repo, workspaceID, templateSessionID, acti
     !row.deleted && !row.meta?.isArchived && !row.meta?.parentSessionId);
   const machineID = row?.meta?.machineId;
   if (!machineID) throw new Error('Session machine is unavailable');
+  // One pass over the rows beats re-filtering and re-sorting the whole table
+  // for every project the catalog describes.
+  const templateByProject = new Map();
+  for (const candidate of rows) {
+    if (!candidate.docId.startsWith('session-') || candidate.docId.startsWith('session-comment-') ||
+        candidate.deleted || candidate.meta?.isArchived || candidate.meta?.parentSessionId ||
+        candidate.meta?.machineId !== machineID || candidate.meta?.project?.kind !== 'local') continue;
+    const localID = candidate.meta.project.localProjectId;
+    const current = templateByProject.get(localID);
+    if (!current || (candidate.meta.lastMessageAt ?? 0) > (current.meta.lastMessageAt ?? 0)) {
+      templateByProject.set(localID, candidate);
+    }
+  }
   const describe = (id, name, rootPath = '') => ({
     id: `local:${machineID}:${id}`, name, rootPath,
-    templateSessionID: rows.filter(row => row.docId.startsWith('session-') && !row.docId.startsWith('session-comment-') &&
-      !row.deleted && !row.meta?.isArchived && !row.meta?.parentSessionId &&
-      row.meta?.machineId === machineID && row.meta?.project?.kind === 'local' && row.meta.project.localProjectId === id)
-      .sort((a, b) => (b.meta.lastMessageAt ?? 0) - (a.meta.lastMessageAt ?? 0))[0]?.docId.slice(8) ?? templateSessionID,
+    templateSessionID: templateByProject.get(id)?.docId.slice('session-'.length) ?? templateSessionID,
   });
   if (action === 'catalog') {
     const state = await readLocalProjectState(repo, workspaceID, machineID, signal);

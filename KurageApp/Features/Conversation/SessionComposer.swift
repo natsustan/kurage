@@ -272,7 +272,7 @@ struct SessionComposer: View {
     }
 
     private func loadMentions() async {
-        guard scenePhase == .active, !Task.isCancelled, let query = mentionQuery else { return }
+        guard scenePhase == .active, !Task.isCancelled else { return }
         if loadedMentionSourceID != mentionSourceID {
             mentionSessions = []
             mentionSkills = []
@@ -280,8 +280,12 @@ struct SessionComposer: View {
             skillsLoaded = false
             loadedMentionSourceID = mentionSourceID
         }
+        // A draft that already carries skill mentions reloads them even with the
+        // menu closed: switching projects changes the skills it can point at.
+        let query = mentionQuery
+        guard query != nil || mentions.hasSkillMentions else { return }
         mentionLoadFailed = false
-        if query.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
+        if query?.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
             do {
                 let loaded = try await loadMentionSessions()
                 try Task.checkCancellation()
@@ -299,6 +303,7 @@ struct SessionComposer: View {
                 try Task.checkCancellation()
                 mentionSkills = loaded
                 skillsLoaded = true
+                if let rewritten = mentions.resolveSkills(loaded, in: draft) { draft = rewritten }
             } catch is CancellationError { return }
             catch {
                 guard !Task.isCancelled else { return }
