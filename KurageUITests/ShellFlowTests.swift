@@ -200,6 +200,7 @@ final class ShellFlowTests: XCTestCase {
         field.typeText("Keep parent draft")
         let subtasks = app.buttons["conversation-subtasks"]
         XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        XCTAssertTrue(subtasks.label.contains("2 agents"))
         XCTAssertTrue(app.buttons["turn-changes-toggle-long-agent-20"].isHittable)
         attachScreen(app, name: "Parent subtask summary")
         tap(subtasks)
@@ -210,6 +211,7 @@ final class ShellFlowTests: XCTestCase {
         tap(reuse)
         XCTAssertTrue(app.staticTexts["Reuse review finished."].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Completed"].exists)
+        XCTAssertTrue(app.staticTexts["Interact with subagent reuse_review"].waitForExistence(timeout: 5))
         let child = app.descendants(matching: .any)["subtask-transcript"]
         XCTAssertTrue(child.waitForExistence(timeout: 5))
         XCTAssertFalse(child.buttons["send-follow-up"].exists)

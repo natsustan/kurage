@@ -394,9 +394,20 @@ struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
     var detail: String
 }
 
+/// One subagent the session spawned. Codex reports its lifecycle activities as
+/// separate history tasks, so the bridge groups them here: `steps` keeps what
+/// the subagent ran through, while the remaining fields describe it as a whole.
 struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable {
     enum Status: String, Codable, Sendable {
         case pending, running = "in_progress", completed, failed
+    }
+
+    struct Step: Codable, Equatable, Hashable, Sendable, Identifiable {
+        let id: String
+        var title: String
+        var status: Status
+        var summary: String? = nil
+        var error: String? = nil
     }
 
     let id: String
@@ -409,6 +420,7 @@ struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable
     var modelID: String? = nil
     var totalTokens: Int? = nil
     var toolUses: Int? = nil
+    var steps: [Step]? = nil
 }
 
 struct Conversation: Codable, Equatable, Sendable {

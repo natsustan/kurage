@@ -841,7 +841,13 @@ extension SessionRecord {
         if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {
             records[index].subtasks = [
                 ConversationSubtask(id: "review-reuse", title: "Review code reuse", agentName: "Codex agent",
-                                    status: .completed, summary: "Reuse review finished.", totalTokens: 1200, toolUses: 3),
+                                    status: .completed, summary: "Reuse review finished.",
+                                    totalTokens: 1200, toolUses: 3, steps: [
+                    .init(id: "reuse-start", title: "Start subagent reuse_review", status: .completed),
+                    .init(id: "reuse-interact", title: "Interact with subagent reuse_review", status: .completed,
+                          summary: "Checked shared helpers."),
+                    .init(id: "reuse-complete", title: "Complete subagent reuse_review", status: .completed),
+                ]),
                 ConversationSubtask(id: "review-quality", title: "Review correctness", agentName: "Codex agent",
                                     status: .running, summary: "Checking state isolation.", lastToolName: "Read"),
             ]

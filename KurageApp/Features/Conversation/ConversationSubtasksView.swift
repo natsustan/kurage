@@ -9,17 +9,24 @@ struct ConversationSubtasksButton: View {
 
     var body: some View {
         Button { showsTasks.toggle() } label: {
-            Label("\(subtasks.count) agents", systemImage: "person.2")
-                .font(.footnote.weight(.medium))
-                .padding(.horizontal, 14)
-                .frame(minHeight: 44)
-                .contentShape(Capsule())
+            Label {
+                Text(subtasks.count == 1 ? "1 agent" : "\(subtasks.count) agents")
+            } icon: {
+                Image("robot")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+            }
+            .font(.footnote.weight(.medium))
+            .padding(.horizontal, 14)
+            .frame(minHeight: 44)
+            .contentShape(Capsule())
         }
         .foregroundStyle(showsTasks ? Color(uiColor: .systemBackground) : .primary)
         .buttonStyle(.plain)
         .glassEffect(.regular.tint(showsTasks ? .primary : .clear), in: .capsule)
         .accessibilityIdentifier("conversation-subtasks")
-        .accessibilityHint("View subtasks created from this conversation")
+        .accessibilityHint("View the subagents this conversation spawned")
         .popover(isPresented: $showsTasks, arrowEdge: .bottom) {
             ConversationSubtasksPopover(subtasks: subtasks) { subtask in
                 pendingSelection = subtask
@@ -75,9 +82,11 @@ private struct ConversationSubtasksPopover: View {
                                         Text(subtask.title)
                                             .font(.subheadline.weight(.medium))
                                             .multilineTextAlignment(.leading)
-                                        Text(subtask.agentName)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                        if subtask.agentName != subtask.title {
+                                            Text(subtask.agentName)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
                                     }
                                     Spacer(minLength: 0)
                                     Image(systemName: "chevron.right")
@@ -114,6 +123,8 @@ struct ConversationSubtaskSheet: View {
     let subtask: ConversationSubtask?
     @Environment(\.dismiss) private var dismiss
 
+    private var steps: [ConversationSubtask.Step] { subtask?.steps ?? [] }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -122,13 +133,16 @@ struct ConversationSubtaskSheet: View {
                         Text(subtask.title).font(.headline)
                         Label(subtask.status.label, systemImage: "circle.fill")
                             .foregroundStyle(subtask.status.color)
-                        Text(subtask.agentName).foregroundStyle(.secondary)
+                        if subtask.agentName != subtask.title {
+                            Text(subtask.agentName).foregroundStyle(.secondary)
+                        }
                         if let summary = subtask.summary { Text(summary).textSelection(.enabled) }
                         if let error = subtask.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
                         if let tool = subtask.lastToolName { Text("Latest tool: \(tool)") }
                         if let model = subtask.modelID { Text("Model: \(model)") }
                         if let tokens = subtask.totalTokens { Text("\(tokens) tokens") }
                         if let tools = subtask.toolUses { Text("\(tools) tool uses") }
+                        if steps.count > 1 { stepsList(steps) }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
@@ -150,6 +164,36 @@ struct ConversationSubtaskSheet: View {
         .accessibilityIdentifier("subtask-transcript")
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+
+    /// What the subagent ran through, oldest first. A single-step subagent has
+    /// nothing beyond what the header already shows.
+    private func stepsList(_ steps: [ConversationSubtask.Step]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Steps")
+                .font(.subheadline.weight(.semibold))
+            ForEach(steps) { step in
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(step.status.color)
+                        .frame(width: 8, height: 8)
+                        .padding(.top, 5)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(step.title)
+                        if let summary = step.summary {
+                            Text(summary).font(.footnote).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        if let error = step.error {
+                            Text(error).font(.footnote).foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 }
 

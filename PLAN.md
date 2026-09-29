@@ -140,6 +140,7 @@
 - Lody `packages/components/src/components/ai-gui/assistant-turn-render-blocks.ts`、`message-copy.ts` 的 `shouldCollapseAssistantMessageItem`、`view.tsx` 的 `WorkedGroupHeader` / `ActivityGroupHeader`，以及 `packages/components/src/lib/session-history-duration.ts`、`format-duration.ts`：Worked for 折叠规则、活动组统计和时长；`packages/shared/src/schema.ts` 的 history `timestamp` / `endedAt` / `permissionWaitMs` / `finished`。
 
 - Lody `packages/shared/src/schema.ts` 的 `normalizeFileDiff`、history `fileDiff`，`packages/shared/src/ai.ts` 的 `tool_call` / `DiffBlock`：会话文件摘要和可选文本证据。`packages/components/src/components/sessions/use-session-conversation-diff-data.ts` 与 `use-session-all-changes-diff-data.ts`：完整会话/Git 差异依赖机器文件 provider，不能用 history 摘要或 `SessionMeta.diffStats` 替代。
+- Lody `packages/acp-extension-codex/src/CodexToolCallMapper.ts` 的 `createSubAgentActivityUpdate` / `formatSubAgentActivityTitle` 与 `packages/shared/src/acp/claude-subagent-task.ts` 的 `parseLodyTaskMeta`：子代理活动经 `_meta.lody.task` 落库为 `subagent_task`，`taskId` 是活动 id、`actor` 是子代理名；`packages/shared/src/acp/history-apply.ts` 按 `taskId` 合并。
 
 ## 聊天键盘布局参考
 
@@ -225,6 +226,14 @@
 - 协议参考：Lody `packages/shared/src/ai.ts` 的 `SubagentTaskPayload`、`acp/history-apply.ts` 的任务合并、`acp/codex-collab-agent-task.ts` 的 Codex 生命周期转换，以及 `packages/components/src/components/ai-gui/subagent-task-panel.tsx`。`schema.ts` 明确将 `parentSessionId` 定义为 child tab。
 - 本轮验证：frozen lockfile 安装、164 项 JS 测试和 bundle 重建通过；141 项 Swift 测试通过，补充摘要/token/tool 字段断言后 8 项 ConversationChangesTests 再次通过。iPhone 17 浅色默认字号子代理 UI 用例通过，4 张截图检查通过。深色辅助大字号使用本轮先前通过的构建执行 test-without-building：子代理流程断言通过，但末轮文件变更卡片 isHittable 断言失败，整条用例不计通过。测试结束后的自动诊断长时间未完成，已中止诊断收尾；深色 4 张截图已核验：子代理胶囊/浮层/详情可读、草稿保留；父会话正文区域空白，与文件卡片断言失败吻合，该布局问题尚未修复。补充构建被同时进行的输入框修改阻断（ComposerMentionState 尚未被当前 Xcode 项目识别），未覆盖或回退该修改。真实账号的任务持续更新、后台恢复及网络恢复尚未实测。
 
+
+### 子代理按 subagent 归并（2026-09-29）
+
+- 问题：Codex 的子代理生命周期活动（`Start / Interact / Complete subagent <name>`）在 history 中各自是一条 `subagent_task`，`taskId` 是活动 id；此前按 taskId 逐条展示，一个子代理在胶囊与浮层里显示为 21 个 agents。
+- 投影改为按子代理归并：标题点出自身 actor 的活动（描述含 `subagent` 且以 actor 结尾，对应 Lody `CodexToolCallMapper.createSubAgentActivityUpdate`）以 actor 为身份，其余任务仍按 `taskId` 各自一行（Claude/Devin 与 collab 任务的身份本来就是稳定 id）。每个子代理保留 `steps`（活动顺序、状态、摘要/错误），整体状态取最后一条活动，摘要/用量等字段沿用「后到者覆盖、缺省保留」。胶囊计数即子代理数量，单数显示 `1 agent`。
+- UI：胶囊图标改用 MingCute `robot_cute_re` 资源（template 渲染），浮层每行显示子代理名称，名称与执行者相同时不再重复副标题；只读详情在摘要与用量下方列出 Steps，仅在多步时显示，单步任务不出现该区块。
+- 已知边界：payload 中没有子代理 thread id，同一会话内同名的多个子代理会合并为一行；`skipTranscript` 仍按 taskId 移除对应步骤，步骤清空后该子代理随之消失。
+- 本轮验证：frozen lockfile 安装、213 项 JS 测试与 bundle 重建通过；164 项 Swift 测试通过，1 项 fixture UI 测试（胶囊计数与图标、浮层、详情 Steps、草稿保留）通过并检查截图。同一用例在保留旧 App 容器的模拟器上会停在既有的正文空白／文件卡片 `isHittable` 断言，卸载 App 清除容器后同一设备通过，未归因于本次改动。真实账号下的活动持续更新、同名子代理与网络恢复尚未实测。
 
 ## 问答支持（2026-09-29）
 
