@@ -16,6 +16,12 @@
 - Provider 切换修订验证（2026-09-29）：frozen lockfile 安装、209 项 JS 测试（含 3 项新的 tab provider 用例）与 bundle 重建通过；164 项 KurageTests 通过（含新增 provider 切换与 retry 保留用例）。未验证：真实账号上 tab 切换 provider 的首轮生效、另一 Agent 的 baseline 取自最近会话的实际值、UI 浅色／深色与大字号回归、网络与后台恢复。
 - 选项加载性能修订（2026-09-29）：New Session／New Tab 的选项读取原先每次都新建仅内存临时副本，从云端冷启动同步整份 workspace metadata、模板会话完整文档和机器 Flock 后销毁，进入页面和切换 provider 都重复整套网络往返。现改为复用会话列表／详情页共享的 workspace 副本（meta 已同步、父会话文档已 live 同步、Flock 已被列表刷新打开），重复加载基本本地完成；写入路径（startSession）保持独立副本并在写入时重新验证模板与选项，陈旧选项最多被拒后提示刷新。取消语义保留：一次性读取在共享副本的执行段内注册认证作用域（按 operation ID 的别名 token 绑定本次 AbortSignal，队列内完成即释放），取消仍中止进行中的原生请求，后续操作不会继承绑定。bridge 测试更新为 213 项（共享副本复用、取消保留作用域、tab 转发不销毁共享副本），Swift 164 项含 StreamFetchHandler 取消用例全部通过；真实账号上首次冷缓存与弱网取消仍待实测。
 
+## Markdown 渲染（2026-09-29）
+
+- 会话正文仍用 `MarkdownView`。围栏代码块字号通过公开的 `.font(.system(.footnote, design: .monospaced), for: .codeBlock)` 调小，不改库。行内代码底色没有公开样式，上游在 `MarkdownViewRenderer` 和 `MarkdownTextConverter` 里写死 10% 背景。
+- 依赖改为 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/plain-inline-code`，钉在 `f7ba69da43c1eee1f5494d5857103d3cfe04bfd9`（基于上游 3.0.0 / `6f452b5`，只去掉这两处背景）。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
+- 未改围栏代码块的底色、圆角和描边。行内代码字号仍跟正文。真实会话里的行内代码和代码块字号尚未在模拟器核对。
+
 ## 当前状态
 
 - 已读／未读：列表接入 Lody `lastMessageAt` / `lastReadAt`，空闲未读会话显示蓝点，运行中保留 spinner，VoiceOver 同时读出运行与阅读状态。详情仅在前台可见、实时同步完成、未被图片／变更／子任务面板遮挡，且对应正文完成布局并实际到达底部时写回执；用户上滚时暂停，回到底部后恢复。搜索预加载不写回执。

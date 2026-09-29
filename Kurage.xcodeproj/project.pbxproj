@@ -376,7 +376,7 @@
 			mainGroup = 76D81568C25B69EFE26D8E9A;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */,
+				32DEDD68334E53E118DCE33A /* XCRemoteSwiftPackageReference "MarkdownView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1950DEAE703DD1786CADF75B /* Products */;
@@ -779,12 +779,12 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */ = {
+		32DEDD68334E53E118DCE33A /* XCRemoteSwiftPackageReference "MarkdownView" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/LiYanan2004/MarkdownView.git";
+			repositoryURL = "https://github.com/natsustan/MarkdownView.git";
 			requirement = {
-				kind = exactVersion;
-				version = 3.0.0;
+				kind = revision;
+				revision = f7ba69da43c1eee1f5494d5857103d3cfe04bfd9;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -792,7 +792,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		E19E548C83F201B3073B5E62 /* MarkdownView */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 3269C3451D15557B9E435362 /* XCRemoteSwiftPackageReference "MarkdownView" */;
+			package = 32DEDD68334E53E118DCE33A /* XCRemoteSwiftPackageReference "MarkdownView" */;
 			productName = MarkdownView;
 		};
 /* End XCSwiftPackageProductDependency section */

@@ -686,6 +686,7 @@ struct TurnRow: View {
             MarkdownView(text)
                 .tint(.primary)
                 .tint(Color(uiColor: .secondaryLabel), for: .inlineCodeBlock)
+                .font(.system(.footnote, design: .monospaced), for: .codeBlock)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

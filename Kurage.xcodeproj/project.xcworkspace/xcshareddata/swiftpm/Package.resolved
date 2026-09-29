@@ -1,5 +1,5 @@
 {
-  "originHash" : "b3a726b9098b263fbbc8d4b418e3234349735afd5f2079323d3fbb70c4d6113a",
+  "originHash" : "7f7bea2365da520b21ac2b87947469919190cfb1b0d22d9962287e3ed67e440a",
   "pins" : [
     {
       "identity" : "highlightr",
@@ -13,10 +13,9 @@
     {
       "identity" : "markdownview",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/LiYanan2004/MarkdownView.git",
+      "location" : "https://github.com/natsustan/MarkdownView.git",
       "state" : {
-        "revision" : "6f452b55635246224a3329362e4e11cd3d592a30",
-        "version" : "3.0.0"
+        "revision" : "f7ba69da43c1eee1f5494d5857103d3cfe04bfd9"
       }
     },
     {
