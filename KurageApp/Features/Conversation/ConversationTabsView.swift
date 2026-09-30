@@ -96,52 +96,45 @@ private struct SessionTabBar: View {
     let setClosed: (Bool, SessionSummary) -> Void
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal) {
-                    HStack(spacing: 10) {
-                        ForEach(openTabs) { tab in
-                            Button {
-                                select(tab.id)
-                            } label: {
-                                HStack(spacing: 6) {
-                                    if tab.activity == .running {
-                                        ProgressView().controlSize(.mini)
-                                    } else if tab.isUnread {
-                                        Circle().fill(.blue).frame(width: 6, height: 6)
-                                    }
-                                    Text(tab.id == rootID ? "Main" : tab.title)
-                                        .lineLimit(1)
-                                        .frame(maxWidth: 180)
-                                }
-                                .font(.subheadline)
-                                .padding(.horizontal, 12)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(openTabs) { tab in
+                        Button {
+                            select(tab.id)
+                        } label: {
+                            Text(tab.id == rootID ? "Main" : tab.title)
+                                .lineLimit(1)
+                                .frame(maxWidth: 180)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(activeID == tab.id ? Color.primary : Color.secondary)
+                                .padding(.horizontal, 16)
                                 .frame(minHeight: 44)
-                                .glassEffect(.regular.tint(activeID == tab.id ? Color.accentColor.opacity(0.18) : .clear)
-                                    .interactive(), in: .capsule)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(tab.id == rootID ? "Main tab" : tab.title)
-                            .accessibilityValue(tab.activity == .running ? "Running" : tab.isUnread ? "Unread" : "Read")
-                            .accessibilityAddTraits(activeID == tab.id ? .isSelected : [])
-                            .accessibilityIdentifier("session-tab-\(tab.id)")
-                            .id(tab.id)
-                            .contextMenu {
-                                if tab.id != rootID {
-                                    Button("Close tab", systemImage: "xmark") { setClosed(true, tab) }
-                                }
+                                .background(activeID == tab.id ? Color(uiColor: .secondarySystemBackground) : .clear,
+                                            in: .capsule)
+                                .contentShape(.capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab.id == rootID ? "Main tab" : tab.title)
+                        .accessibilityValue(tab.activity == .running ? "Running" : tab.isUnread ? "Unread" : "Read")
+                        .accessibilityAddTraits(activeID == tab.id ? .isSelected : [])
+                        .accessibilityIdentifier("session-tab-\(tab.id)")
+                        .id(tab.id)
+                        .contextMenu {
+                            if tab.id != rootID {
+                                Button("Close tab", systemImage: "xmark") { setClosed(true, tab) }
                             }
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 8)
                 }
-                .scrollIndicators(.hidden)
-                // Entering on a restored tab must show it: the active pill can
-                // sit outside the initial viewport once a session has many tabs.
-                .onAppear { proxy.scrollTo(activeID, anchor: .center) }
-                .onChange(of: activeID) { _, id in proxy.scrollTo(id, anchor: .center) }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
             }
+            .scrollIndicators(.hidden)
+            // Entering on a restored tab must show it: the active pill can
+            // sit outside the initial viewport once a session has many tabs.
+            .onAppear { proxy.scrollTo(activeID, anchor: .center) }
+            .onChange(of: activeID) { _, id in proxy.scrollTo(id, anchor: .center) }
         }
         .accessibilityIdentifier("session-tab-bar")
     }

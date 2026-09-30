@@ -6,8 +6,9 @@
 
 ## Session 多 tab（2026-09-29）
 
-- 交互修订：只有多个打开的会话时，详情标题下才显示横向玻璃药丸 tab 栏；单会话不常驻 Main 占位。顶部「···」左侧 chat 图标进入 New Tab 页面，复用 New Session 的底部输入框、附件、提及和 model/reasoning 菜单；机器和项目仅显示继承信息，不提供项目切换。Provider 与 New Session 一样可切换（2026-09-29 修订）：菜单列出父会话机器上的全部 Agent，选中的 provider 决定首轮 model/reasoning 与写入的 `agentConfigId`；沿用父 Agent 时保持继承父会话的精确首轮配置。创建成功返回同一详情并切到新 tab。
-- 各 tab 的文字、提及、附件草稿和下一轮配置在本次详情访问期间独立保留；切换重新定位到所选会话的最新消息，仅当前正文订阅保持活动。列表仍只显示根 Session。多个药丸使用系统 `GlassEffectContainer` / `glassEffect`，当前 tab 带轻微强调色。
+- 交互修订：只有多个打开的会话时，详情标题下才显示横向 tab 栏；单会话不常驻 Main 占位。顶部「···」左侧 chat 图标进入 New Tab 页面，复用 New Session 的底部输入框、附件、提及和 model/reasoning 菜单；机器和项目仅显示继承信息，不提供项目切换。Provider 与 New Session 一样可切换（2026-09-29 修订）：菜单列出父会话机器上的全部 Agent，选中的 provider 决定首轮 model/reasoning 与写入的 `agentConfigId`；沿用父 Agent 时保持继承父会话的精确首轮配置。创建成功返回同一详情并切到新 tab。
+- 各 tab 的文字、提及、附件草稿和下一轮配置在本次详情访问期间独立保留；切换重新定位到所选会话的最新消息，仅当前正文订阅保持活动。列表仍只显示根 Session。材质修订（2026-09-30）：选中 tab 使用不透明的系统浅灰胶囊底色和主色文字，未选中 tab 使用次要色文字；去掉玻璃效果、强调色染色及运行／未读视觉指示，状态仍保留在 VoiceOver 描述中。系统语义颜色适配深色模式，点击区域至少 44 pt。
+- tab 材质修订验证（2026-09-30）：Simulator 构建通过；现有 `SessionTabsFlowTests/testCreateSwitchCloseReopenKeepsIndependentDrafts` 在浅色标准字号、深色 accessibility-extra-large 下各通过一次。已核对选中胶囊、未选中文字、无状态点／spinner、键盘显示、长标题截断和返回详情后的选中项可见；模拟器恢复原浅色／large 设置。此轮使用 fixture，真实账号、持续输出、网络恢复和后台恢复未实测。
 - 新建沿用主会话的机器、Agent 和完整 project/worktree 上下文，第一轮默认取主会话有效配置，model/reasoning 选项来自同一 Agent 的机器能力；页面选择与写入验证共用投影，支持每模型的 reasoning 约束。不复制历史、不恢复主会话的 provider session。附件沿用现有上传链路；先同步新 Session 正文，再发布 `parentSessionId` / `latestUserMsgId` metadata；只有创建副本可创建 Streams 流。未确认请求在进程内保留会话／turn ID、原文、附件与首次配置，Retry 继续原请求；离开创建页取消调用者，阻止迟到导航。
 - 关闭与重开：长按子 tab 的 Close tab 写 `isTabClosed`，不归档、不删除、不停止；当前 tab 关闭后回主会话，仅剩一个 tab 时收起药丸栏。「··· → Closed tabs」可重新打开。其它端的新增、关闭和状态变化经现有 metadata room 更新；剔除归档、删除、`childSessionPlacement: side-panel` 及仅有 opened-by 关系的会话。关闭未发草稿在本次详情内保留，退出详情后释放。
 - 选中 tab 记忆（2026-09-29 修订）：上次停留的 tab 由 `AppModel` 按工作区／根会话记住，重新进入详情直接恢复该 tab（原先记在详情的 `@State`，每次从列表进入都回落到 Main），与桌面端 `?tab` 的 last-active 恢复一致。记忆只保留在进程内，退出登录清空；投影证明该 tab 已关闭或不存在时回落到根会话，关闭当前 tab 仍回主会话。药丸栏出现时滚动到当前 tab，恢复的 tab 不会停在可视范围外。fixture 的 tab 顺序改为创建顺序（原先按随机 id 排序，每次运行药丸次序不同），与 live 投影的 `createdAt` 排序一致。
