@@ -219,13 +219,6 @@ struct ConversationContent: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if isRunning {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("Agent running")
-                }
-            }
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }

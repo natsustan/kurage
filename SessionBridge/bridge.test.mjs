@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { LoroDoc } from 'loro-crdt';
 import { StreamsClient } from '@loro-dev/streams-client';
 import { createNativeFetch } from './native-fetch.mjs';
 import { readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
@@ -38,14 +39,16 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     }
     async openPersistedDoc(id) {
       this.loaded.add(id);
+      if (extras.openPersistedDoc) return extras.openPersistedDoc(id, this);
       return { doc: { getList: () => ({ toJSON: () => [] }), getMap: () => ({ toJSON: () => ({ modelId: this.model }) }) } };
     }
-    async unloadDoc(id) { this.loaded.delete(id); }
+    async unloadDoc(id) { this.loaded.delete(id); await extras.unloadDoc?.(id, this); }
     async getDocMeta() { return undefined; }
     async destroy() { this.destroyed = true; }
   }
   class Transport {
     constructor(options) { this.options = options; }
+    async forgetDoc(id) { await extras.forgetDoc?.(id, this); }
   }
   const window = { webkit: { messageHandlers: { streamFetch: { postMessage: extras.postMessage } } } };
   const context = vm.createContext({
@@ -79,6 +82,55 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('reopening an unloaded ephemeral transcript restores history instead of resuming past it', async () => {
+  const remote = new LoroDoc();
+  remote.getList('history').push({ id: 'turn', role: 'user', items: [{ type: 'text', text: 'Hello' }] });
+  remote.commit();
+  const snapshot = remote.export({ mode: 'snapshot' });
+  const documents = new Map();
+  let cursor;
+  const { window } = makeBridge(async options => {
+    if (options.docIds?.includes('session-chat') && cursor === undefined) {
+      documents.get('session-chat').import(snapshot);
+      cursor = 'end-of-history';
+    }
+    return { ok: true };
+  }, [{ docId: 'session-chat', meta: {} }], undefined, undefined, {
+    openPersistedDoc: id => {
+      if (!documents.has(id)) documents.set(id, new LoroDoc());
+      return { doc: documents.get(id) };
+    },
+    unloadDoc: id => { documents.delete(id); },
+    forgetDoc: id => {
+      assert.equal(id, 'session-chat');
+      assert.equal(documents.has(id), false);
+      cursor = undefined;
+    },
+  });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const conversation = JSON.parse(await window.kurageConversation('workspace', 'chat',
+      'https://gateway.lody.ai', `read-${attempt}`));
+    assert.deepEqual(conversation.turns.map(turn => turn.text), ['Hello']);
+    assert.equal(documents.size, 0);
+  }
+});
+
+test('one-shot reads preserve the replica and cursor of an active observation', async () => {
+  let forgets = 0;
+  const { window, repos } = makeBridge(undefined, [{ docId: 'session-chat', meta: {} }], undefined, undefined, {
+    observeConversation: async ({ repo }) => { await repo.openPersistedDoc('session-chat'); },
+    forgetDoc: () => { forgets++; },
+  });
+  await window.kurageObserveConversation('workspace', 'chat', 'https://gateway.lody.ai', 'observe');
+  await window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'read');
+  assert.equal(repos[0].loaded.has('session-chat'), true);
+  assert.equal(forgets, 0);
+  window.kurageStopConversation('observe');
+  await window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'after-stop');
+  assert.equal(repos[0].loaded.has('session-chat'), false);
+  assert.equal(forgets, 1);
+});
 
 test('mention sessions stay in the current project and include child sessions', async () => {
   const rows = [
