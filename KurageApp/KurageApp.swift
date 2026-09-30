@@ -18,7 +18,10 @@ struct KurageApp: App {
                     : ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
                 failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"),
                 skillRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh") ? .seconds(3) : nil,
-                failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"))
+                failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"),
+                authorizationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-browser")
+                    ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)
+                    : nil)
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

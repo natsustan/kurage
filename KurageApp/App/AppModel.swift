@@ -243,30 +243,38 @@ final class AppModel {
     }
 
     func connect(open: @escaping @MainActor (URL) -> Void) {
-        guard signInTask == nil else { return }
+        guard signInTask == nil, !isSignedIn else { return }
         authenticationGeneration += 1
+        let generation = authenticationGeneration
+        isSigningIn = true
+        currentStatusNote = nil
+        deviceAuthorization = nil
         signInTask = Task {
             defer {
-                signInTask = nil
-                isSigningIn = false
+                if generation == authenticationGeneration {
+                    signInTask = nil
+                    isSigningIn = false
+                }
             }
-            isSigningIn = true
-            currentStatusNote = nil
-            deviceAuthorization = nil
             do {
                 let authorization = try await client.beginDeviceAuthorization()
+                try Task.checkCancellation()
+                guard generation == authenticationGeneration else { return }
                 deviceAuthorization = authorization
                 if client.requiresExternalAuthorization {
                     open(authorization.verificationURL)
                 }
                 try await client.finishDeviceAuthorization(authorization)
+                try Task.checkCancellation()
+                guard generation == authenticationGeneration else { return }
                 account = client.account
                 deviceAuthorization = nil
                 await refreshWorkspaces()
                 await refreshSessions()
             } catch is CancellationError {
-                deviceAuthorization = nil
+                if generation == authenticationGeneration { deviceAuthorization = nil }
             } catch {
+                guard !Task.isCancelled, generation == authenticationGeneration else { return }
                 signOut()
                 deviceAuthorization = nil
                 currentStatusNote = StatusNote(tone: .failure, text: Self.signInMessage(for: error))
@@ -281,11 +289,21 @@ final class AppModel {
     }
 
     func cancelConnect() {
+        guard signInTask != nil, !isSignedIn else { return }
         signInTask?.cancel()
+        signInTask = nil
+        authenticationGeneration += 1
+        isSigningIn = false
+        deviceAuthorization = nil
+        currentStatusNote = nil
+        client.signOut()
     }
 
     func signOut() {
         signInTask?.cancel()
+        signInTask = nil
+        isSigningIn = false
+        deviceAuthorization = nil
         authenticationGeneration += 1
         cancelSessionRefresh()
         client.signOut()

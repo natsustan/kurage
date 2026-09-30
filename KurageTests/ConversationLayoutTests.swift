@@ -46,6 +46,51 @@ struct ConversationLayoutTests {
         #expect(table.frame.maxY > footer.frame.maxY + 20)
     }
 
+    @Test(arguments: [false, true], [CGFloat(290), CGFloat(520)])
+    func tallComposerKeepsItsBottomEdgeInACompactViewport(hasMessages: Bool, height: CGFloat) async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        controller.update(turns: hasMessages ? sampleTurns() : [], isLoading: false,
+                          scrollRequestID: 0, footer: TestFooter(height: height), onRefresh: {})
+        await settle(controller)
+        controller.view.frame.size.height = 430
+        await settle(controller)
+
+        let content = try #require(controller.view.subviews.first)
+        let footer = try #require(content.subviews.compactMap { $0 as? UIScrollView }
+            .first { !($0 is UITableView) })
+        let footerBottom = content.convert(footer.frame, to: controller.view).maxY
+        let safeBottom = controller.view.bounds.height - controller.view.safeAreaInsets.bottom
+        let availableHeight = safeBottom - content.frame.minY
+        #expect(abs(footer.frame.height - min(height, availableHeight)) < 1)
+        #expect(abs(footerBottom - safeBottom) < 1)
+        #expect(footer.isScrollEnabled == (height > availableHeight))
+        #expect(abs(footer.contentOffset.y - max(0, height - footer.bounds.height)) < 1)
+    }
+
+    @Test func composerBottomScrollWaitsForTheChildViewportResize() async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        controller.update(turns: sampleTurns(), isLoading: false, scrollRequestID: 0,
+                          footer: TestFooter(height: 520), onRefresh: {})
+        controller.view.frame.size.height = 457
+        await settle(controller)
+        let content = try #require(controller.view.subviews.first)
+        let footer = try #require(content.subviews.compactMap { $0 as? UIScrollView }
+            .first { !($0 is UITableView) })
+
+        // Keyboard tracking can lay out the parent before applying the new
+        // viewport bounds to the child scroll view.
+        let finalHeight = footer.bounds.height - 27
+        content.frame.size.height -= 27
+        controller.viewDidLayoutSubviews()
+        footer.frame.size.height = finalHeight
+        footer.setNeedsLayout()
+        footer.layoutIfNeeded()
+        #expect(abs(footer.bounds.height - finalHeight) < 1)
+        #expect(abs(footer.contentOffset.y - (520 - footer.bounds.height)) < 1)
+    }
+
     @Test func readingHistorySurvivesResizeAndOutputUntilSend() throws {
         let (controller, window) = try makeController()
         defer {
@@ -173,7 +218,9 @@ struct ConversationLayoutTests {
     }
 
     private struct TestFooter: View {
-        var body: some View { Color.clear.frame(height: 70) }
+        var height: CGFloat = 70
+
+        var body: some View { Color.clear.frame(height: height) }
     }
 
     private func sampleTurns() -> [ConversationTurn] {
