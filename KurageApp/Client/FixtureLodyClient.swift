@@ -25,6 +25,10 @@ final class FixtureLodyClient: LodyClient {
     private var failingConversationIDsOnce: Set<String>
     private let conversationDelay: Duration?
     private let sendDelay: Duration?
+    private var failTabStartOnce: Bool
+    private let skillRefreshDelay: Duration?
+    private var failSkillRefreshOnce: Bool
+    private var initialSkillSource: String?
     private var failSendOnce: Bool
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
@@ -36,7 +40,10 @@ final class FixtureLodyClient: LodyClient {
         conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
-        failSendOnce: Bool = false
+        failSendOnce: Bool = false,
+        failTabStartOnce: Bool = false,
+        skillRefreshDelay: Duration? = nil,
+        failSkillRefreshOnce: Bool = false
     ) {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
@@ -44,6 +51,9 @@ final class FixtureLodyClient: LodyClient {
         self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
         self.failSendOnce = failSendOnce
+        self.failTabStartOnce = failTabStartOnce
+        self.skillRefreshDelay = skillRefreshDelay
+        self.failSkillRefreshOnce = failSkillRefreshOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -76,6 +86,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func signOut() {
+        addedProjects = [:]
         attachmentImages.removeAll()
         pendingStarts = [:]
         pendingSends = [:]
@@ -91,7 +102,7 @@ final class FixtureLodyClient: LodyClient {
         try requireAccount()
         try requireWorkspace(workspaceID)
         return records
-            .filter { !archivedSessionIDs.contains($0.summary.id) && $0.parentSessionID == nil }
+            .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
             .map(\.summary)
     }
 
@@ -106,10 +117,19 @@ final class FixtureLodyClient: LodyClient {
             .sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
 
-    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
         try requireAccount()
         try requireWorkspace(workspaceID)
-        _ = try record(templateSessionID)
+        let template = try record(templateSessionID)
+        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? "")"
+        if initialSkillSource == nil { initialSkillSource = source }
+        if source != initialSkillSource {
+            if let skillRefreshDelay { try await Task.sleep(for: skillRefreshDelay) }
+            if failSkillRefreshOnce {
+                failSkillRefreshOnce = false
+                throw LodyClientError.unreachable
+            }
+        }
         return [
             MentionSkill(token: "review-and-simplify-changes", name: "Review and Simplify Changes",
                          description: "Review code quality and simplify changes",
@@ -140,15 +160,92 @@ final class FixtureLodyClient: LodyClient {
         )
     }
 
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        if let rootSessionID, rootSessionID != sessionID,
+           !archivedSessionIDs.contains(rootSessionID), records.contains(where: { $0.summary.id == rootSessionID }),
+           !records.contains(where: { $0.summary.id == sessionID && $0.summary.isTabClosed != true && !archivedSessionIDs.contains(sessionID) }) {
+            let update = ConversationUpdate(conversation: Conversation(sessionID: sessionID, turns: [], permission: nil),
+                activity: .idle, syncState: .connecting, sessionTabs: fixtureTabs(sessionID: rootSessionID))
+            return AsyncThrowingStream { continuation in
+                continuation.yield(update)
+                continuation.finish()
+            }
+        }
+        return try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
         let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
                                         runConfig: try record(sessionID).runConfig,
                                         contextWindowUsage: try record(sessionID).contextWindowUsage,
-                                        lastMessageAt: try record(sessionID).summary.lastMessageAt)
+                                        lastMessageAt: try record(sessionID).summary.lastMessageAt,
+                                        sessionTabs: fixtureTabs(sessionID: sessionID))
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
             continuation.finish()
+        }
+    }
+
+    var supportsSessionTabs: Bool { true }
+
+    /// Applies requested choices the way the service does: model and reasoning
+    /// only, and only when they match what the options offered.
+    private func appliedRunConfig(_ options: NewSessionOptions, selections: [RunConfigChoice],
+                                  mismatch: LodyClientError = .sessionCreationRejected) throws -> NewSessionRunConfig {
+        var config = options.runConfig ?? NewSessionRunConfig()
+        for choice in selections {
+            if choice.configOptionID == config.model?.configOptionID { config.selectModel(choice.value) }
+            else { config.selectReasoning(choice.value) }
+        }
+        guard selections.isEmpty || config.selections == selections else { throw mismatch }
+        return config
+    }
+
+    private func fixtureTabs(sessionID: String) -> [SessionSummary] {
+        let rootID = records.first { $0.summary.id == sessionID }?.summary.parentSessionID ?? sessionID
+        // Creation order, like the live projection's `createdAt` sort. Tab ids are
+        // random, so sorting by them would shuffle the bar between runs.
+        let tabs = records.filter { ($0.summary.id == rootID || $0.summary.parentSessionID == rootID) &&
+            !archivedSessionIDs.contains($0.summary.id) }
+            .map(\.summary)
+        return tabs.filter { $0.id == rootID } + tabs.filter { $0.id != rootID }
+    }
+
+    func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
+        try Task.checkCancellation()
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        let parent = try record(parentSessionID)
+        guard parent.summary.parentSessionID == nil, !archivedSessionIDs.contains(parentSessionID) else {
+            throw LodyClientError.sessionMissing
+        }
+        if let existing = records.first(where: { $0.summary.id == request.sessionID }) {
+            guard existing.summary.parentSessionID == parentSessionID,
+                  existing.turns.first?.id == request.turnID, existing.turns.first?.text == request.text else {
+                throw LodyClientError.sessionCreationRejected
+            }
+            return
+        }
+        let options = try await newSessionOptions(templateSessionID: parentSessionID,
+                                                  agentConfigID: request.agentConfigID,
+                                                  isTab: true, workspaceID: workspaceID)
+        let config = try appliedRunConfig(options, selections: request.selections)
+        let summary = SessionSummary(id: request.sessionID,
+                                 title: String((request.text.isEmpty ? request.attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
+                                 agentName: options.agentConfigID, activity: .idle, preview: request.text,
+                                 projectID: parent.summary.projectID, projectName: parent.summary.projectName,
+                                 machineName: parent.summary.machineName, parentSessionID: parentSessionID)
+        records.append(SessionRecord(summary: summary,
+            turns: [ConversationTurn(id: request.turnID, author: .user, text: request.text,
+                                     parts: attachmentParts(request.attachments, text: request.text))],
+            runConfig: SessionRunConfig(model: config.selectedModel.map { .init(value: $0.value, label: $0.label) },
+                                        reasoning: config.selectedReasoning, editable: nil)))
+        if failTabStartOnce {
+            failTabStartOnce = false
+            throw LodyClientError.deliveryUnconfirmed
         }
     }
 
@@ -175,14 +272,14 @@ final class FixtureLodyClient: LodyClient {
         }
         let effectiveTurnID = pending?.message.turnID ?? turnID
         let effectiveRunConfig = if let pending { pending.runConfig } else { runConfig }
+        if let sendDelay { try await Task.sleep(for: sendDelay) }
+        try requireAccount()
+        try requireWorkspace(workspaceID)
         if failSendOnce {
             failSendOnce = false
             pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID, attachments: attachments), effectiveRunConfig)
             throw LodyClientError.deliveryUnconfirmed
         }
-        if let sendDelay { try await Task.sleep(for: sendDelay) }
-        try requireAccount()
-        try requireWorkspace(workspaceID)
 
         try update(sessionID) { record in
             if let runConfig = effectiveRunConfig {
@@ -204,20 +301,67 @@ final class FixtureLodyClient: LodyClient {
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
+        projectID: String? = nil,
+        isTab: Bool = false,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         try requireAccount()
         try requireWorkspace(workspaceID)
         let template = try record(templateSessionID)
-        guard !archivedSessionIDs.contains(templateSessionID), template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
+        if isTab {
+            // A tab starts from a root session of this workspace.
+            guard template.summary.parentSessionID == nil, !archivedSessionIDs.contains(templateSessionID) else {
+                throw LodyClientError.sessionMissing
+            }
+        } else {
+            guard !archivedSessionIDs.contains(templateSessionID),
+                  template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
+        }
         let providers = [
             SessionRunConfig.Value(value: "claude", label: "Claude Code"),
             SessionRunConfig.Value(value: "codex", label: "Codex"),
         ]
         let chosen = agentConfigID ?? template.summary.agentName
         guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
-        return NewSessionOptions(machineName: "spike@mac", agentConfigID: chosen, providers: providers,
+        return NewSessionOptions(machineName: isTab ? template.summary.machineName ?? "Machine" : "spike@mac",
+                                 agentConfigID: chosen, providers: providers,
                                  runConfig: chosen == "codex" ? .fixture : .fixtureModelOnly)
+    }
+
+    private var addedProjects: [String: SessionProject] = [:]
+
+    func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
+                         workspaceID: String) async throws -> SessionProjectResult {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        _ = try record(templateSessionID)
+        switch action {
+        case .catalog:
+            var seen = Set<String>()
+            let projects = records.compactMap { record -> SessionProject? in
+                guard !archivedSessionIDs.contains(record.summary.id), record.summary.parentSessionID == nil,
+                      let id = record.summary.projectID, id.hasPrefix("local:"), seen.insert(id).inserted else { return nil }
+                return SessionProject(id: id, name: record.summary.projectName ?? "Project", rootPath: "",
+                                      templateSessionID: record.summary.id)
+            }
+            return SessionProjectResult(projects: projects + Array(addedProjects.values))
+        case .browse:
+            let current = path ?? "/Users/demo"
+            let entries: [MachineDirectory.Entry] = current == "/Users/demo"
+                ? [.init(name: "projects", absolutePath: "/Users/demo/projects"), .init(name: "Documents", absolutePath: "/Users/demo/Documents")]
+                : current == "/Users/demo/projects" ? [.init(name: "Current folder", absolutePath: current),
+                   .init(name: "New App", absolutePath: "/Users/demo/projects/New App"),
+                   .init(name: "New App alias", absolutePath: "/Users/demo/projects/New App")] : []
+            return SessionProjectResult(directory: MachineDirectory(path: current,
+                parentPath: current == "/" ? nil : (current as NSString).deletingLastPathComponent,
+                entries: entries, truncated: false, nextCursor: nil))
+        case .select:
+            guard let path, path.hasPrefix("/") else { throw LodyClientError.notConnected }
+            let project = SessionProject(id: "local:machine-1:folder-\(path)", name: (path as NSString).lastPathComponent,
+                                         rootPath: path, templateSessionID: templateSessionID)
+            addedProjects[project.id] = project
+            return SessionProjectResult(project: project)
+        }
     }
 
     func startSession(
@@ -240,24 +384,16 @@ final class FixtureLodyClient: LodyClient {
             templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
         )
         let template = try record(templateSessionID)
-        guard template.summary.projectID == projectID else { throw LodyClientError.sessionMissing }
+        guard template.summary.projectID == projectID || addedProjects[projectID]?.templateSessionID == templateSessionID else { throw LodyClientError.sessionMissing }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
-        var runConfig = options.runConfig ?? NewSessionRunConfig()
-        for choice in selections {
-            if choice.configOptionID == runConfig.model?.configOptionID {
-                runConfig.selectModel(choice.value)
-            } else {
-                runConfig.selectReasoning(choice.value)
-            }
-        }
-        guard runConfig.selections == selections else { throw LodyClientError.notConnected }
+        let runConfig = try appliedRunConfig(options, selections: selections, mismatch: LodyClientError.notConnected)
         let id = "session-new-\(makeTurnID())"
         let created = SessionRecord(
             summary: SessionSummary(
                 id: id, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: options.agentConfigID,
                 activity: .idle, preview: trimmed,
-                projectID: projectID, projectName: template.summary.projectName,
+                projectID: projectID, projectName: addedProjects[projectID]?.name ?? template.summary.projectName,
                 machineName: template.summary.machineName
             ),
             turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
@@ -354,6 +490,9 @@ final class FixtureLodyClient: LodyClient {
         guard let index = records.firstIndex(where: { $0.summary.id == sessionID }),
               !archivedSessionIDs.contains(sessionID) else { throw LodyClientError.sessionMissing }
         switch change {
+        case .tabClosed(let value):
+            guard records[index].summary.parentSessionID != nil else { throw LodyClientError.sessionMissing }
+            records[index].summary.isTabClosed = value
         case .pin(let value): records[index].summary.isPinned = value
         case .rename(let title): records[index].summary.title = title
         case .read(let timestamp):
@@ -491,7 +630,6 @@ struct SessionRecord: Equatable, Sendable {
     var contextWindowUsage: ContextWindowUsage? = nil
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var canRestore: Bool = true
-    var parentSessionID: String? = nil
     var subtasks: [ConversationSubtask] = []
     var questions: [ConversationQuestionRequest] = []
 }
@@ -726,7 +864,13 @@ extension SessionRecord {
         if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {
             records[index].subtasks = [
                 ConversationSubtask(id: "review-reuse", title: "Review code reuse", agentName: "Codex agent",
-                                    status: .completed, summary: "Reuse review finished.", totalTokens: 1200, toolUses: 3),
+                                    status: .completed, summary: "Reuse review finished.",
+                                    totalTokens: 1200, toolUses: 3, steps: [
+                    .init(id: "reuse-start", title: "Start subagent reuse_review", status: .completed),
+                    .init(id: "reuse-interact", title: "Interact with subagent reuse_review", status: .completed,
+                          summary: "Checked shared helpers."),
+                    .init(id: "reuse-complete", title: "Complete subagent reuse_review", status: .completed),
+                ]),
                 ConversationSubtask(id: "review-quality", title: "Review correctness", agentName: "Codex agent",
                                     status: .running, summary: "Checking state isolation.", lastToolName: "Read"),
             ]

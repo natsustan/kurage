@@ -193,6 +193,10 @@ struct ComposerAttachmentStrip: View {
     let pending: [PendingComposerAttachment]
     let disabled: Bool
 
+    private var containsImage: Bool {
+        attachments.contains(where: \.isImage) || pending.contains(where: \.isImage)
+    }
+
     var body: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
@@ -210,6 +214,7 @@ struct ComposerAttachmentStrip: View {
             .padding(.horizontal, 2)
             .padding(.top, 2)
         }
+        .frame(height: containsImage ? 122 : nil)
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("composer-attachments")
     }

@@ -153,6 +153,44 @@ struct FixtureLodyClientTests {
         #expect(update.contextWindowUsage?.usedFraction == 217.0 / 258.0)
     }
 
+    @Test func machineDirectoryPreservesDistinctRowsForCanonicalPathAliases() throws {
+        let json = #"{"path":"/projects","parentPath":"/","truncated":false,"entries":[{"name":"app","absolutePath":"/projects/app","isSymlink":false},{"name":"app-link","absolutePath":"/projects/app","isSymlink":true},{"name":"here","absolutePath":"/projects","isSymlink":true}]}"#
+        let directory = try JSONDecoder().decode(MachineDirectory.self, from: Data(json.utf8))
+        #expect(directory.entries[0].absolutePath == directory.entries[1].absolutePath)
+        #expect(Set(directory.entries.map(\.id)).count == 3)
+        #expect(directory.entries[2].absolutePath == directory.path)
+        let reloaded = try JSONDecoder().decode(MachineDirectory.self, from: Data(json.utf8))
+        #expect(directory.entries.map(\.id) == reloaded.entries.map(\.id))
+    }
+
+    @Test func newSessionCanSelectUnusedMachineFolderAndKeepsTargetDuringRetry() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let template = try #require(model.newSessionTemplate(projectID: "local:machine-1:prism"))
+        let directory = try #require(try await model.sessionProjects(templateSessionID: template.id, action: .browse).directory)
+        #expect(directory.entries.map(\.name) == ["projects", "Documents"])
+        let project = try #require(try await model.sessionProjects(templateSessionID: template.id,
+            action: .select, path: "/Users/demo/projects/New App").project)
+        let options = try await model.newSessionOptions(templateSessionID: template.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.startSession("Create in selected folder", selections: options.runConfig?.selections ?? [],
+                projectID: project.id, templateSessionID: template.id)
+        }
+        let pending = try #require(model.pendingSessionStarts.first)
+        #expect(pending.projectID == project.id)
+        let id = try await model.retrySessionStart(pending)
+        #expect(id == pending.id)
+        let refreshed = try await client.sessions(workspaceID: "ws-demo")
+        #expect(refreshed.first { $0.id == id }?.projectID == project.id)
+        #expect(refreshed.first { $0.id == id }?.projectName == "New App")
+        #expect(model.pendingSessionStarts.isEmpty)
+        model.signOut()
+        await #expect(throws: LodyClientError.notConnected) {
+            try await model.sessionProjects(templateSessionID: template.id, action: .browse)
+        }
+    }
+
     @Test func newSessionStartsInTheTemplateProjectWithChosenConfig() async throws {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()

@@ -1,9 +1,21 @@
 import Foundation
 
 enum SessionMetadataChange: Sendable {
+    case tabClosed(Bool)
     case pin(Bool)
     case rename(String)
     case read(Double)
+}
+
+struct SessionTabStart: Equatable, Sendable {
+    var sessionID = UUID().uuidString.lowercased()
+    var turnID = UUID().uuidString.lowercased()
+    var timestamp = ISO8601DateFormatter().string(from: Date())
+    let text: String
+    var attachments: [ComposerAttachment] = []
+    var selections: [RunConfigChoice] = []
+    /// Another agent on the parent's machine; `nil` keeps the parent's.
+    var agentConfigID: String?
 }
 
 /// A process-local creation that must resume its existing session and first turn.
@@ -48,6 +60,9 @@ protocol LodyClient: AnyObject {
     /// Whether a local project can start a session from its most recent one.
     var supportsSessionCreation: Bool { get }
 
+    var supportsSessionTabs: Bool { get }
+    func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws
+
     func beginDeviceAuthorization() async throws -> DeviceAuthorization
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws
     func restoreSession() async -> Account?
@@ -55,11 +70,12 @@ protocol LodyClient: AnyObject {
     func workspaces() async throws -> [WorkspaceSummary]
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary]
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession]
-    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill]
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
     /// The turn ID reserved for an in-flight or unconfirmed text send.
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     /// Returns the choice used to author the turn, including on retries.
     /// `nil` means the turn inherited its configuration without an explicit choice.
     /// `runConfig` applies only when this call creates the turn.
@@ -72,12 +88,18 @@ protocol LodyClient: AnyObject {
         workspaceID: WorkspaceSummary.ID
     ) async throws -> RunConfigChoice?
     func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws
-    /// `templateSessionID` is the project's most recent root session. The new
-    /// session reuses its machine and project and works in the project directory.
+    /// `templateSessionID` supplies the machine and default agent. `projectID`
+    /// may select another registered local project on that same machine.
     /// `agentConfigID` picks another agent on that machine; `nil` keeps the template's.
+    func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
+                         workspaceID: String) async throws -> SessionProjectResult
+    /// `isTab` reads the options a tab inherits: the template is the parent
+    /// session and only that agent's run configuration stays editable.
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
+        projectID: String?,
+        isTab: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions
     func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
@@ -114,8 +136,18 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    var supportsSessionTabs: Bool { false }
+
+    func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
+        throw LodyClientError.notConnected
+    }
+
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] { [] }
-    func mentionSkills(templateSessionID: String, agentConfigID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] { [] }
+    func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] { [] }
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? { nil }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -159,9 +191,16 @@ extension LodyClient {
     }
     var supportsSessionCreation: Bool { false }
 
+    func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
+                         workspaceID: String) async throws -> SessionProjectResult {
+        throw LodyClientError.notConnected
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
+        projectID: String?,
+        isTab: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected

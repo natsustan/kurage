@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { LoroDoc } from 'loro-crdt';
-import { conversationPatch, observeConversation, readSyncedConversation } from './conversation-observer.mjs';
+import { conversationPatch, observeConversation, readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 
-function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}) {
+function harness({ waitFor, meta = { status: { type: 'running' } }, flock, rootSessionID } = {}) {
   const doc = new LoroDoc();
   const timers = new Map();
   let nextTimer = 0;
@@ -31,7 +31,7 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
   };
   const updates = [];
   const controller = new AbortController();
-  const start = () => observeConversation({ repo, workspaceID: 'ws', sessionID: 'abc', signal: controller.signal,
+  const start = () => observeConversation({ repo, workspaceID: 'ws', sessionID: 'abc', rootSessionID, signal: controller.signal,
     emit: async update => { updates.push(update); },
     schedule: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
     unschedule: id => timers.delete(id),
@@ -43,8 +43,69 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock } = {}
     await new Promise(setImmediate);
   };
   return { doc, updates, controller, start, flush, rooms, repo,
-    metadataChanged: () => metaListener?.(), releases: () => releases };
+    metadataChanged: (docId = 'session-abc', patch = {}) =>
+      metaListener?.({ kind: 'doc-metadata', docId, patch, by: 'sync' }),
+    releases: () => releases };
 }
+
+for (const state of ['missing', 'deleted', 'archived', 'closed']) {
+  test(`a remembered ${state} tab publishes its root before opening the transcript`, async () => {
+    const h = harness({ rootSessionID: 'root' });
+    h.repo.getDocMeta = async () => state === 'missing' ? undefined : {
+      deleted: state === 'deleted', meta: { parentSessionId: 'root',
+        childSessionPlacement: 'tab', isArchived: state === 'archived', isTabClosed: state === 'closed' },
+    };
+    h.repo.listDoc = async () => [{ docId: 'session-root', meta: { title: 'Main' } },
+      ...(state === 'closed' ? [{ docId: 'session-abc', meta: { parentSessionId: 'root',
+        childSessionPlacement: 'tab', isTabClosed: true } }] : [])];
+    h.repo.openPersistedDoc = async () => assert.fail('Unavailable tab must not open a transcript');
+    assert.equal(await h.start(), false);
+    assert.deepEqual(h.updates[0].sessionTabs.map(tab => tab.id), state === 'closed' ? ['root', 'abc'] : ['root']);
+    assert.equal(h.updates[0].error, undefined);
+    assert.equal(h.rooms.length, 0);
+  });
+}
+
+test('removing an observed tab publishes the root and releases both live rooms', async () => {
+  const meta = { parentSessionId: 'root', childSessionPlacement: 'tab' };
+  const h = harness({ rootSessionID: 'root', meta });
+  const root = { docId: 'session-root', meta: { title: 'Main' } };
+  h.repo.listDoc = async () => [root, { docId: 'session-abc', meta }];
+  await h.start();
+  h.repo.getDocMeta = async () => undefined;
+  h.repo.listDoc = async () => [root];
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['root']);
+  assert.equal(h.updates.at(-1).error, undefined);
+  assert.equal(h.releases(), 2);
+});
+
+test('deleting a tab during its history pull still falls back without a sync error', async () => {
+  const h = harness({ rootSessionID: 'root', meta: { parentSessionId: 'root', lastMessageAt: 100 } });
+  h.repo.listDoc = async () => [{ docId: 'session-root', meta: {} }];
+  h.repo.sync = async () => {
+    h.repo.getDocMeta = async () => ({ deleted: true, meta: { parentSessionId: 'root' } });
+    return { ok: true };
+  };
+  await h.start();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['root']);
+  assert.equal(h.updates.at(-1).error, undefined);
+  assert.equal(h.releases(), 2);
+});
+
+test('a stale remembered tab refreshes membership if its document cannot open', async () => {
+  const h = harness({ rootSessionID: 'root', meta: { parentSessionId: 'root' } });
+  h.repo.openPersistedDoc = async () => { throw new Error('Document missing'); };
+  h.repo.sync = async options => {
+    assert.equal(options.scope, 'meta');
+    h.repo.getDocMeta = async () => undefined;
+    return { ok: true };
+  };
+  h.repo.listDoc = async () => [{ docId: 'session-root', meta: {} }];
+  assert.equal(await h.start(), false);
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['root']);
+});
 
 test('cached history acknowledges a stable synced marker without another content change', async () => {
   const h = harness({ meta: { status: { type: 'idle' }, lastMessageAt: 200 } });
@@ -61,6 +122,20 @@ test('cached history acknowledges a stable synced marker without another content
   h.doc.commit();
   await h.flush();
   assert.equal(h.updates.at(-1).lastMessageAt, 200);
+  h.controller.abort();
+});
+
+test('warm conversation evidence rejects an advanced marker, changed body or another workspace', async () => {
+  const meta = { lastMessageAt: 200 };
+  const h = harness({ meta });
+  await h.start();
+  assert.notEqual(syncedConversationVersion(h.repo, 'ws', 'abc', h.doc, { meta }), undefined);
+  assert.equal(syncedConversationVersion(h.repo, 'other', 'abc', h.doc, { meta }), undefined);
+  assert.equal(syncedConversationVersion(h.repo, 'ws', 'abc', h.doc, { meta: { lastMessageAt: 300 } }), undefined);
+  assert.equal(syncedConversationVersion(h.repo, 'ws', 'abc', h.doc, { meta: {} }), undefined);
+  h.doc.getMap('acpRuntimeConfig').set('modelId', 'new-model');
+  h.doc.commit();
+  assert.equal(syncedConversationVersion(h.repo, 'ws', 'abc', h.doc, { meta }), undefined);
   h.controller.abort();
 });
 
@@ -390,9 +465,10 @@ test('file-only history updates replace summaries and removal clears them while 
   h.controller.abort();
 });
 
-test('task history updates replace and clear tasks without scanning child tabs', async () => {
+test('task history updates stay independent from session tabs', async () => {
   const h = harness();
-  h.repo.listDoc = async () => { throw new Error('Must not scan child tabs'); };
+  h.repo.listDoc = async () => [{ docId: 'session-abc', meta: {} },
+    { docId: 'session-child', meta: { parentSessionId: 'abc', title: 'A separate tab' } }];
   await h.start();
   assert.deepEqual(h.updates[0].subtasks, []);
   const history = h.doc.getList('history');
@@ -682,4 +758,39 @@ test('patches publish timing changes and removal without text changes', () => {
   const after = { ...before, turns: [{ ...before.turns[0], timing: { startedAtMs: 1000, permissionWaitMs: 5000 } }] };
   assert.equal(conversationPatch(before, after).changed.length, 1);
   assert.equal(conversationPatch(after, { ...after, turns: [{ id: 'a', author: 'agent', text: '' }] }).changed.length, 1);
+});
+
+
+test('metadata changes update the tab group while history changes do not rescan it', async () => {
+  const h = harness();
+  const rows = [{ docId: 'session-abc', meta: { title: 'Main' } }];
+  let scans = 0;
+  h.repo.listDoc = async () => { scans++; return rows; };
+  await h.start();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc']);
+  h.doc.getList('history').push({ id: 'u', role: 'user', items: [{ type: 'text', text: 'Hello' }] });
+  h.doc.commit();
+  await h.flush();
+  assert.equal(scans, 1);
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc']);
+  rows.push({ docId: 'session-tab', meta: { parentSessionId: 'abc', status: { type: 'running' } } });
+  h.metadataChanged();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).sessionTabs.map(tab => tab.id), ['abc', 'tab']);
+  assert.equal(h.updates.at(-1).sessionTabs[1].activity, 'running');
+  rows[1].meta.isTabClosed = true;
+  h.metadataChanged();
+  await h.flush();
+  assert.equal(h.updates.at(-1).sessionTabs[1].isTabClosed, true);
+  // Status churn on the observed session's own row stays visible; churn on an
+  // unrelated session in the same workspace must not republish this one.
+  const published = h.updates.length;
+  h.metadataChanged('session-other', { status: { type: 'running' } });
+  await h.flush();
+  assert.equal(h.updates.length, published);
+  // A tab this session has not seen yet can still announce itself.
+  h.metadataChanged('session-appearing', { parentSessionId: 'abc' });
+  await h.flush();
+  assert.equal(h.updates.length, published + 1);
+  h.controller.abort();
 });

@@ -1,5 +1,6 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
 import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn } from './run-config.mjs';
+import { isSessionTab } from './session-tabs.mjs';
 
 export function synced(report) {
   return report.outcome === 'synced';
@@ -32,7 +33,7 @@ export function appendUserTurn(history, { turnID, userID, text, timestamp, confi
   for (const [key, value] of Object.entries(config)) inputConfig.set(key, value);
 }
 
-const canonical = value => JSON.stringify(value, (_key, item) =>
+export const canonical = value => JSON.stringify(value, (_key, item) =>
   item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
 
@@ -62,8 +63,9 @@ function competingActivation(meta, entries, turnID) {
 // `runConfig` changes one model or reasoning value, and only for a new turn.
 export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = []) {
   const docID = `session-${sessionID}`;
-  const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
-  if (!row || row.meta.isArchived || row.meta.parentSessionId) {
+  const rows = await repo.listDoc();
+  const row = rows.find(entry => entry.docId === docID && !entry.deleted);
+  if (!row || row.meta.isArchived || (row.meta.parentSessionId && !isSessionTab(row, rows))) {
     throw new Error('Session is unavailable in this workspace');
   }
   const { cliType, agentType, status } = row.meta;

@@ -4,7 +4,7 @@ import skillDirs from './skill-dirs.json' with { type: 'json' };
 // Lody's machine control requests travel through short-lived JSON Streams.
 // Keep the response stream private to this request, including when a refresh
 // is cancelled, so replies cannot leak into another workspace or account.
-async function control(repoAccess, workspaceID, machineID, request, signal) {
+export async function control(repoAccess, workspaceID, machineID, request, signal) {
   const responseID = `${workspaceID}:rpc:res:${crypto.randomUUID()}`;
   const requestID = crypto.randomUUID();
   const stream = id => new StreamsClient({

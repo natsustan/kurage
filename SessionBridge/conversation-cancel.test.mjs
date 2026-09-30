@@ -56,3 +56,13 @@ test('unconfirmed metadata sync is not reported as requested', async () => {
   await assert.rejects(cancelSession(repo, 'chat'), /cancellation sync failed/);
   assert.equal(meta.lastCanceledTurn, 'active');
 });
+
+test('tab cancellation targets its own assistant turn', async () => {
+  const { doc, meta, repo } = fixture();
+  meta.parentSessionId = 'root';
+  doc.getList('history').push({ id: 'tab-active', role: 'assistant', finished: false, items: [] });
+  doc.commit();
+  assert.equal(await cancelSession(repo, 'chat'), 'requested');
+  assert.equal(meta.lastCanceledTurn, 'tab-active');
+  assert.equal(meta.parentSessionId, 'root');
+});

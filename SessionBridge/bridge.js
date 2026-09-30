@@ -1,3 +1,4 @@
+import { sessionProjects } from './session-projects.mjs';
 import { respondQuestion } from './conversation-questions.mjs';
 import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
@@ -7,7 +8,7 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
-import { observeConversation, readSyncedConversation } from './conversation-observer.mjs';
+import { observeConversation, readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
@@ -34,7 +35,8 @@ let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
 
 // Only a replica that authors a new session may create its document stream.
-async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams = false, operationID, signal } = {}) {
+async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
+  { createStreams = false, operationID, signal } = {}) {
   const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
   try {
     const transport = new StreamsTransportAdapter({
@@ -47,6 +49,7 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL, { createStreams 
         const access = await window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
         });
+        signal?.throwIfAborted();
         if (signal) nativeFetch.bindSignal(access.token, signal);
         return access.token;
       },
@@ -67,6 +70,27 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
+function createWorkspaceState(rawRepo, workspaceID, gatewayBaseURL) {
+  const state = { workspaceID, gatewayBaseURL, metaReady: false, documents: new Map() };
+  const methods = {
+    openPersistedDoc: async id => {
+      const handle = await rawRepo.openPersistedDoc(id);
+      state.documents.set(id, handle);
+      return handle;
+    },
+    unloadDoc: async id => {
+      await rawRepo.unloadDoc(id);
+      state.documents.delete(id);
+    },
+  };
+  state.repo = new Proxy(rawRepo, { get: (target, property) => {
+    if (Object.hasOwn(methods, property)) return methods[property];
+    const value = Reflect.get(target, property, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  return state;
+}
+
 function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal) {
   // The session list has already synced metadata. Keep its in-memory repo so
   // opening a conversation needs only the session document sync.
@@ -80,8 +104,7 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
     }
     signal?.throwIfAborted();
     if (!state) {
-      const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-      state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
+      state = createWorkspaceState(await createWorkspaceRepo(workspaceID, gatewayBaseURL), workspaceID, gatewayBaseURL);
       cachedWorkspace = state;
     }
     if (refreshMeta || !state.metaReady) {
@@ -91,6 +114,94 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
     }
     signal?.throwIfAborted();
     return work(state.repo);
+  });
+  workspaceOperation = operation.catch(() => {});
+  return operation;
+}
+
+function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, controller, refreshMeta = false) {
+  const operation = workspaceOperation.then(async () => {
+    const signal = controller.signal;
+    signal.throwIfAborted();
+    const state = cachedWorkspace;
+    const shared = !refreshMeta && state?.metaReady && state.workspaceID === workspaceID &&
+      state.gatewayBaseURL === gatewayBaseURL ? state : undefined;
+    let isolated;
+    const coldDocuments = new Set();
+    const coldFlockDocuments = new Set();
+    const sharedDocuments = new Set();
+    const borrowed = new Map();
+    let reuseLive = true;
+    const isObserved = sessionID => [...observations.values()].some(observation => observation.ready &&
+      observation.workspaceID === workspaceID && observation.sessionID === sessionID && !observation.controller.signal.aborted);
+    const confirmedVersion = async (id, handle) => syncedConversationVersion(shared.repo, workspaceID,
+      id.slice('session-'.length), handle.doc, await shared.repo.getDocMeta(id));
+    const getIsolatedRepo = async () => isolated ??= await createWorkspaceRepo(workspaceID, gatewayBaseURL, { operationID, signal });
+    // Reuse a live transcript only while its confirmed history matches metadata.
+    // Other resources sync separately: cancelling a one-shot Streams sync cannot
+    // safely cancel a request also owned by a live room on the shared replica.
+    const reader = {
+      listDoc: async () => (shared?.repo ?? await getIsolatedRepo()).listDoc(),
+      getDocMeta: async id => (shared?.repo ?? await getIsolatedRepo()).getDocMeta(id),
+      openPersistedDoc: async id => {
+        const handle = shared?.documents.get(id);
+        if (handle) {
+          sharedDocuments.add(id);
+          const sessionID = id.slice('session-'.length);
+          if (reuseLive && isObserved(sessionID)) {
+            const version = await confirmedVersion(id, handle);
+            if (version !== undefined) {
+              borrowed.set(id, { handle, version });
+              return handle;
+            }
+          }
+        }
+        coldDocuments.add(id);
+        return (await getIsolatedRepo()).openPersistedDoc(id);
+      },
+      openFlockDoc: async id => {
+        // A list pull does not keep machine providers or capabilities live.
+        coldFlockDocuments.add(id);
+        return (await getIsolatedRepo()).openFlockDoc(id);
+      },
+      sync: async options => {
+        signal.throwIfAborted();
+        const docIds = (options.docIds ?? []).filter(id => coldDocuments.has(id));
+        const flockDocIds = (options.flockDocIds ?? []).filter(id => coldFlockDocuments.has(id));
+        if (options.scope !== 'meta' && !docIds.length && !flockDocIds.length) return { ok: true, outcome: 'synced' };
+        return (await getIsolatedRepo()).sync({ ...options, docIds, flockDocIds, signal });
+      },
+    };
+    try {
+      if (!shared) {
+        const report = await (await getIsolatedRepo()).sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+        signal.throwIfAborted();
+        if (!report.ok) throw new Error('Workspace metadata sync failed');
+      }
+      let result = await work(reader);
+      // Recheck after awaits: a live patch may have superseded the borrowed
+      // baseline during this read. Retry once entirely on the scoped replica.
+      for (const [id, { handle, version }] of borrowed) {
+        if (!isObserved(id.slice('session-'.length)) || await confirmedVersion(id, handle) !== version) {
+          signal.throwIfAborted();
+          reuseLive = false;
+          result = await work(reader);
+          break;
+        }
+      }
+      signal.throwIfAborted();
+      return result;
+    } finally {
+      // destroy() alone does not cancel an in-flight one-shot sync in the pinned
+      // Streams library; abort its own auth scope before releasing the replica.
+      controller.abort();
+      await isolated?.destroy();
+      for (const docID of sharedDocuments) {
+        const observed = [...observations.values()].some(observation => observation.workspaceID === workspaceID &&
+          `session-${observation.sessionID}` === docID);
+        if (!observed) await shared.repo.unloadDoc(docID);
+      }
+    }
   });
   workspaceOperation = operation.catch(() => {});
   return operation;
@@ -208,7 +319,7 @@ window.kurageMentionSessions = async (workspaceID, gatewayBaseURL, currentSessio
 };
 
 window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSessionID,
-  agentConfigID, userID, operationID) => {
+  agentConfigID, userID, operationID, projectID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   const timeout = setTimeout(() => controller.abort(), 120000);
@@ -231,7 +342,11 @@ window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSession
         if (!config?.agentType) throw new Error('Agent configuration is unavailable');
         agentType = config.agentType;
       }
-      const localProjectID = row.meta.project?.kind === 'local'
+      const prefix = `local:${machineID}:`;
+      if (projectID && (!projectID.startsWith(prefix) || !projectID.slice(prefix.length))) {
+        throw new Error('Skill project belongs to another machine');
+      }
+      const localProjectID = projectID ? projectID.slice(prefix.length) : row.meta.project?.kind === 'local'
         ? row.meta.project.localProjectId : null;
       return { machineID, localProjectID, agentType };
     }, true, controller.signal);
@@ -281,16 +396,9 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
 
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments);
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageSendText = (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments));
 
 async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
   signal?.throwIfAborted();
@@ -306,13 +414,13 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, s
   }
 }
 
-window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID) => {
+window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo =>
-      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal)),
-    { operationID, signal: controller.signal }, controller.signal);
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo =>
+      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal, projectID ?? undefined, tab)),
+    operationID, controller);
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);
@@ -323,27 +431,12 @@ window.kurageStartSession = (workspaceID, gatewayBaseURL, request) =>
   withSyncedWriteRepo(workspaceID, gatewayBaseURL,
     repo => startSession(repo, workspaceID, request), { createStreams: true });
 
-window.kurageCancelSession = async (workspaceID, sessionID, gatewayBaseURL) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return await cancelSession(repo, sessionID);
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageCancelSession = (workspaceID, sessionID, gatewayBaseURL) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL, repo => cancelSession(repo, sessionID));
 
-window.kurageArchiveSession = async (workspaceID, sessionID, gatewayBaseURL) => {
-  const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
-  try {
-    const meta = await repo.sync({ scope: 'meta', requireTransports: ['cloud'] });
-    if (meta.outcome !== 'synced') throw new Error('Workspace metadata sync failed');
-    return JSON.stringify(await archiveSession(repo, sessionID));
-  } finally {
-    await repo.destroy();
-  }
-};
+window.kurageArchiveSession = (workspaceID, sessionID, gatewayBaseURL) =>
+  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    repo => archiveSession(repo, sessionID).then(JSON.stringify));
 
 window.kurageRestoreArchivedSession = async (workspaceID, sessionID, gatewayBaseURL) => {
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL);
@@ -395,17 +488,18 @@ window.kurageStopConversation = (id) => {
   observations.delete(id);
   observation?.controller.abort();
 };
-window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id) => {
+window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id, rootSessionID) => {
   const controller = new AbortController();
   observations.set(id, { controller, workspaceID, sessionID });
   try {
     await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
       if (controller.signal.aborted) return;
-      await observeConversation({ repo, workspaceID, sessionID, signal: controller.signal,
+      const available = await observeConversation({ repo, workspaceID, sessionID, rootSessionID, signal: controller.signal,
         emit: update => window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'conversation', id, update,
         }),
       });
+      if (available !== false && !controller.signal.aborted) observations.get(id).ready = true;
     }, false, controller.signal);
     return 'ok';
   } catch (error) {
@@ -429,13 +523,43 @@ window.kurageUpdateSessionMetadata = async (workspaceID, sessionID, gatewayBaseU
 
 window.kurageRespondQuestion = async (workspaceID, sessionID, baseURL, turnID, requestID, answers, operationID) => {
   const controller = new AbortController();
-  sessionRefreshes.set(operationID, controller);
+  if (operationID) sessionRefreshes.set(operationID, controller);
   try {
     return await withSyncedWriteRepo(workspaceID, baseURL,
       repo => respondQuestion(repo, sessionID, turnID, requestID, answers, controller.signal),
       { operationID, signal: controller.signal }, controller.signal);
   } finally {
     controller.abort();
-    sessionRefreshes.delete(operationID);
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
+
+window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessionID, action, path, cursor, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    const access = {
+      baseURL: gatewayBaseURL,
+      auth: async () => {
+        const token = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, operationID,
+        });
+        return token.token;
+      },
+    };
+    const run = repo => sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor,
+      access, controller.signal);
+    if (action === 'select') {
+      return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+        { operationID, signal: controller.signal }, controller.signal);
+    }
+    // Catalog refreshes independently; browse needs only the cached machine ID.
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+      operationID, controller, action === 'catalog');
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
   }
 };

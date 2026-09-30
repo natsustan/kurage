@@ -1,3 +1,4 @@
+import { projectSessionTabs } from './session-tabs.mjs';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { latestUserTurn, projectRunConfig } from './run-config.mjs';
@@ -22,6 +23,13 @@ function rememberMarker(repo, workspaceID, sessionID, version, timestamp) {
 
 const messageTimestamp = metadata => Number.isFinite(metadata?.meta?.lastMessageAt)
   ? metadata.meta.lastMessageAt : null;
+
+export function syncedConversationVersion(repo, workspaceID, sessionID, doc, metadata) {
+  const timestamp = messageTimestamp(metadata);
+  if (timestamp === null) return undefined;
+  const version = documentVersion(doc);
+  return confirmedMarker(repo, workspaceID, sessionID, version) === timestamp ? `${timestamp}:${version}` : undefined;
+}
 
 // Metadata and history travel independently. Do not consume the comparison
 // baseline until a document pull is bracketed by the same activity marker.
@@ -97,7 +105,7 @@ async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, chan
 }
 
 // The setup promise finishes after joining. The signal owns the lasting leases.
-export async function observeConversation({ repo, workspaceID, sessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
+export async function observeConversation({ repo, workspaceID, sessionID, rootSessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
   const cleanup = [];
   let timer;
   let previous;
@@ -106,6 +114,8 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   let stopped = signal.aborted;
   let ready = false;
   let historyChanged = true;
+  let tabsChanged = true;
+  let sessionTabs = [];
   const rooms = [];
   const stop = () => {
     stopped = true;
@@ -115,10 +125,25 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   };
   signal.addEventListener('abort', stop, { once: true });
   const own = dispose => { if (stopped) dispose(); else cleanup.push(dispose); };
+  const publishUnavailableTab = async metadata => {
+    const rootID = rootSessionID ?? metadata?.meta?.parentSessionId;
+    if (!rootID || rootID === sessionID ||
+        metadata && !metadata.deleted && !metadata.meta?.isArchived && !metadata.meta?.isTabClosed) return false;
+    const tabs = projectSessionTabs(await repo.listDoc(), rootID);
+    if (stopped || !tabs.length || tabs.some(tab => tab.id === sessionID && !tab.isTabClosed)) return false;
+    await emit({ ...conversationPatch(previous, projectConversation(sessionID, [])),
+      sessionTabs: tabs, activity: 'idle', syncState: 'connecting', lastMessageAt: null });
+    stop();
+    return true;
+  };
   try {
     const docID = `session-${sessionID}`;
+    // Documents whose metadata can change this session's tab projection: the
+    // session itself, its root, and the root's tabs. Grows with each projection.
+    const tabScope = new Set([docID]);
     const metadata = await repo.getDocMeta(docID);
     if (stopped) return;
+    if (await publishUnavailableTab(metadata)) return false;
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
@@ -135,11 +160,13 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       try {
         let meta = await repo.getDocMeta(docID);
         if (stopped) return;
+        if (await publishUnavailableTab(meta)) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
         let lastMessageAt = messageTimestamp(meta);
         if (lastMessageAt !== null && lastMessageAt !== pulledMessageAt) {
           meta = await syncStableHistory(repo, docID, meta, signal);
           if (stopped) return;
+          if (await publishUnavailableTab(meta)) return;
           if (!meta || meta.deleted) throw new Error('Session was removed');
           lastMessageAt = messageTimestamp(meta);
           pulledMessageAt = lastMessageAt;
@@ -159,6 +186,19 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         // markers to history versions (child activity can update the parent too).
         // A successful stable pull certifies this snapshot; native visibility and
         // bottom layout decide whether to actually write a receipt.
+        if (tabsChanged) {
+          tabsChanged = false;
+          sessionTabs = projectSessionTabs(await repo.listDoc(), sessionID);
+          if (stopped) return;
+          // This session, its root, and the root's tabs are the only documents
+          // whose metadata can change the projection. The scope only grows: a
+          // root that drops out of an empty projection must still be watched
+          // for the change that brings it back.
+          for (const tab of sessionTabs) tabScope.add(`session-${tab.id}`);
+        }
+        // Native consumers buffer complete updates; retain tabs when history-only
+        // patches supersede the metadata update before Swift consumes it.
+        update.sessionTabs = sessionTabs;
         update.activity = projectSessionActivity(meta.meta.status);
         update.lastMessageAt = lastMessageAt === pulledMessageAt ? pulledMessageAt : null;
         const usage = meta.meta.contextWindowUsage;
@@ -179,7 +219,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         previous = next;
       } catch {
         if (!stopped) {
-          try { await emit({ error: 'Conversation sync failed' }); } finally { stop(); }
+          try {
+            // Metadata can remove a tab while its history pull is in flight.
+            let unavailable = false;
+            try { unavailable = await publishUnavailableTab(await repo.getDocMeta(docID)); } catch { /* Report sync failure below. */ }
+            if (!unavailable && !stopped) await emit({ error: 'Conversation sync failed' });
+          } finally { stop(); }
         }
       } finally {
         publishing = false;
@@ -194,8 +239,28 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       repo, workspaceID, meta: metadata.meta, own, isStopped: () => stopped, changed: queue,
     });
     if (stopped) return;
-    const watch = repo.watch(queue, {
-      docIds: [docID],
+    // Status, usage, and title churn on unrelated sessions cannot change this
+    // projection, and republishing for it is what a busy workspace does all
+    // day. Existence changes and tab membership fields always pass: they can
+    // introduce or retire a tab this session has not seen yet.
+    const MEMBERSHIP_FIELDS = ['parentSessionId', 'childSessionPlacement', 'isArchived'];
+    const TAB_FIELDS = [...MEMBERSHIP_FIELDS, 'title', 'agentType', 'cliType', 'status',
+      'isTabClosed', 'lastMessageAt', 'lastReadAt', 'createdAt'];
+    const watch = repo.watch(event => {
+      if (event.kind === 'doc-metadata') {
+        const fields = Object.keys(event.patch ?? {});
+        if (!tabScope.has(event.docId)) {
+          if (!MEMBERSHIP_FIELDS.some(field => fields.includes(field))) return;
+        } else if (fields.length > 0 && !fields.some(field => TAB_FIELDS.includes(field))) {
+          // An in-scope patch that names no projected field (usage, dispatch
+          // pointers) still republishes; it just cannot change the tab list.
+          queue();
+          return;
+        }
+      }
+      tabsChanged = true;
+      queue();
+    }, {
       kinds: ['doc-metadata', 'doc-existence-changed'],
     });
     own(() => watch.unsubscribe());
@@ -213,5 +278,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     }
     ready = true;
     await publish();
-  } catch (error) { stop(); throw error; }
+    return !stopped;
+  } catch (error) {
+    if (!stopped && rootSessionID && rootSessionID !== sessionID) {
+      try {
+        // A remembered tab can disappear while we are away. Refresh metadata
+        // when its old document cannot join, before retrying that stale target.
+        const report = await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+        if (report.ok && await publishUnavailableTab(await repo.getDocMeta(`session-${sessionID}`))) return false;
+      } catch { /* Preserve the original setup error. */ }
+    }
+    stop();
+    throw error;
+  }
 }

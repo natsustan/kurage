@@ -7,6 +7,7 @@ struct NewSessionRoute: Hashable {
     /// The project's most recent session; the new session reuses its machine and, by default, its agent.
     let templateSessionID: SessionSummary.ID
     let workspaceGeneration: Int
+    var parentSessionID: String? = nil
 }
 
 extension NewSessionOptions {
@@ -46,6 +47,11 @@ struct NewSessionView: View {
     let model: AppModel
     let onStarted: (SessionSummary.ID) -> Void
 
+    @State private var selectedProject: SessionProject?
+    private var projectID: String { selectedProject?.id ?? route.projectID }
+    private var projectName: String { selectedProject?.name ?? route.projectName }
+    private var templateSessionID: String { selectedProject?.templateSessionID ?? route.templateSessionID }
+
     private struct LoadRequest: Equatable {
         var agentConfigID: String?
         var attempt = 0
@@ -57,12 +63,19 @@ struct NewSessionView: View {
     @State private var mentions = ComposerMentionState()
     @State private var attachments: [ComposerAttachment] = []
     @State private var isStarting = false
+    @State private var startTask: Task<Void, Never>?
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
 
     private var pendingStart: PendingSessionStart? {
         guard isCurrentWorkspace else { return nil }
-        return model.pendingSessionStarts.first { $0.projectID == route.projectID }
+        if let rootID = route.parentSessionID {
+            return model.pendingSessionTab(rootID: rootID).map {
+                PendingSessionStart(id: $0.sessionID, projectID: projectID, templateSessionID: rootID,
+                                    text: $0.text, attachments: $0.attachments)
+            }
+        }
+        return model.pendingSessionStarts.first { $0.projectID == projectID }
     }
 
     private var options: NewSessionOptions? { configuration.options }
@@ -103,11 +116,12 @@ struct NewSessionView: View {
                                        send: "new-session-send"),
                     canSubmit: isCurrentWorkspace && pendingStart == nil && options != nil && !isLoading && !loadFailed,
                     focusesOnAppear: true,
-                    mentionSourceID: "\(route.workspaceGeneration):\(route.templateSessionID):\(options?.agentConfigID ?? "")",
-                    loadMentionSessions: { try await model.mentionSessions(projectID: route.projectID) },
+                    mentionSourceID: "\(route.workspaceGeneration):\(projectID):\(templateSessionID):\(options?.agentConfigID ?? "")",
+                    loadMentionSessions: { try await model.mentionSessions(projectID: projectID) },
                     loadMentionSkills: {
-                        try await model.mentionSkills(templateSessionID: route.templateSessionID,
-                                                      agentConfigID: options?.agentConfigID)
+                        try await model.mentionSkills(templateSessionID: templateSessionID,
+                                                      agentConfigID: options?.agentConfigID,
+                                                      projectID: route.parentSessionID == nil ? projectID : nil)
                     },
                     onSend: start, onCancel: {}, onChooseRunConfig: choose
                 )
@@ -115,10 +129,13 @@ struct NewSessionView: View {
                 .padding(.bottom, 8)
             }
         }
-        .navigationTitle("New Session")
+        .navigationTitle(route.parentSessionID == nil ? "New Session" : "New Tab")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: request) { await load() }
-        .onDisappear { configuration.cancelLoads() }
+        .onDisappear {
+            configuration.cancelLoads()
+            startTask?.cancel()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { request.attempt += 1 }
             else { configuration.cancelLoads() }
@@ -131,13 +148,35 @@ struct NewSessionView: View {
             if let options {
                 detailRow(options.machineName, imageName: "laptop")
             }
-            detailRow(route.projectName, imageName: "folder-open")
+            if route.parentSessionID == nil {
+                SessionProjectMenu(
+                    model: model,
+                    current: SessionProject(id: projectID, name: projectName,
+                                            rootPath: selectedProject?.rootPath ?? "",
+                                            templateSessionID: templateSessionID),
+                    workspaceGeneration: route.workspaceGeneration,
+                    onChoose: selectProject
+                )
+                .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
+            } else {
+                Label {
+                    Text(projectName).lineLimit(1)
+                } icon: {
+                    NewSessionIcon(imageName: "folder-open")
+                }
+                .accessibilityIdentifier("inherited-tab-project")
+            }
             if let pendingStart {
                 Text(pendingStart.displayText)
                     .lineLimit(4)
                     .foregroundStyle(.primary)
                 Button("Retry earlier start", systemImage: "arrow.clockwise") {
-                    performStart { try await model.retrySessionStart(pendingStart) }
+                    performStart {
+                        if let rootID = route.parentSessionID {
+                            return try await model.startSessionTab(pendingStart.text, attachments: pendingStart.attachments, rootID: rootID)
+                        }
+                        return try await model.retrySessionStart(pendingStart)
+                    }
                 }
                 .disabled(!isCurrentWorkspace || isStarting)
                 .accessibilityIdentifier("new-session-retry-start")
@@ -165,13 +204,30 @@ struct NewSessionView: View {
         .font(.body)
     }
 
+    private func selectProject(_ project: SessionProject) {
+        guard isCurrentWorkspace, !isStarting else { return }
+        configuration.cancelLoads()
+        selectedProject = project
+        configuration = NewSessionConfiguration()
+        request = LoadRequest(attempt: request.attempt + 1)
+        // The draft is preserved, so its mentions must be too: clearing them
+        // here sent `$skill` as plain words. The composer reloads this project's
+        // skills and re-points or drops the mentions it can no longer resolve.
+        banner = nil
+    }
+
     private func load() async {
         guard isCurrentWorkspace else { return }
         await configuration.load(providerID: request.agentConfigID) { providerID in
             guard isCurrentWorkspace else { throw CancellationError() }
-            let loaded = try await model.newSessionOptions(
-                templateSessionID: route.templateSessionID, agentConfigID: providerID
-            )
+            let loaded: NewSessionOptions
+            if let rootID = route.parentSessionID {
+                loaded = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: providerID, isTab: true)
+            } else {
+                loaded = try await model.newSessionOptions(
+                    templateSessionID: templateSessionID, agentConfigID: providerID, projectID: projectID
+                )
+            }
             guard isCurrentWorkspace else { throw CancellationError() }
             return loaded
         }
@@ -197,10 +253,15 @@ struct NewSessionView: View {
         let sentAttachments = attachments
         let selections = runConfig?.selections ?? []
         performStart {
-            try await model.startSession(
+            if let rootID = route.parentSessionID {
+                return try await model.startSessionTab(text, attachments: sentAttachments, selections: selections,
+                                                       agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+                                                       rootID: rootID)
+            }
+            return try await model.startSession(
                 text, attachments: sentAttachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
-                selections: selections, projectID: route.projectID,
-                templateSessionID: route.templateSessionID
+                selections: selections, projectID: projectID,
+                templateSessionID: templateSessionID
             )
         }
     }
@@ -209,10 +270,11 @@ struct NewSessionView: View {
         guard isCurrentWorkspace, !isStarting else { return }
         isStarting = true
         banner = nil
-        Task {
+        startTask = Task {
             defer { isStarting = false }
             do {
                 let sessionID = try await operation()
+                try Task.checkCancellation()
                 guard isCurrentWorkspace else { return }
                 onStarted(sessionID)
             } catch LodyClientError.sessionCreationRejected {
@@ -238,7 +300,7 @@ struct NewSessionView: View {
 }
 
 /// Keeps the detail titles aligned across asset images of different widths.
-private struct NewSessionIcon: View {
+struct NewSessionIcon: View {
     let imageName: String
     @ScaledMetric(relativeTo: .body) private var width = 28
     @ScaledMetric(relativeTo: .body) private var iconSize = 20

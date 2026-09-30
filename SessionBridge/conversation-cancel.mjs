@@ -1,11 +1,11 @@
-function synced(report) {
-  return report.outcome === 'synced';
-}
+import { isSessionTab } from './session-tabs.mjs';
+import { synced } from './conversation-send.mjs';
 
 export async function cancelSession(repo, sessionID) {
   const docID = `session-${sessionID}`;
-  const row = (await repo.listDoc()).find(entry => entry.docId === docID && !entry.deleted);
-  if (!row || row.meta.isArchived || row.meta.parentSessionId) {
+  const rows = await repo.listDoc();
+  const row = rows.find(entry => entry.docId === docID && !entry.deleted);
+  if (!row || row.meta.isArchived || (row.meta.parentSessionId && !isSessionTab(row, rows))) {
     throw new Error('Session is unavailable in this workspace');
   }
   const handle = await repo.openPersistedDoc(docID);

@@ -14,6 +14,93 @@ struct StatusNote: Equatable {
 @Observable
 final class AppModel {
     private let client: any LodyClient
+    private var tabsByWorkspace: [String: [String: [SessionSummary]]] = [:]
+    private var activeTabsByWorkspace: [WorkspaceSummary.ID: [SessionSummary.ID: SessionSummary.ID]] = [:]
+    private var pendingTabs: [String: [String: SessionTabStart]] = [:]
+    private var startingTabs: Set<String> = []
+    var supportsSessionTabs: Bool { client.supportsSessionTabs }
+
+    func sessionSummary(_ id: String) -> SessionSummary? {
+        if let root = sessionIndex[id] { return root }
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return tabsByWorkspace[workspaceID]?.values.lazy.flatMap { $0 }.first { $0.id == id }
+    }
+
+    func sessionTabs(rootID: String) -> [SessionSummary] {
+        guard let workspaceID = selectedWorkspaceID else { return [] }
+        return tabsByWorkspace[workspaceID]?[rootID] ?? sessionIndex[rootID].map { [$0] } ?? []
+    }
+
+    func pendingSessionTab(rootID: String) -> SessionTabStart? {
+        selectedWorkspaceID.flatMap { pendingTabs[$0]?[rootID] }
+    }
+
+    /// The tab a detail reopens on. It lives here rather than in the detail's
+    /// transient state so returning from the list resumes the tab the user left
+    /// on, like the desktop viewer's restored tab. A remembered tab is kept even
+    /// when the projection does not list it yet: the tab bar drops back to the
+    /// root once a loaded projection proves the tab is gone.
+    func activeSessionTab(rootID: String) -> SessionSummary.ID {
+        guard let workspaceID = selectedWorkspaceID else { return rootID }
+        return activeTabsByWorkspace[workspaceID]?[rootID] ?? rootID
+    }
+
+    func setActiveSessionTab(_ tabID: SessionSummary.ID, rootID: String) {
+        guard let workspaceID = selectedWorkspaceID else { return }
+        activeTabsByWorkspace[workspaceID, default: [:]][rootID] = tabID
+    }
+
+    func newSessionOptions(templateSessionID: SessionSummary.ID, agentConfigID: String? = nil,
+                           projectID: String? = nil, isTab: Bool = false) async throws -> NewSessionOptions {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let result = try await client.newSessionOptions(templateSessionID: templateSessionID, agentConfigID: agentConfigID,
+                                                        projectID: projectID, isTab: isTab, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
+        return result
+    }
+
+    func startSessionTab(_ text: String, attachments: [ComposerAttachment] = [], selections: [RunConfigChoice] = [],
+                         agentConfigID: String? = nil, rootID: String) async throws -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
+        guard supportsSessionTabs, supportsSessionCreation, let workspaceID = selectedWorkspaceID,
+              let root = sessions.first(where: { $0.id == rootID }) else { throw LodyClientError.sessionMissing }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let operationKey = "\(generation):\(workspaceID):\(rootID)"
+        guard startingTabs.insert(operationKey).inserted else { throw LodyClientError.deliveryUnconfirmed }
+        defer { startingTabs.remove(operationKey) }
+        if let pending = pendingTabs[workspaceID]?[rootID], pending.text != text || pending.attachments != attachments {
+            throw LodyClientError.previousSendPending(pending.text)
+        }
+        let request = pendingTabs[workspaceID]?[rootID] ??
+            SessionTabStart(text: text, attachments: attachments, selections: selections, agentConfigID: agentConfigID)
+        pendingTabs[workspaceID, default: [:]][rootID] = request
+        do {
+            try await client.startSessionTab(request, parentSessionID: rootID, workspaceID: workspaceID)
+        } catch LodyClientError.sessionCreationRejected {
+            if isCurrentAuthentication(generation) { pendingTabs[workspaceID]?[rootID] = nil }
+            throw LodyClientError.sessionCreationRejected
+        }
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
+        // Keep the retry identity if the initiating sheet disappeared after the
+        // write: a later caller must confirm this tab, not create a duplicate.
+        try Task.checkCancellation()
+        pendingTabs[workspaceID]?[rootID] = nil
+        var tabs = sessionTabs(rootID: rootID)
+        if !tabs.contains(where: { $0.id == request.sessionID }) {
+            tabs.append(SessionSummary(id: request.sessionID, title: String((text.isEmpty ? attachments.first?.fileName ?? "New tab" : text).prefix(50)),
+                agentName: request.agentConfigID ?? root.agentName, activity: .idle, preview: text,
+                projectID: root.projectID, projectName: root.projectName, machineName: root.machineName,
+                parentSessionID: rootID))
+        }
+        tabsByWorkspace[workspaceID, default: [:]][rootID] = tabs
+        return request.sessionID
+    }
+
     private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
     private var isRestoringAccount = false
     private var pendingStartsByWorkspace: [WorkspaceSummary.ID: [PendingSessionStart]] = [:]
@@ -30,7 +117,15 @@ final class AppModel {
             if oldValue != selectedWorkspaceID { workspaceGeneration += 1 }
         }
     }
-    private(set) var sessions: [SessionSummary] = []
+    // Views resolve the same session several times per body; the index keeps
+    // `sessionSummary` off a linear scan of the whole list. `didSet` covers
+    // element mutations as well as whole-array assignments, so it cannot go stale.
+    private(set) var sessions: [SessionSummary] = [] {
+        didSet {
+            sessionIndex = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+    }
+    private var sessionIndex: [String: SessionSummary] = [:]
     private(set) var archivedSessions: [ArchivedSessionSummary] = []
     private(set) var isRefreshingSessions = false
     private(set) var isRefreshingArchivedSessions = false
@@ -195,6 +290,12 @@ final class AppModel {
         cancelSessionRefresh()
         client.signOut()
         pendingStartsByWorkspace = [:]
+        selectedSessionProjects = [:]
+        projectCatalogGeneration = -1
+        pendingTabs = [:]
+        tabsByWorkspace = [:]
+        activeTabsByWorkspace = [:]
+        startingTabs = []
         archiveOperations = [:]
         activeArchiveOperations = [:]
         account = nil
@@ -232,6 +333,9 @@ final class AppModel {
             archiveOperations = archiveOperations.filter { workspaceIDs.contains($0.key) }
             activeArchiveOperations = activeArchiveOperations.filter { workspaceIDs.contains($0.key) }
             sessionsByWorkspace = sessionsByWorkspace.filter { workspaceIDs.contains($0.key) }
+            tabsByWorkspace = tabsByWorkspace.filter { workspaceIDs.contains($0.key) }
+            activeTabsByWorkspace = activeTabsByWorkspace.filter { workspaceIDs.contains($0.key) }
+            pendingTabs = pendingTabs.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -396,6 +500,7 @@ final class AppModel {
 
     func observeConversation(
         sessionID: String,
+        rootSessionID: String? = nil,
         onUpdate: @MainActor (ConversationUpdate) -> Void
     ) async throws {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
@@ -408,13 +513,37 @@ final class AppModel {
                 scheduleSessionSearchIndex()
             }
         }
-        let updates = try await client.observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        let updates = try await client.observeConversation(sessionID: sessionID,
+            rootSessionID: rootSessionID ?? sessionSummary(sessionID)?.parentSessionID, workspaceID: workspaceID)
         for try await update in updates {
             try Task.checkCancellation()
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
                 throw CancellationError()
             }
             guard update.conversation.sessionID == sessionID else { throw LodyClientError.notConnected }
+            if let tabs = update.sessionTabs {
+                let rootID = tabs.first?.id ?? sessionSummary(sessionID)?.parentSessionID ?? sessionID
+                let root = sessionSummary(rootID)
+                let projectedTabs = tabs.map { tab in
+                    var tab = tab
+                    tab.projectID = root?.projectID
+                    tab.projectName = root?.projectName
+                    tab.machineName = root?.machineName
+                    return tab
+                }
+                // An empty projection means the observer could not resolve this
+                // session or its root (the root is archived elsewhere, say), not
+                // that the tabs are gone. Keep the last known list: writing it
+                // empty blanks the tab bar and drops the user back to Main.
+                if !projectedTabs.isEmpty, tabsByWorkspace[workspaceID]?[rootID] != projectedTabs {
+                    tabsByWorkspace[workspaceID, default: [:]][rootID] = projectedTabs
+                }
+                if !projectedTabs.isEmpty,
+                   let activeID = activeTabsByWorkspace[workspaceID]?[rootID],
+                   !projectedTabs.contains(where: { $0.id == activeID && $0.isTabClosed != true }) {
+                    activeTabsByWorkspace[workspaceID, default: [:]][rootID] = rootID
+                }
+            }
             conversationCache[workspaceID, default: [:]][sessionID] = update.conversation
             invalidateSearchBody(sessionID: sessionID, workspaceID: workspaceID)
             if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
@@ -487,6 +616,31 @@ final class AppModel {
         return sentChoice
     }
 
+    // Authorized targets live only for the current account/workspace generation.
+    private var selectedSessionProjects: [String: SessionProject] = [:]
+    private var projectCatalogGeneration: Int = -1
+
+    func sessionProjects(templateSessionID: String, action: SessionProjectAction,
+                         path: String? = nil, cursor: String? = nil) async throws -> SessionProjectResult {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = workspaceGeneration
+        let auth = authenticationGeneration
+        let result = try await client.sessionProjects(templateSessionID: templateSessionID, action: action,
+            path: path, cursor: cursor, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == workspaceGeneration, isCurrentAuthentication(auth), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        if projectCatalogGeneration != generation {
+            selectedSessionProjects.removeAll()
+            projectCatalogGeneration = generation
+        }
+        for project in (result.projects ?? []) + (result.project.map { [$0] } ?? []) {
+            selectedSessionProjects[project.id] = project
+        }
+        return result
+    }
+
     /// A new session starts from the project's most recent local session.
     func newSessionTemplate(projectID: String) -> SessionSummary? {
         guard projectID.hasPrefix("local:") else { return nil }
@@ -501,28 +655,13 @@ final class AppModel {
         return result
     }
 
-    func mentionSkills(templateSessionID: String, agentConfigID: String? = nil) async throws -> [MentionSkill] {
+    func mentionSkills(templateSessionID: String, agentConfigID: String? = nil, projectID: String? = nil) async throws -> [MentionSkill] {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let result = try await client.mentionSkills(templateSessionID: templateSessionID,
-                                                    agentConfigID: agentConfigID, workspaceID: workspaceID)
+                                                    agentConfigID: agentConfigID, projectID: projectID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
         return result
-    }
-
-    func newSessionOptions(
-        templateSessionID: SessionSummary.ID,
-        agentConfigID: String? = nil
-    ) async throws -> NewSessionOptions {
-        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
-        let generation = authenticationGeneration
-        let options = try await client.newSessionOptions(
-            templateSessionID: templateSessionID, agentConfigID: agentConfigID, workspaceID: workspaceID
-        )
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
-            throw CancellationError()
-        }
-        return options
     }
 
     func startSession(
@@ -532,8 +671,15 @@ final class AppModel {
         projectID: String,
         templateSessionID: SessionSummary.ID
     ) async throws -> SessionSummary.ID {
-        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID,
-              let template = sessions.first(where: { $0.id == templateSessionID && $0.projectID == projectID })
+        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        guard let template = sessionSummary(templateSessionID) else { throw LodyClientError.notConnected }
+        // A template from another project is only meaningful for a project that
+        // has no session of its own yet — the sheet then borrows the session the
+        // user came from. Judging that against the live list keeps the pairing
+        // check without the stale catalog entry that rejected a project as soon
+        // as a catalog refresh moved it to a newer session; the write path
+        // revalidates the pair anyway.
+        guard template.projectID == projectID || !sessions.contains(where: { $0.projectID == projectID })
         else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
@@ -549,7 +695,7 @@ final class AppModel {
             sessions.insert(SessionSummary(
                 id: sessionID, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: template.agentName,
                 activity: .idle, preview: trimmed, projectID: projectID,
-                projectName: template.projectName, machineName: template.machineName
+                projectName: selectedSessionProjects[projectID]?.name ?? template.projectName, machineName: template.machineName
             ), at: 0)
             sessionsByWorkspace[workspaceID] = sessions
             persistSession()
@@ -615,7 +761,7 @@ final class AppModel {
         let selection = workspaceGeneration
         let normalized: SessionMetadataChange
         switch change {
-        case .pin: normalized = change
+        case .pin, .tabClosed: normalized = change
         case .read(let timestamp):
             guard timestamp.isFinite else { throw LodyClientError.deliveryUnconfirmed }
             normalized = change
@@ -631,22 +777,36 @@ final class AppModel {
         let interruptedRefresh = sessionRefreshTask != nil
         cancelSessionRefresh()
         if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
-            switch normalized {
-            case .pin(let value): sessions[index].isPinned = value
-            case .rename(let title): sessions[index].title = title
-            case .read(let timestamp):
-                sessions[index].lastReadAt = max(sessions[index].lastReadAt ?? timestamp, timestamp)
-            }
+            applyMetadataChange(normalized, to: &sessions[index])
+        }
+        for rootID in Array((tabsByWorkspace[workspaceID] ?? [:]).keys) {
+            guard var tabs = tabsByWorkspace[workspaceID]?[rootID],
+                  let index = tabs.firstIndex(where: { $0.id == sessionID }) else { continue }
+            applyMetadataChange(normalized, to: &tabs[index])
+            tabsByWorkspace[workspaceID]?[rootID] = tabs
         }
         sessionsByWorkspace[workspaceID] = sessions
         persistSession()
+        if case .tabClosed = normalized { return }
         if case .read = normalized, !interruptedRefresh { return }
         await refreshSessions(restart: true)
     }
 
+    // The list's root summaries never carry isTabClosed — only tabs see that write.
+    private func applyMetadataChange(_ change: SessionMetadataChange, to summary: inout SessionSummary) {
+        switch change {
+        case .tabClosed(let value): summary.isTabClosed = value
+        case .pin(let value): summary.isPinned = value
+        case .rename(let title): summary.title = title
+        case .read(let timestamp): summary.lastReadAt = max(summary.lastReadAt ?? timestamp, timestamp)
+        }
+    }
+
     func markSessionRead(sessionID: String, lastMessageAt: Double, workspaceGeneration: Int) async throws {
         guard self.workspaceGeneration == workspaceGeneration else { throw CancellationError() }
-        if let session = sessions.first(where: { $0.id == sessionID }),
+        // Tabs live outside `sessions`; resolve through the summary so entering a
+        // tab does not rewrite a receipt it already has.
+        if let session = sessionSummary(sessionID),
            let readAt = session.lastReadAt, readAt >= lastMessageAt { return }
         try await updateSessionMetadata(.read(lastMessageAt), sessionID: sessionID)
     }
@@ -680,6 +840,16 @@ final class AppModel {
         cancelSessionSearchIndex()
         sessions.removeAll { archivedIDs.contains($0.id) }
         sessionsByWorkspace[workspaceID] = sessions
+        if var workspaceTabs = tabsByWorkspace[workspaceID] {
+            for rootID in Array(workspaceTabs.keys) {
+                guard let tabs = workspaceTabs[rootID],
+                      tabs.contains(where: { archivedIDs.contains($0.id) }) else { continue }
+                let kept = tabs.filter { !archivedIDs.contains($0.id) }
+                workspaceTabs[rootID] = kept.isEmpty ? nil : kept
+            }
+            tabsByWorkspace[workspaceID] = workspaceTabs.isEmpty ? nil : workspaceTabs
+        }
+        pendingTabs[workspaceID]?.removeValue(forKey: sessionID)
         for id in archivedIDs {
             conversationCache[workspaceID]?.removeValue(forKey: id)
             searchBodies[workspaceID]?.removeValue(forKey: id)
@@ -788,6 +958,8 @@ final class AppModel {
             guard isCurrentOperation() else { return }
             archiveOperationStatusNote = nil
             archivedSessions.removeAll { $0.id == sessionID }
+            tabsByWorkspace[workspaceID]?.removeValue(forKey: sessionID)
+            pendingTabs[workspaceID]?.removeValue(forKey: sessionID)
             await refreshArchivedSessions()
         } catch is CancellationError {
             return

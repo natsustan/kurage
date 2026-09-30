@@ -456,3 +456,160 @@ test('attachment-only first turns upload references before publishing and retry 
   assert.equal(await start(repo, { text: '', attachments }), 'sent');
   await assert.rejects(start(repo, { text: 'changed', attachments }), /another turn/);
 });
+
+test('a selected registered folder without sessions becomes the new session project', async () => {
+  const { repo, flock, rows } = fixture();
+  flock.set('localProject/fresh', { name: 'Fresh folder', rootPath: '/projects/fresh' });
+  assert.equal(await start(repo, { projectID: 'local:mac:fresh' }), 'sent');
+  assert.deepEqual(rows.get('session-new').project, { kind: 'local', localProjectId: 'fresh' });
+  assert.equal(rows.get('session-new').machineId, 'mac');
+  assert.equal(rows.get('session-new').agentConfigId, 'cfg');
+  assert.equal(await start(repo, { projectID: 'local:mac:fresh' }), 'sent');
+  await assert.rejects(start(repo, { projectID: 'local:mac:proj' }), /project does not match/);
+});
+
+for (const target of ['local:other:proj', 'local:mac:missing', 'local:mac:deleting']) {
+  test(`selected project validation rejects ${target} before writing a turn`, async () => {
+    const { repo, flock, rows, docs } = fixture();
+    flock.set('localProject/deleting', { name: 'Deleting' });
+    flock.set('cmd/deleteLocalProject/deleting', {});
+    assert.equal(await start(repo, { projectID: target }), 'rejected');
+    assert.equal(docs.get('session-new').getList('history').length, 0);
+    assert.equal(rows.has('session-new'), false);
+  });
+}
+
+test('selected folder retry preserves the first turn when metadata was unconfirmed', async () => {
+  const { repo, flock, docs, rows } = fixture();
+  flock.set('localProject/fresh', { name: 'Fresh' });
+  let fail = true;
+  const upsert = repo.upsertDocMeta;
+  repo.upsertDocMeta = async (...args) => { if (fail) throw new Error('offline'); return upsert(...args); };
+  await assert.rejects(start(repo, { projectID: 'local:mac:fresh' }), /offline/);
+  const first = docs.get('session-new').getList('history').toJSON();
+  fail = false;
+  assert.equal(await start(repo, { projectID: 'local:mac:fresh' }), 'sent');
+  assert.deepEqual(docs.get('session-new').getList('history').toJSON(), first);
+  assert.equal(rows.get('session-new').project.localProjectId, 'fresh');
+});
+
+test('tab first turn inherits parent config and exact work context, without resume or history', async () => {
+  const { repo, rows, docs, calls } = fixture();
+  assert.equal(await start(repo, { parentSessionID: 'template' }), 'sent');
+  const meta = rows.get('session-new');
+  assert.equal(meta.parentSessionId, 'template');
+  assert.deepEqual(meta.project, rows.get('session-template').project);
+  assert.equal(meta.acpSessionId, undefined);
+  const history = docs.get('session-new').getList('history').toJSON();
+  assert.equal(history.length, 1);
+  assert.equal(history[0].inputConfig.modelId, 'gpt-5.5');
+  assert.equal(history[0].inputConfig.agentRoleId, undefined);
+  assert.equal(calls.at(-1).scope, 'meta');
+  assert.equal(await start(repo, { parentSessionID: 'template' }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+  await assert.rejects(start(repo, { parentSessionID: 'other' }), /parent/);
+});
+
+test('tabs support GitHub and chat parents, but reject nested or archived parents', async () => {
+  for (const project of [{ kind: 'github', repoFullName: 'org/repo', branch: 'topic' }, { kind: 'chat' }]) {
+    const { repo, rows } = fixture();
+    rows.get('session-template').project = project;
+    assert.equal(await start(repo, { parentSessionID: 'template' }), 'sent');
+    assert.deepEqual(rows.get('session-new').project, project);
+  }
+  for (const patch of [{ parentSessionId: 'other' }, { isArchived: true }]) {
+    const { repo, rows, docs } = fixture();
+    Object.assign(rows.get('session-template'), patch);
+    assert.equal(await start(repo, { parentSessionID: 'template' }), 'rejected');
+    assert.equal(rows.has('session-new'), false);
+    assert.equal(docs.get('session-new').getList('history').length, 0);
+  }
+});
+
+test('uncertain tab start retains a single first turn and retries metadata', async () => {
+  const { repo, rows, docs } = fixture();
+  const sync = repo.sync;
+  let failed = false;
+  repo.sync = async options => {
+    if (options.scope === 'meta' && !failed) { failed = true; return { outcome: 'failed' }; }
+    return sync(options);
+  };
+  assert.equal(await start(repo, { parentSessionID: 'template' }), 'unconfirmed');
+  assert.equal(await start(repo, { parentSessionID: 'template' }), 'sent');
+  assert.equal(rows.get('session-new').parentSessionId, 'template');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+});
+
+test('options validate the selected project independently from the template project', async () => {
+  const { repo, flock } = fixture();
+  flock.delete('localProject/proj');
+  flock.set('localProject/fresh', { name: 'Fresh' });
+  const result = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:fresh');
+  assert.equal(result.agentConfigID, 'cfg');
+  await assert.rejects(newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:missing'));
+});
+
+test('explicitly reselecting the template project retains its GitHub association without a worktree', async () => {
+  const { repo, rows } = fixture();
+  rows.get('session-template').project.githubRepoFullName = 'org/repo';
+  assert.equal(await start(repo, { projectID: 'local:mac:proj' }), 'sent');
+  assert.deepEqual(rows.get('session-new').project,
+    { kind: 'local', localProjectId: 'proj', githubRepoFullName: 'org/repo' });
+});
+
+test('tab options offer the machine providers and inherit the parent run configuration', async () => {
+  const { repo, docs, rows } = fixture();
+  const options = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, true);
+  assert.deepEqual(options.providers, [
+    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+  ]);
+  assert.equal(options.agentConfigID, 'cfg');
+  assert.equal(options.runConfig.model.value, 'gpt-5.5');
+  // Another machine's agent is never offered.
+  await assert.rejects(newSessionOptions(repo, 'ws', 'template', 'foreign', undefined, undefined, true),
+    /unavailable/);
+  const claude = await newSessionOptions(repo, 'ws', 'template', 'claude', undefined, undefined, true);
+  assert.equal(claude.agentConfigID, 'claude');
+  assert.equal(claude.runConfig.model.value, 'opus');
+  const selections = [{ configOptionID: null, value: 'gpt-5.4-mini' },
+    { configOptionID: 'reasoning_effort', value: 'low' }];
+  // Builtin model choice uses modelId (no config option ID).
+  selections[0].configOptionID = options.runConfig.model.configOptionID;
+  assert.equal(await start(repo, { parentSessionID: 'template', selections }), 'sent');
+  const input = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(input.modelId, 'gpt-5.4-mini');
+  assert.equal(input.configOptionValues.reasoning_effort, 'low');
+  assert.equal(rows.get('session-new').parentSessionId, 'template');
+  assert.equal(await start(repo, { parentSessionID: 'template', selections: [] }), 'sent');
+  assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, input);
+});
+
+test('a tab on another provider starts from that agent and its most recent run configuration', async () => {
+  const { repo, rows, docs } = fixture();
+  // Another machine's agent cannot run a tab on this one.
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'foreign' }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
+  assert.equal(docs.get('session-new')?.getList('history').length ?? 0, 0);
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'claude' }), 'sent');
+  const meta = rows.get('session-new');
+  assert.equal(meta.agentConfigId, 'claude');
+  assert.equal(meta.agentType, 'claude');
+  assert.equal(meta.parentSessionId, 'template');
+  assert.deepEqual(meta.project, rows.get('session-template').project);
+  const input = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(input.modelId, 'opus');
+  assert.equal(input.modeId, 'acceptEdits');
+  assert.equal(input.agentRoleId, undefined);
+  assert.equal(await start(repo, { parentSessionID: 'template', agentConfigID: 'claude' }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+});
+
+test('tab writes revalidate choices and never substitute the parent project', async () => {
+  const { repo, rows } = fixture();
+  assert.equal(await start(repo, { parentSessionID: 'template',
+    selections: [{ configOptionID: null, value: 'missing-model' }] }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
+  assert.equal(await start(repo, { parentSessionID: 'template', projectID: 'local:mac:proj' }), 'rejected');
+  assert.equal(rows.has('session-new'), false);
+  await assert.rejects(newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:other', true), /inherits/);
+});

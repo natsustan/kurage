@@ -29,6 +29,8 @@ function fixture(nested = false) {
   const meta = { status: { type: 'requestPermission' } };
   const repo = {
     getDocMeta: async id => id === 'session-chat' ? { meta } : null,
+    listDoc: async () => [{ docId: 'session-chat', meta },
+      ...(meta.parentSessionId ? [{ docId: `session-${meta.parentSessionId}`, meta: {} }] : [])],
     openPersistedDoc: async () => ({ doc }),
     sync: async () => ({ outcome: 'synced' }),
   };
@@ -142,4 +144,11 @@ test('status changes during history sync reject a now-stale question', async () 
   };
   assert.equal(await send(repo), 'unavailable');
   assert.equal(history.toJSON()[0].items[0].permissionRequest.outcome, undefined);
+});
+
+test('tab questions answer only the tab request', async () => {
+  const { repo, meta, history } = fixture();
+  meta.parentSessionId = 'root';
+  assert.equal(await send(repo), 'answered');
+  assert.equal(history.toJSON()[0].items[0].permissionRequest.outcome.optionId, 'answer');
 });

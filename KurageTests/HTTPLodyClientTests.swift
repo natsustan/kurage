@@ -374,6 +374,7 @@ struct HTTPLodyClientTests {
             let changedIndex = starter.requests.count - 1
             #expect(starter.requests[changedIndex].sessionID == pending.id)
             #expect(starter.requests[changedIndex].templateSessionID == "t")
+            #expect(starter.requests[changedIndex].projectID == "p")
             starter.finish(changedIndex, result: "unconfirmed")
             await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await changedTemplateRetry.value }
             let retry = Task { try await client.retrySessionStart(sessionID: pending.id, workspaceID: "work") }
@@ -382,6 +383,7 @@ struct HTTPLodyClientTests {
             #expect(starter.requests[index].sessionID == starter.requests[0].sessionID)
             #expect(starter.requests[index].turnID == starter.requests[0].turnID)
             #expect(starter.requests[index].templateSessionID == "t")
+            #expect(starter.requests[index].projectID == "p")
             starter.finish(index, result: "sent")
             #expect(try await retry.value == starter.requests[0].sessionID)
             #expect(client.pendingSessionStarts(workspaceID: "work").isEmpty)
@@ -1120,7 +1122,8 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
-    @Test(.timeLimit(.minutes(1))) func cancellingNewSessionOptionsStopsTheNativeBridgeRequest() async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "catalog", "browse", "select"])
+    func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
         let requestBox = StreamingRequestBox()
@@ -1139,8 +1142,14 @@ struct StreamFetchHandlerTests {
         let bridge = SessionSyncBridge(session: session) { _, _ in access }
         defer { bridge.close() }
         let task = Task {
-            try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
-                                               workspaceID: "workspace", access: access)
+            if operation == "options" || operation == "tab-options" {
+                _ = try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
+                                                       workspaceID: "workspace", access: access, isTab: operation == "tab-options")
+            } else {
+                _ = try await bridge.sessionProjects(templateSessionID: "template",
+                    action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,
+                    workspaceID: "workspace", access: access)
+            }
         }
         var requests = started.makeAsyncIterator()
         _ = await requests.next()
@@ -1362,6 +1371,7 @@ private final class DeferredSessionStarter: SessionStarting {
         let sessionID: String
         let turnID: String
         let templateSessionID: String
+        let projectID: String
         let continuation: CheckedContinuation<String, Error>
     }
     let started: AsyncStream<Void>
@@ -1371,10 +1381,10 @@ private final class DeferredSessionStarter: SessionStarting {
     init() { (started, signal) = AsyncStream.makeStream() }
 
     func startSession(_ text: String, attachments: [UploadedAttachment] = [], sessionID: String, turnID: String, userID: String,
-                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String,
+                      agentConfigID: String?, selections: [RunConfigChoice], templateSessionID: String, projectID: String,
                       workspaceID: String, access: StreamsAccess) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            requests.append(Request(sessionID: sessionID, turnID: turnID, templateSessionID: templateSessionID, continuation: continuation))
+            requests.append(Request(sessionID: sessionID, turnID: turnID, templateSessionID: templateSessionID, projectID: projectID, continuation: continuation))
             signal.yield(())
         }
     }

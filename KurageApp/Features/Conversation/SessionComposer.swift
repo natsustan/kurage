@@ -186,6 +186,7 @@ struct SessionComposer: View {
 
     private var canSend: Bool {
         showsSend && canSubmit && !isSending && !isCancelling &&
+            (!mentions.hasSkillMentions || loadedMentionSourceID == mentionSourceID && skillsLoaded) &&
             !isLoadingAttachments && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
@@ -200,19 +201,23 @@ struct SessionComposer: View {
     private var mentionLoadID: String? {
         // Leaving the foreground cancels pending bridge requests.
         guard scenePhase == .active else { return nil }
-        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentionRetry)"
+        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentions.hasSkillMentions)|\(mentionRetry)"
     }
 
     var body: some View {
         VStack(spacing: 8) {
             if let query = mentionQuery {
                 mentionMenu(query)
+            } else if mentions.hasSkillMentions, mentionLoadFailed {
+                Button("Could not refresh skills. Retry") { mentionRetry += 1 }
+                    .accessibilityIdentifier("mention-retry")
             }
             VStack(spacing: 0) {
                 if !attachments.isEmpty || isLoadingAttachments {
                     ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
                 }
                 TextField(placeholder, text: editableDraft, selection: $selection, axis: .vertical)
+                    .disabled(isSending)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .fixedSize(horizontal: false, vertical: true)
@@ -272,7 +277,7 @@ struct SessionComposer: View {
     }
 
     private func loadMentions() async {
-        guard scenePhase == .active, !Task.isCancelled, let query = mentionQuery else { return }
+        guard scenePhase == .active, !Task.isCancelled else { return }
         if loadedMentionSourceID != mentionSourceID {
             mentionSessions = []
             mentionSkills = []
@@ -280,8 +285,12 @@ struct SessionComposer: View {
             skillsLoaded = false
             loadedMentionSourceID = mentionSourceID
         }
+        // A draft that already carries skill mentions reloads them even with the
+        // menu closed: switching projects changes the skills it can point at.
+        let query = mentionQuery
+        guard query != nil || mentions.hasSkillMentions else { return }
         mentionLoadFailed = false
-        if query.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
+        if query?.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
             do {
                 let loaded = try await loadMentionSessions()
                 try Task.checkCancellation()
@@ -299,6 +308,7 @@ struct SessionComposer: View {
                 try Task.checkCancellation()
                 mentionSkills = loaded
                 skillsLoaded = true
+                if let rewritten = mentions.resolveSkills(loaded, in: draft) { draft = rewritten }
             } catch is CancellationError { return }
             catch {
                 guard !Task.isCancelled else { return }

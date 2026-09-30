@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
-import { readSyncedConversation } from './conversation-observer.mjs';
+import { StreamsClient } from '@loro-dev/streams-client';
+import { createNativeFetch } from './native-fetch.mjs';
+import { readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { selectMentionSkills } from './mention-skills.mjs';
 import {
   activityTime,
@@ -25,8 +27,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
       repos.push(repo);
       return repo;
     }
-    async addTransport(_id, transport) { transports.push(transport.options); }
-    async sync(options) { return sync(options); }
+    async addTransport(_id, transport) { this.transport = transport.options; transports.push(transport.options); }
+    async sync(options) { return sync(options, this); }
     async listDoc() { return rows; }
     async openFlockDoc(docID) {
       return {
@@ -34,7 +36,10 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
         flock: { scan: () => [] },
       };
     }
-    async openPersistedDoc(id) { this.loaded.add(id); return { doc: { getList: () => ({ toJSON: () => [] }) } }; }
+    async openPersistedDoc(id) {
+      this.loaded.add(id);
+      return { doc: { getList: () => ({ toJSON: () => [] }), getMap: () => ({ toJSON: () => ({ modelId: this.model }) }) } };
+    }
     async unloadDoc(id) { this.loaded.delete(id); }
     async getDocMeta() { return undefined; }
     async destroy() { this.destroyed = true; }
@@ -42,19 +47,21 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   class Transport {
     constructor(options) { this.options = options; }
   }
-  const window = {};
+  const window = { webkit: { messageHandlers: { streamFetch: { postMessage: extras.postMessage } } } };
   const context = vm.createContext({
     window,
     LoroRepo: Repo,
     StreamsTransportAdapter: Transport,
     decompressZstd: async (bytes) => bytes,
-    createNativeFetch: () => ({ fetch: async () => {}, receive: async () => {} }),
+    createNativeFetch: extras.createNativeFetch ?? (() => ({ fetch: async () => {}, receive: async () => {} })),
     projectConversation: () => ({}),
     projectSessionActivity: () => 'idle',
-    observeConversation: async () => {},
+    observeConversation: extras.observeConversation ?? (async () => {}),
     readSyncedConversation,
+    syncedConversationVersion: extras.syncedConversationVersion ?? syncedConversationVersion,
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions,
+    sessionProjects: extras.sessionProjects,
     archiveSession: archive,
     updateSessionMetadata: extras.updateSessionMetadata,
     respondQuestion: extras.respondQuestion,
@@ -449,7 +456,7 @@ test('cancelling an unobserved search read unloads its document', async () => {
 });
 
 
-test('new-session options cancel metadata sync and destroy the temporary reader', async () => {
+test('cold new-session options cancel their sync and destroy the temporary reader', async () => {
   let entered;
   const ready = new Promise(resolve => { entered = resolve; });
   let observedSignal;
@@ -466,22 +473,21 @@ test('new-session options cancel metadata sync and destroy the temporary reader'
   assert.equal(repos[0].destroyed, true);
 });
 
-test('new-session options forward cancellation after metadata sync and release their reader', async () => {
-  let entered;
-  const ready = new Promise(resolve => { entered = resolve; });
-  const { window, repos } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
-    newSessionOptions: async (repo, workspace, template, agent, signal) => {
-      assert.equal(workspace, 'ws');
-      assert.equal(template, 'template');
-      entered();
-      await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
-    },
+test('new-session options reuse the synced reader without resyncing metadata', async () => {
+  const scopes = [];
+  const { window, repos } = makeBridge(options => {
+    scopes.push(options.scope);
+    return { ok: true, outcome: 'synced' };
+  }, undefined, undefined, undefined, {
+    newSessionOptions: async () => ({ agentConfigID: 'codex', providers: [], runConfig: {} }),
   });
-  const pending = window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2');
-  await ready;
-  window.kurageCancel('options-2');
-  await assert.rejects(pending, { name: 'AbortError' });
-  assert.equal(repos[0].destroyed, true);
+  await window.kurageSessions('ws', 'https://gateway.lody.ai', 'sessions');
+  const first = JSON.parse(await window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-1'));
+  assert.equal(first.agentConfigID, 'codex');
+  const second = JSON.parse(await window.kurageNewSessionOptions('ws', 'template', null, 'https://gateway.lody.ai', 'options-2'));
+  assert.equal(second.agentConfigID, 'codex');
+  assert.equal(repos.length, 1);
+  assert.equal(scopes.filter(scope => scope === 'meta').length, 1);
 });
 
 
@@ -582,5 +588,286 @@ test('question writes scope requests and cancellation to an ephemeral existing-s
   window.kurageCancel('operation');
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(signal.aborted, true);
+  assert.equal(repos[0].destroyed, true);
+});
+
+
+test('new-folder skill mentions use the selected project on the template machine', async () => {
+  let request;
+  const rows = [{ docId: 'session-template', meta: {
+    machineId: 'machine', agentType: 'codex', project: { kind: 'local', localProjectId: 'old' },
+  } }];
+  const { window } = makeBridge(undefined, rows, undefined, undefined, {
+    mentionSkills: async args => { request = args; return []; },
+  });
+  await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+    'template', null, 'user', 'request', 'local:machine:fresh');
+  assert.equal(request.localProjectID, 'fresh');
+  await assert.rejects(window.kurageMentionSkills('workspace', 'https://gateway.lody.ai',
+    'template', null, 'user', 'request2', 'local:other:fresh'), /another machine/);
+});
+
+test('tab configuration forwards its mode and scope without a project override or writable streams', async () => {
+  const { window, repos, transports } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
+    newSessionOptions: async (_repo, workspace, parent, agent, signal, project, tab) => {
+      assert.equal(workspace, 'workspace-tab');
+      assert.equal(parent, 'parent');
+      assert.equal(agent, null);
+      assert.equal(project, undefined);
+      assert.equal(tab, true);
+      assert.equal(signal.aborted, false);
+      return { agentConfigID: 'codex', providers: [], runConfig: {} };
+    },
+  });
+  const result = await window.kurageNewSessionOptions('workspace-tab', 'parent', null,
+    'https://gateway.lody.ai', 'tab-config', null, true);
+  assert.equal(JSON.parse(result).agentConfigID, 'codex');
+  assert.equal(transports[0].createStreamIfMissing, false);
+  assert.equal(repos[0].destroyed, true);
+});
+
+test('options reuse a confirmed live transcript while refreshing machine configuration independently', async () => {
+  const syncs = [];
+  const { window, repos } = makeBridge((options, repo) => {
+    syncs.push({ repo, options });
+    return { ok: true };
+  }, [localSession], undefined, undefined, {
+    syncedConversationVersion: () => 'confirmed',
+    observeConversation: async ({ repo }) => {
+      await repo.openPersistedDoc('session-local');
+      await repo.sync({ scope: 'doc', docIds: ['session-local'] });
+    },
+    newSessionOptions: async repo => {
+      await repo.openFlockDoc('workspace:mf:machine');
+      await repo.sync({ scope: 'doc', flockDocIds: ['workspace:mf:machine'] });
+      await repo.openPersistedDoc('session-local');
+      await repo.sync({ scope: 'doc', docIds: ['session-local'] });
+      return {};
+    },
+  });
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  await window.kurageObserveConversation('workspace', 'local', 'https://gateway.lody.ai', 'observe');
+  const before = syncs.length;
+  await window.kurageNewSessionOptions('workspace', 'local', null, 'https://gateway.lody.ai', 'options');
+  assert.equal(repos.length, 2);
+  assert.deepEqual(syncs.slice(before).map(read => Array.from(read.options.flockDocIds)), [['workspace:mf:machine']]);
+  assert.equal(repos[1].destroyed, true);
+  assert.equal(repos[0].loaded.has('session-local'), true);
+  window.kurageStopConversation('observe');
+  const stopped = syncs.length;
+  await window.kurageNewSessionOptions('workspace', 'local', null, 'https://gateway.lody.ai', 'again');
+  assert.equal(repos[0].loaded.size, 0);
+  assert.deepEqual(syncs.slice(stopped).flatMap(read => Array.from(read.options.docIds)), ['session-local']);
+});
+
+for (const state of ['stopped', 'advanced', 'changed-during-read']) {
+  test(`options refresh the baseline when its live evidence is ${state}`, async () => {
+    let remoteModel = 'old';
+    let proof = 'old';
+    let attempts = 0;
+    const syncs = [];
+    const { window, repos } = makeBridge((options, repo) => {
+      syncs.push({ options, repo });
+      if (options.docIds?.length) repo.model = remoteModel;
+      return { ok: true };
+    }, [localSession], undefined, undefined, {
+      syncedConversationVersion: () => proof,
+      observeConversation: async ({ repo }) => {
+        await repo.openPersistedDoc('session-local');
+        await repo.sync({ scope: 'doc', docIds: ['session-local'] });
+      },
+      newSessionOptions: async repo => {
+        attempts++;
+        const { doc } = await repo.openPersistedDoc('session-local');
+        await repo.sync({ scope: 'doc', docIds: ['session-local'] });
+        const model = doc.getMap('acpRuntimeConfig').toJSON().modelId;
+        if (state === 'changed-during-read' && attempts === 1) {
+          remoteModel = 'new';
+          proof = 'new';
+        }
+        return { model };
+      },
+    });
+    await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+    await window.kurageObserveConversation('workspace', 'local', 'https://gateway.lody.ai', 'observe');
+    const before = syncs.length;
+    if (state === 'stopped') { window.kurageStopConversation('observe'); remoteModel = 'new'; }
+    if (state === 'advanced') { proof = undefined; remoteModel = 'new'; }
+    const result = JSON.parse(await window.kurageNewSessionOptions('workspace', 'local', null, 'https://gateway.lody.ai', 'options'));
+    assert.equal(result.model, 'new');
+    assert.equal(attempts, state === 'changed-during-read' ? 2 : 1);
+    assert.equal(syncs.slice(before).length, 1);
+    assert.equal(syncs.at(-1).repo, repos[1]);
+    assert.equal(repos[1].destroyed, true);
+    window.kurageStopConversation('observe');
+  });
+}
+
+test('project catalogs refresh on an isolated reader while browsing reuses cached metadata', async () => {
+  const syncs = [];
+  const { window, repos } = makeBridge((options, repo) => {
+    syncs.push({ options, repo });
+    return { ok: true };
+  }, [localSession], undefined, undefined, {
+    sessionProjects: async repo => { await repo.listDoc(); return {}; },
+  });
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  const before = syncs.length;
+  await window.kurageSessionProjects('workspace', 'https://gateway.lody.ai', 'local', 'catalog', null, null, 'catalog');
+  assert.equal(repos.length, 2);
+  assert.equal(repos[1].destroyed, true);
+  assert.deepEqual(syncs.slice(before).map(read => read.options.scope), ['meta']);
+  await window.kurageSessionProjects('workspace', 'https://gateway.lody.ai', 'local', 'browse', null, null, 'browse');
+  assert.equal(repos.length, 2);
+  assert.equal(syncs.length, before + 1);
+});
+
+for (const action of ['browse', 'select']) {
+  test(`project ${action} sends the scoped native token through Streams authentication`, async () => {
+    const commands = [];
+    const operationID = `project-${action}`;
+    const token = `${operationID}-token`;
+    let native;
+    const { window } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [localSession], undefined, undefined, {
+      createNativeFetch: (send, fallback) => native = createNativeFetch(send, fallback),
+      postMessage: async command => {
+        commands.push(command);
+        if (command.command === 'auth') return { token };
+        if (command.command === 'start') {
+          await native.receive({ id: command.id, type: 'headers', status: 201,
+            headers: { 'content-type': 'application/json', 'stream-next-offset': '0' } });
+          await native.receive({ id: command.id, type: 'end' });
+        }
+      },
+      sessionProjects: async (_repo, _workspace, _template, _action, _path, _cursor, access, signal) => {
+        signal.throwIfAborted();
+        const client = new StreamsClient({ url: `${access.baseURL}/ds/lody/response`,
+          auth: access.auth, fetch: native.fetch });
+        assert.equal((await client.create({ contentType: 'application/json' })).ok, true);
+        return {};
+      },
+    });
+    await window.kurageSessionProjects('workspace', 'https://gateway.lody.ai', 'local', action,
+      '/projects', null, operationID);
+    const auth = commands.find(command => command.command === 'auth');
+    assert.equal(auth.workspaceID, 'workspace');
+    assert.equal(auth.operationID, operationID);
+    const request = commands.find(command => command.command === 'start');
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+  });
+}
+
+for (const outcome of ['success', 'failure', 'cancel']) {
+  test(`a cold baseline stays out of the shared cache on ${outcome}`, async () => {
+    const started = Promise.withResolvers();
+    const syncs = [];
+    const { window, repos } = makeBridge(async (options, repo) => {
+      syncs.push({ repo, options });
+      if (options.docIds?.length) {
+        if (outcome === 'failure') throw new Error('offline');
+        if (outcome === 'cancel') {
+          started.resolve();
+          await new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+        }
+      }
+      return { ok: true };
+    }, [localSession], undefined, undefined, {
+      newSessionOptions: async repo => {
+        await repo.openFlockDoc('workspace:mf:machine');
+        await repo.sync({ scope: 'doc', flockDocIds: ['workspace:mf:machine'] });
+        await repo.openPersistedDoc('session-baseline');
+        await repo.sync({ scope: 'doc', docIds: ['session-baseline'] });
+        return {};
+      },
+    });
+    await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+    const before = syncs.length;
+    const pending = window.kurageNewSessionOptions('workspace', 'local', null, 'https://gateway.lody.ai', 'options');
+    const result = outcome === 'success' ? pending : assert.rejects(pending,
+      outcome === 'cancel' ? { name: 'AbortError' } : /offline/);
+    if (outcome === 'cancel') { await started.promise; window.kurageCancel('options'); }
+    await result;
+    assert.equal(repos[0].destroyed, false);
+    assert.equal(repos[0].loaded.size, 0);
+    assert.equal(repos[1].destroyed, true);
+    const reads = syncs.slice(before);
+    assert.deepEqual(reads.map(read => Array.from(read.options.docIds)), [[], ['session-baseline']]);
+    assert.ok(reads.every(read => read.repo === repos[1]));
+  });
+}
+
+for (const cancel of [false, true]) {
+  test(`options ${cancel ? 'cancellation' : 'completion'} leaves a concurrent live SSE reader intact`, async () => {
+    const entered = Promise.withResolvers();
+    const finish = Promise.withResolvers();
+    const commands = [];
+    let native;
+    const { window, repos, transports } = makeBridge(async () => ({ ok: true }), [], undefined, undefined, {
+      createNativeFetch: (send, fallback) => native = createNativeFetch(send, fallback),
+      postMessage: async command => {
+        commands.push(command);
+        if (command.command === 'auth') return { token: command.operationID ? 'options-token' : 'live-token' };
+        if (command.command === 'start') {
+          await native.receive({ id: command.id, type: 'headers', status: 200,
+            headers: { 'content-type': 'text/event-stream' } });
+        }
+      },
+      newSessionOptions: async (repo, _workspace, _template, _agent, signal) => {
+        await repo.openPersistedDoc('session-baseline');
+        // Exercise native work whose lifetime belongs to the one-shot reader.
+        const token = await transports[1].auth();
+        await native.fetch('https://gateway.lody.ai/options', { headers: { authorization: `Bearer ${token}` } });
+        entered.resolve();
+        await finish.promise;
+        if (cancel) signal.throwIfAborted();
+        return {};
+      },
+    });
+    await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+    const options = window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'options');
+    const result = cancel ? assert.rejects(options, { name: 'AbortError' }) : options;
+    await entered.promise;
+    const owner = new AbortController();
+    const client = new StreamsClient({ url: 'https://gateway.lody.ai/live', auth: transports[0].auth, fetch: native.fetch });
+    const opened = await client.openSseSession({ offset: 'now', signal: owner.signal });
+    assert.equal(opened.ok, true);
+    const events = opened.result.events[Symbol.asyncIterator]();
+    const event = events.next();
+    if (cancel) window.kurageCancel('options');
+    finish.resolve();
+    await result;
+    const live = commands.find(command => command.command === 'start' && command.url.startsWith('https://gateway.lody.ai/live'));
+    const oneShot = commands.find(command => command.command === 'start' && command.url === 'https://gateway.lody.ai/options');
+    assert.equal(commands.some(command => command.command === 'cancel' && command.id === live.id), false);
+    assert.equal(commands.some(command => command.command === 'cancel' && command.id === oneShot.id), true);
+    assert.equal(commands.find(command => command.command === 'auth' && !command.operationID).operationID, undefined);
+    await native.receive({ id: live.id, type: 'chunk', body: Buffer.from('event: control\ndata: {"streamNextOffset":"1","upToDate":true}\n\n').toString('base64') });
+    assert.equal((await event).done, false);
+    assert.equal(repos[0].destroyed, false);
+    assert.equal(repos[1].destroyed, true);
+    owner.abort();
+    await events.return();
+  });
+}
+
+test('cancelling while scoped auth is pending prevents native requests from starting', async () => {
+  const auth = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  let requests = 0;
+  const { window, repos } = makeBridge(async (_options, repo) => {
+    await repo.transport.auth();
+    requests++;
+    return { ok: true };
+  }, [], undefined, undefined, {
+    createNativeFetch,
+    postMessage: async () => { entered.resolve(); return auth.promise; },
+  });
+  const pending = window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'options');
+  const result = assert.rejects(pending, { name: 'AbortError' });
+  await entered.promise;
+  window.kurageCancel('options');
+  auth.resolve({ token: 'scoped-token' });
+  await result;
+  assert.equal(requests, 0);
   assert.equal(repos[0].destroyed, true);
 });
