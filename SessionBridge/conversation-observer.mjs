@@ -24,6 +24,13 @@ function rememberMarker(repo, workspaceID, sessionID, version, timestamp) {
 const messageTimestamp = metadata => Number.isFinite(metadata?.meta?.lastMessageAt)
   ? metadata.meta.lastMessageAt : null;
 
+export function syncedConversationVersion(repo, workspaceID, sessionID, doc, metadata) {
+  const timestamp = messageTimestamp(metadata);
+  if (timestamp === null) return undefined;
+  const version = documentVersion(doc);
+  return confirmedMarker(repo, workspaceID, sessionID, version) === timestamp ? `${timestamp}:${version}` : undefined;
+}
+
 // Metadata and history travel independently. Do not consume the comparison
 // baseline until a document pull is bracketed by the same activity marker.
 async function syncStableHistory(repo, docID, metadata, signal) {
@@ -98,7 +105,7 @@ async function watchCapabilities({ repo, workspaceID, meta, own, isStopped, chan
 }
 
 // The setup promise finishes after joining. The signal owns the lasting leases.
-export async function observeConversation({ repo, workspaceID, sessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
+export async function observeConversation({ repo, workspaceID, sessionID, rootSessionID, signal, emit, schedule = setTimeout, unschedule = clearTimeout }) {
   const cleanup = [];
   let timer;
   let previous;
@@ -118,6 +125,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
   };
   signal.addEventListener('abort', stop, { once: true });
   const own = dispose => { if (stopped) dispose(); else cleanup.push(dispose); };
+  const publishUnavailableTab = async metadata => {
+    const rootID = rootSessionID ?? metadata?.meta?.parentSessionId;
+    if (!rootID || rootID === sessionID ||
+        metadata && !metadata.deleted && !metadata.meta?.isArchived && !metadata.meta?.isTabClosed) return false;
+    const tabs = projectSessionTabs(await repo.listDoc(), rootID);
+    if (stopped || !tabs.length || tabs.some(tab => tab.id === sessionID && !tab.isTabClosed)) return false;
+    await emit({ ...conversationPatch(previous, projectConversation(sessionID, [])),
+      sessionTabs: tabs, activity: 'idle', syncState: 'connecting', lastMessageAt: null });
+    stop();
+    return true;
+  };
   try {
     const docID = `session-${sessionID}`;
     // Documents whose metadata can change this session's tab projection: the
@@ -125,6 +143,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     const tabScope = new Set([docID]);
     const metadata = await repo.getDocMeta(docID);
     if (stopped) return;
+    if (await publishUnavailableTab(metadata)) return false;
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);
     if (stopped) return;
@@ -141,11 +160,13 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
       try {
         let meta = await repo.getDocMeta(docID);
         if (stopped) return;
+        if (await publishUnavailableTab(meta)) return;
         if (!meta || meta.deleted) throw new Error('Session was removed');
         let lastMessageAt = messageTimestamp(meta);
         if (lastMessageAt !== null && lastMessageAt !== pulledMessageAt) {
           meta = await syncStableHistory(repo, docID, meta, signal);
           if (stopped) return;
+          if (await publishUnavailableTab(meta)) return;
           if (!meta || meta.deleted) throw new Error('Session was removed');
           lastMessageAt = messageTimestamp(meta);
           pulledMessageAt = lastMessageAt;
@@ -198,7 +219,12 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
         previous = next;
       } catch {
         if (!stopped) {
-          try { await emit({ error: 'Conversation sync failed' }); } finally { stop(); }
+          try {
+            // Metadata can remove a tab while its history pull is in flight.
+            let unavailable = false;
+            try { unavailable = await publishUnavailableTab(await repo.getDocMeta(docID)); } catch { /* Report sync failure below. */ }
+            if (!unavailable && !stopped) await emit({ error: 'Conversation sync failed' });
+          } finally { stop(); }
         }
       } finally {
         publishing = false;
@@ -252,5 +278,17 @@ export async function observeConversation({ repo, workspaceID, sessionID, signal
     }
     ready = true;
     await publish();
-  } catch (error) { stop(); throw error; }
+    return !stopped;
+  } catch (error) {
+    if (!stopped && rootSessionID && rootSessionID !== sessionID) {
+      try {
+        // A remembered tab can disappear while we are away. Refresh metadata
+        // when its old document cannot join, before retrying that stale target.
+        const report = await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+        if (report.ok && await publishUnavailableTab(await repo.getDocMeta(`session-${sessionID}`))) return false;
+      } catch { /* Preserve the original setup error. */ }
+    }
+    stop();
+    throw error;
+  }
 }

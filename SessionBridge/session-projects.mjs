@@ -1,5 +1,5 @@
 import { control } from './mention-skills.mjs';
-import { readLocalProjectState } from './session-archive.mjs';
+import { activityTime, readLocalProjectState } from './session-archive.mjs';
 
 export async function sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor, access, signal,
   requestControl = control) {
@@ -18,7 +18,7 @@ export async function sessionProjects(repo, workspaceID, templateSessionID, acti
         candidate.meta?.machineId !== machineID || candidate.meta?.project?.kind !== 'local') continue;
     const localID = candidate.meta.project.localProjectId;
     const current = templateByProject.get(localID);
-    if (!current || (candidate.meta.lastMessageAt ?? 0) > (current.meta.lastMessageAt ?? 0)) {
+    if (!current || activityTime(candidate.meta) > activityTime(current.meta)) {
       templateByProject.set(localID, candidate);
     }
   }

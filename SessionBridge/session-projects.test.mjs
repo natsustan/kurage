@@ -31,6 +31,14 @@ test('catalog includes unused projects, removes deleting projects and chooses re
   assert.equal(projects[2].templateSessionID, 'template');
 });
 
+test('project templates use creation time when a root has no message timestamp', async () => {
+  const { repo, rows } = fixture();
+  rows.push({ docId: 'session-new-root', meta: { machineId: 'mac',
+    project: { kind: 'local', localProjectId: 'b' }, createdAt: '2026-09-30T01:00:00Z' } });
+  const { projects } = await call(repo, 'catalog');
+  assert.equal(projects.find(project => project.id === 'local:mac:b').templateSessionID, 'new-root');
+});
+
 test('folder browsing carries machine/workspace, path and pagination through RPC', async () => {
   const { repo } = fixture();
   const directory = { path: '/projects', parentPath: '/', entries: [], truncated: true, nextCursor: 'next' };

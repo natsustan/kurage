@@ -326,7 +326,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         )
     }
 
-    func observeConversation(sessionID: String, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
+    func observeConversation(sessionID: String, rootSessionID: String? = nil, workspaceID: String, access: StreamsAccess) -> AsyncThrowingStream<ConversationUpdate, Error> {
         let id = UUID().uuidString
         let (stream, continuation) = AsyncThrowingStream<ConversationUpdate, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
         observers[id] = continuation
@@ -335,9 +335,9 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
             guard let self else { return }
             do {
                 _ = try await callBridge(
-                    "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, baseURL, observationID))",
+                    "return await window.kurageBridgeReady.then(() => window.kurageObserveConversation(workspaceID, sessionID, baseURL, observationID, rootSessionID))",
                     workspaceID: workspaceID, access: access,
-                    arguments: ["sessionID": sessionID, "observationID": id]
+                    arguments: ["sessionID": sessionID, "observationID": id, "rootSessionID": (rootSessionID as Any?) ?? NSNull()]
                 )
             } catch {
                 observers[id]?.finish(throwing: error)

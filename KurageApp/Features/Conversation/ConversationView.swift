@@ -47,17 +47,18 @@ struct ConversationContent: View {
     @Binding var draft: String
     @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
-    @State private var isSending = false
-    @State private var pendingTurns: [ConversationTurn] = []
-    @State private var isCancelling = false
+    @Binding var isSending: Bool
+    @Binding var pendingTurns: [ConversationTurn]
+    @Binding var isCancelling: Bool
     @State private var scrollRequestID = 0
-    @State private var banner: String?
+    @Binding var banner: String?
     @State private var connectionStatus: String?
     @State private var showsConnectionIndicator = false
     @State private var showsConnectionMessage = false
-    @State private var previousPendingText: String?
-    @State private var previousPendingWorkspaceID: String?
+    @Binding var previousPendingText: String?
+    @Binding var previousPendingWorkspaceID: String?
     @Binding var runConfigState: ConversationRunConfigState
+    let rootSessionID: SessionSummary.ID
     var onNewTab: (() -> Void)? = nil
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
@@ -228,6 +229,12 @@ struct ConversationContent: View {
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }
+        .onChange(of: isSending) { _, sending in
+            // A send may finish in the previous view after this tab was rebuilt.
+            if !sending, isCurrentWorkspace, let latest = model.cachedConversation(sessionID: sessionID) {
+                receiveConversation(latest)
+            }
+        }
         .task(id: readReceiptTimestamp) {
             guard let timestamp = readReceiptTimestamp else { return }
             // Keep transient receipt failures separate from conversation delivery.
@@ -270,7 +277,7 @@ struct ConversationContent: View {
     private func observe() async {
         guard isCurrentWorkspace else { return }
         // Restore only when this scoped view first opens; reconnecting must preserve edits.
-        if observedSessionID == nil, !isReadOnly,
+        if observedSessionID == nil, !isReadOnly, !isSending,
            let pending = model.pendingTextSend(sessionID: sessionID) {
             previousPendingText = pending.text
             previousPendingWorkspaceID = model.selectedWorkspaceID
@@ -284,7 +291,7 @@ struct ConversationContent: View {
         var retryDelay = 1
         while !Task.isCancelled {
             do {
-                try await model.observeConversation(sessionID: sessionID) { update in
+                try await model.observeConversation(sessionID: sessionID, rootSessionID: rootSessionID) { update in
                     guard isCurrentWorkspace else { return }
                     receiveConversation(update.conversation)
                     observedActivity = update.activity

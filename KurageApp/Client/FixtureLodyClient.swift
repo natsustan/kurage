@@ -26,6 +26,9 @@ final class FixtureLodyClient: LodyClient {
     private let conversationDelay: Duration?
     private let sendDelay: Duration?
     private var failTabStartOnce: Bool
+    private let skillRefreshDelay: Duration?
+    private var failSkillRefreshOnce: Bool
+    private var initialSkillSource: String?
     private var failSendOnce: Bool
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
@@ -38,7 +41,9 @@ final class FixtureLodyClient: LodyClient {
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
         failSendOnce: Bool = false,
-        failTabStartOnce: Bool = false
+        failTabStartOnce: Bool = false,
+        skillRefreshDelay: Duration? = nil,
+        failSkillRefreshOnce: Bool = false
     ) {
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
@@ -47,6 +52,8 @@ final class FixtureLodyClient: LodyClient {
         self.sendDelay = sendDelay
         self.failSendOnce = failSendOnce
         self.failTabStartOnce = failTabStartOnce
+        self.skillRefreshDelay = skillRefreshDelay
+        self.failSkillRefreshOnce = failSkillRefreshOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
         } else {
@@ -113,7 +120,16 @@ final class FixtureLodyClient: LodyClient {
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
         try requireAccount()
         try requireWorkspace(workspaceID)
-        _ = try record(templateSessionID)
+        let template = try record(templateSessionID)
+        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? "")"
+        if initialSkillSource == nil { initialSkillSource = source }
+        if source != initialSkillSource {
+            if let skillRefreshDelay { try await Task.sleep(for: skillRefreshDelay) }
+            if failSkillRefreshOnce {
+                failSkillRefreshOnce = false
+                throw LodyClientError.unreachable
+            }
+        }
         return [
             MentionSkill(token: "review-and-simplify-changes", name: "Review and Simplify Changes",
                          description: "Review code quality and simplify changes",
@@ -142,6 +158,22 @@ final class FixtureLodyClient: LodyClient {
             subtasks: record.subtasks,
             questions: record.questions
         )
+    }
+
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        if let rootSessionID, rootSessionID != sessionID,
+           !archivedSessionIDs.contains(rootSessionID), records.contains(where: { $0.summary.id == rootSessionID }),
+           !records.contains(where: { $0.summary.id == sessionID && $0.summary.isTabClosed != true && !archivedSessionIDs.contains(sessionID) }) {
+            let update = ConversationUpdate(conversation: Conversation(sessionID: sessionID, turns: [], permission: nil),
+                activity: .idle, syncState: .connecting, sessionTabs: fixtureTabs(sessionID: rootSessionID))
+            return AsyncThrowingStream { continuation in
+                continuation.yield(update)
+                continuation.finish()
+            }
+        }
+        return try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
@@ -174,13 +206,12 @@ final class FixtureLodyClient: LodyClient {
 
     private func fixtureTabs(sessionID: String) -> [SessionSummary] {
         let rootID = records.first { $0.summary.id == sessionID }?.summary.parentSessionID ?? sessionID
-        return records.filter { ($0.summary.id == rootID || $0.summary.parentSessionID == rootID) &&
+        // Creation order, like the live projection's `createdAt` sort. Tab ids are
+        // random, so sorting by them would shuffle the bar between runs.
+        let tabs = records.filter { ($0.summary.id == rootID || $0.summary.parentSessionID == rootID) &&
             !archivedSessionIDs.contains($0.summary.id) }
             .map(\.summary)
-            .sorted { lhs, rhs in
-                if lhs.id == rootID || rhs.id == rootID { return lhs.id == rootID }
-                return lhs.id < rhs.id
-            }
+        return tabs.filter { $0.id == rootID } + tabs.filter { $0.id != rootID }
     }
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
@@ -241,14 +272,14 @@ final class FixtureLodyClient: LodyClient {
         }
         let effectiveTurnID = pending?.message.turnID ?? turnID
         let effectiveRunConfig = if let pending { pending.runConfig } else { runConfig }
+        if let sendDelay { try await Task.sleep(for: sendDelay) }
+        try requireAccount()
+        try requireWorkspace(workspaceID)
         if failSendOnce {
             failSendOnce = false
             pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID, attachments: attachments), effectiveRunConfig)
             throw LodyClientError.deliveryUnconfirmed
         }
-        if let sendDelay { try await Task.sleep(for: sendDelay) }
-        try requireAccount()
-        try requireWorkspace(workspaceID)
 
         try update(sessionID) { record in
             if let runConfig = effectiveRunConfig {

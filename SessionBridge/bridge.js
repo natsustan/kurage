@@ -8,7 +8,7 @@ import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
-import { observeConversation, readSyncedConversation } from './conversation-observer.mjs';
+import { observeConversation, readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
@@ -33,15 +33,10 @@ const snapshotCodec = {
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
-// Auth scope of the one-shot read currently running on the shared replica.
-// Streams tokens outlive single operations, so binding happens per operation
-// and is released inside the queue before the next one starts. Only the shared
-// replica reads it — it is the one replica that has no scope of its own.
-let activeWorkspaceOperation;
 
 // Only a replica that authors a new session may create its document stream.
 async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
-  { createStreams = false, operationID, signal, usesActiveOperation = false } = {}) {
+  { createStreams = false, operationID, signal } = {}) {
   const repo = await LoroRepo.create({ metaDebounceCommitMs: 0 });
   try {
     const transport = new StreamsTransportAdapter({
@@ -51,16 +46,11 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
         ? `${workspaceID}:s:${docID.slice('session-'.length)}` : docID,
       flockDocStreamId: (flockDocID) => flockDocID,
       auth: async context => {
-        // Only the shared workspace replica adopts the one-shot read's scope;
-        // it was created without one. Replicas that carry their own scope keep
-        // it, so a concurrent write or standalone read can never inherit
-        // another operation's token binding or get cancelled with it.
-        const ownScope = { operationID, signal };
-        const scoped = usesActiveOperation ? activeWorkspaceOperation ?? ownScope : ownScope;
         const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-          command: 'auth', workspaceID, operationID: scoped.operationID, refresh: context?.reason === 'unauthorized',
+          command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
         });
-        if (scoped.signal && !scoped.signal.aborted) nativeFetch.bindSignal(access.token, scoped.signal);
+        signal?.throwIfAborted();
+        if (signal) nativeFetch.bindSignal(access.token, signal);
         return access.token;
       },
       baseUrl: gatewayBaseURL,
@@ -80,7 +70,28 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
-function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal, scoped) {
+function createWorkspaceState(rawRepo, workspaceID, gatewayBaseURL) {
+  const state = { workspaceID, gatewayBaseURL, metaReady: false, documents: new Map() };
+  const methods = {
+    openPersistedDoc: async id => {
+      const handle = await rawRepo.openPersistedDoc(id);
+      state.documents.set(id, handle);
+      return handle;
+    },
+    unloadDoc: async id => {
+      await rawRepo.unloadDoc(id);
+      state.documents.delete(id);
+    },
+  };
+  state.repo = new Proxy(rawRepo, { get: (target, property) => {
+    if (Object.hasOwn(methods, property)) return methods[property];
+    const value = Reflect.get(target, property, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  return state;
+}
+
+function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true, signal) {
   // The session list has already synced metadata. Keep its in-memory repo so
   // opening a conversation needs only the session document sync.
   const operation = workspaceOperation.then(async () => {
@@ -93,34 +104,103 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
     }
     signal?.throwIfAborted();
     if (!state) {
-      const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL, { usesActiveOperation: true });
-      state = { repo, workspaceID, gatewayBaseURL, metaReady: false };
+      state = createWorkspaceState(await createWorkspaceRepo(workspaceID, gatewayBaseURL), workspaceID, gatewayBaseURL);
       cachedWorkspace = state;
     }
-    const syncMeta = async () => {
-      if (refreshMeta || !state.metaReady) {
-        const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
-        if (!report.ok) throw new Error('Workspace metadata sync failed');
-        state.metaReady = true;
-      }
-    };
-    if (!scoped) {
-      await syncMeta();
-      signal?.throwIfAborted();
-      return work(state.repo);
+    if (refreshMeta || !state.metaReady) {
+      const report = await state.repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+      if (!report.ok) throw new Error('Workspace metadata sync failed');
+      state.metaReady = true;
     }
-    // A one-shot read wraps its whole sync in its auth scope: Streams tokens
-    // outlive single operations, so binding happens per operation and is
-    // released inside the queue before the next one starts.
-    activeWorkspaceOperation = { operationID: scoped.operationID, signal: scoped.signal };
+    signal?.throwIfAborted();
+    return work(state.repo);
+  });
+  workspaceOperation = operation.catch(() => {});
+  return operation;
+}
+
+function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, controller, refreshMeta = false) {
+  const operation = workspaceOperation.then(async () => {
+    const signal = controller.signal;
+    signal.throwIfAborted();
+    const state = cachedWorkspace;
+    const shared = !refreshMeta && state?.metaReady && state.workspaceID === workspaceID &&
+      state.gatewayBaseURL === gatewayBaseURL ? state : undefined;
+    let isolated;
+    const coldDocuments = new Set();
+    const coldFlockDocuments = new Set();
+    const sharedDocuments = new Set();
+    const borrowed = new Map();
+    let reuseLive = true;
+    const isObserved = sessionID => [...observations.values()].some(observation => observation.ready &&
+      observation.workspaceID === workspaceID && observation.sessionID === sessionID && !observation.controller.signal.aborted);
+    const confirmedVersion = async (id, handle) => syncedConversationVersion(shared.repo, workspaceID,
+      id.slice('session-'.length), handle.doc, await shared.repo.getDocMeta(id));
+    const getIsolatedRepo = async () => isolated ??= await createWorkspaceRepo(workspaceID, gatewayBaseURL, { operationID, signal });
+    // Reuse a live transcript only while its confirmed history matches metadata.
+    // Other resources sync separately: cancelling a one-shot Streams sync cannot
+    // safely cancel a request also owned by a live room on the shared replica.
+    const reader = {
+      listDoc: async () => (shared?.repo ?? await getIsolatedRepo()).listDoc(),
+      getDocMeta: async id => (shared?.repo ?? await getIsolatedRepo()).getDocMeta(id),
+      openPersistedDoc: async id => {
+        const handle = shared?.documents.get(id);
+        if (handle) {
+          sharedDocuments.add(id);
+          const sessionID = id.slice('session-'.length);
+          if (reuseLive && isObserved(sessionID)) {
+            const version = await confirmedVersion(id, handle);
+            if (version !== undefined) {
+              borrowed.set(id, { handle, version });
+              return handle;
+            }
+          }
+        }
+        coldDocuments.add(id);
+        return (await getIsolatedRepo()).openPersistedDoc(id);
+      },
+      openFlockDoc: async id => {
+        // A list pull does not keep machine providers or capabilities live.
+        coldFlockDocuments.add(id);
+        return (await getIsolatedRepo()).openFlockDoc(id);
+      },
+      sync: async options => {
+        signal.throwIfAborted();
+        const docIds = (options.docIds ?? []).filter(id => coldDocuments.has(id));
+        const flockDocIds = (options.flockDocIds ?? []).filter(id => coldFlockDocuments.has(id));
+        if (options.scope !== 'meta' && !docIds.length && !flockDocIds.length) return { ok: true, outcome: 'synced' };
+        return (await getIsolatedRepo()).sync({ ...options, docIds, flockDocIds, signal });
+      },
+    };
     try {
-      await syncMeta();
-      signal?.throwIfAborted();
-      const result = await work(state.repo);
-      scoped.abort?.();
+      if (!shared) {
+        const report = await (await getIsolatedRepo()).sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+        signal.throwIfAborted();
+        if (!report.ok) throw new Error('Workspace metadata sync failed');
+      }
+      let result = await work(reader);
+      // Recheck after awaits: a live patch may have superseded the borrowed
+      // baseline during this read. Retry once entirely on the scoped replica.
+      for (const [id, { handle, version }] of borrowed) {
+        if (!isObserved(id.slice('session-'.length)) || await confirmedVersion(id, handle) !== version) {
+          signal.throwIfAborted();
+          reuseLive = false;
+          result = await work(reader);
+          break;
+        }
+      }
+      signal.throwIfAborted();
       return result;
     } finally {
-      if (activeWorkspaceOperation?.signal === scoped.signal) activeWorkspaceOperation = undefined;
+      // destroy() alone does not cancel an in-flight one-shot sync in the pinned
+      // Streams library; abort its own auth scope before releasing the replica.
+      controller.abort();
+      await isolated?.destroy();
+      for (const docID of sharedDocuments) {
+        const observed = [...observations.values()].some(observation => observation.workspaceID === workspaceID &&
+          `session-${observation.sessionID}` === docID);
+        if (!observed) await shared.repo.unloadDoc(docID);
+      }
     }
   });
   workspaceOperation = operation.catch(() => {});
@@ -338,14 +418,9 @@ window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentCon
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    // Options are a pure read. Reuse the synced workspace replica — the session
-    // list keeps its metadata fresh and an open conversation already live-syncs
-    // the parent document — instead of rebuilding every document from the cloud
-    // on each load. The write path still uses its own replica and revalidates
-    // the template and choices at write time.
-    return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo =>
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo =>
       JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal, projectID ?? undefined, tab)),
-    false, controller.signal, { operationID, signal: controller.signal, abort: () => controller.abort() });
+    operationID, controller);
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);
@@ -413,17 +488,18 @@ window.kurageStopConversation = (id) => {
   observations.delete(id);
   observation?.controller.abort();
 };
-window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id) => {
+window.kurageObserveConversation = async (workspaceID, sessionID, gatewayBaseURL, id, rootSessionID) => {
   const controller = new AbortController();
   observations.set(id, { controller, workspaceID, sessionID });
   try {
     await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
       if (controller.signal.aborted) return;
-      await observeConversation({ repo, workspaceID, sessionID, signal: controller.signal,
+      const available = await observeConversation({ repo, workspaceID, sessionID, rootSessionID, signal: controller.signal,
         emit: update => window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'conversation', id, update,
         }),
       });
+      if (available !== false && !controller.signal.aborted) observations.get(id).ready = true;
     }, false, controller.signal);
     return 'ok';
   } catch (error) {
@@ -474,17 +550,13 @@ window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessi
     };
     const run = repo => sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor,
       access, controller.signal);
-    // Catalog and browse are pure reads; only select registers the project and
-    // needs its own replica. Reads share the synced workspace replica instead
-    // of rebuilding one per menu appearance, retry, and foreground return.
     if (action === 'select') {
       return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
         { operationID, signal: controller.signal }, controller.signal);
     }
-    // Browse pages need only the template's machine ID; re-syncing workspace
-    // metadata per page adds a round trip without changing the directory read.
-    return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
-      action === 'catalog', controller.signal, { operationID, signal: controller.signal, abort: () => controller.abort() });
+    // Catalog refreshes independently; browse needs only the cached machine ID.
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+      operationID, controller, action === 'catalog');
   } finally {
     clearTimeout(timeout);
     controller.abort();

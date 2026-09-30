@@ -118,6 +118,44 @@ struct SessionTabsTests {
         }
     }
 
+    @Test func activeTabChoiceIsRememberedPerRootAndClearedWithTheAccount() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let rootID = "session-long"
+        #expect(model.activeSessionTab(rootID: rootID) == rootID)
+        let tabID = try await model.startSessionTab("A separate conversation", rootID: rootID)
+        model.setActiveSessionTab(tabID, rootID: rootID)
+        #expect(model.activeSessionTab(rootID: rootID) == tabID)
+        #expect(model.activeSessionTab(rootID: "session-pr") == "session-pr")
+        model.signOut()
+        #expect(model.activeSessionTab(rootID: rootID) == rootID)
+    }
+
+    @Test(arguments: ["closed", "archived", "deleted"])
+    func unavailableRememberedTabFallsBackToMain(state: String) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let rootID = "session-long"
+        let tabID = try await model.startSessionTab("Remembered tab", rootID: rootID)
+        model.setActiveSessionTab(tabID, rootID: rootID)
+        // Change the service independently of the model's cached membership.
+        if state == "closed" {
+            try await client.updateSessionMetadata(.tabClosed(true), sessionID: tabID, workspaceID: "ws-demo")
+        } else {
+            _ = try await client.archiveSession(sessionID: tabID, workspaceID: "ws-demo")
+            if state == "deleted" {
+                try await client.deleteArchivedSession(sessionID: tabID, workspaceID: "ws-demo")
+            }
+        }
+        try await model.observeConversation(sessionID: tabID, rootSessionID: rootID) { update in
+            #expect(update.sessionTabs?.first?.id == rootID)
+        }
+        #expect(model.activeSessionTab(rootID: rootID) == rootID)
+        #expect(model.sessionTabs(rootID: rootID).filter { $0.isTabClosed != true }.map(\.id) == [rootID])
+    }
+
     @Test func tabMetadataSurvivesNativePatchReconstruction() throws {
         let json = #"{"sessionID":"child","order":[],"changed":[],"activity":"idle","syncState":"live","sessionTabs":[{"id":"root","title":"Main","agentName":"codex","activity":"idle","preview":""},{"id":"child","title":"Tab","agentName":"codex","activity":"running","preview":"","parentSessionID":"root","isTabClosed":true,"lastMessageAt":10}]}"#
         let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))

@@ -10,11 +10,13 @@
 - 各 tab 的文字、提及、附件草稿和下一轮配置在本次详情访问期间独立保留；切换重新定位到所选会话的最新消息，仅当前正文订阅保持活动。列表仍只显示根 Session。多个药丸使用系统 `GlassEffectContainer` / `glassEffect`，当前 tab 带轻微强调色。
 - 新建沿用主会话的机器、Agent 和完整 project/worktree 上下文，第一轮默认取主会话有效配置，model/reasoning 选项来自同一 Agent 的机器能力；页面选择与写入验证共用投影，支持每模型的 reasoning 约束。不复制历史、不恢复主会话的 provider session。附件沿用现有上传链路；先同步新 Session 正文，再发布 `parentSessionId` / `latestUserMsgId` metadata；只有创建副本可创建 Streams 流。未确认请求在进程内保留会话／turn ID、原文、附件与首次配置，Retry 继续原请求；离开创建页取消调用者，阻止迟到导航。
 - 关闭与重开：长按子 tab 的 Close tab 写 `isTabClosed`，不归档、不删除、不停止；当前 tab 关闭后回主会话，仅剩一个 tab 时收起药丸栏。「··· → Closed tabs」可重新打开。其它端的新增、关闭和状态变化经现有 metadata room 更新；剔除归档、删除、`childSessionPlacement: side-panel` 及仅有 opened-by 关系的会话。关闭未发草稿在本次详情内保留，退出详情后释放。
+- 选中 tab 记忆（2026-09-29 修订）：上次停留的 tab 由 `AppModel` 按工作区／根会话记住，重新进入详情直接恢复该 tab（原先记在详情的 `@State`，每次从列表进入都回落到 Main），与桌面端 `?tab` 的 last-active 恢复一致。记忆只保留在进程内，退出登录清空；投影证明该 tab 已关闭或不存在时回落到根会话，关闭当前 tab 仍回主会话。药丸栏出现时滚动到当前 tab，恢复的 tab 不会停在可视范围外。fixture 的 tab 顺序改为创建顺序（原先按随机 id 排序，每次运行药丸次序不同），与 live 投影的 `createdAt` 排序一致。
 - 原生状态：tab metadata 随完整 conversation update 传递，只有 metadata 变化才扫描目录，正文增长不重复扫描；缓存信息随之后的正文更新继续携带，防止 `bufferingNewest` 丢失状态。按账号／工作区隔离，退出登录清空；新建页面显示期间暂停详情已读回执。发送、停止和问答使用当前 tab 的独立 Session ID，保留原有空闲发送与重试限制。
 - 协议参考：本机 Lody `packages/shared/src/schema.ts` 的 `parentSessionId` / `childSessionPlacement`，`components/src/hooks/use-session-actions.ts` 的创建和 `setSessionTabClosed`，`components/src/components/sessions/session-detail.tsx` 的 tab 分组，以及 `apps/cli/src/session/session-manager.ts` 的共享父会话工作目录解析。subagent 的投影、模型和面板不变。
 - 此次交互修订验证进行中：208 项 JS 测试通过，frozen lockfile 安装及 bundle 重建完成，Simulator 构建通过；Swift 和更新后的浅色／深色大字号 UI 回归正在运行。之前布局的验证不作为此次结果。真实账号的首轮 model/reasoning 生效、同目录派发、跨端 tab 更新、网络恢复与后台恢复仍待实测。
 - Provider 切换修订验证（2026-09-29）：frozen lockfile 安装、209 项 JS 测试（含 3 项新的 tab provider 用例）与 bundle 重建通过；164 项 KurageTests 通过（含新增 provider 切换与 retry 保留用例）。未验证：真实账号上 tab 切换 provider 的首轮生效、另一 Agent 的 baseline 取自最近会话的实际值、UI 浅色／深色与大字号回归、网络与后台恢复。
 - 选项加载性能修订（2026-09-29）：New Session／New Tab 的选项读取原先每次都新建仅内存临时副本，从云端冷启动同步整份 workspace metadata、模板会话完整文档和机器 Flock 后销毁，进入页面和切换 provider 都重复整套网络往返。现改为复用会话列表／详情页共享的 workspace 副本（meta 已同步、父会话文档已 live 同步、Flock 已被列表刷新打开），重复加载基本本地完成；写入路径（startSession）保持独立副本并在写入时重新验证模板与选项，陈旧选项最多被拒后提示刷新。取消语义保留：一次性读取在共享副本的执行段内注册认证作用域（按 operation ID 的别名 token 绑定本次 AbortSignal，队列内完成即释放），取消仍中止进行中的原生请求，后续操作不会继承绑定。bridge 测试更新为 213 项（共享副本复用、取消保留作用域、tab 转发不销毁共享副本），Swift 164 项含 StreamFetchHandler 取消用例全部通过；真实账号上首次冷缓存与弱网取消仍待实测。
+- 选中 tab 记忆验证（2026-09-29）：Simulator 构建通过；166 项 KurageTests 通过（含新增的按工作区／根会话记忆与退出登录清空用例）；`SessionTabsFlowTests` 通过（新增「返回列表后重新进入仍停在子 tab、显示其正文、且药丸完整落在窗口内」断言，去掉药丸栏滚动后该断言按预期失败于 `503.0 > 402.0`，即红绿双向验证）；4 项涉及详情进入／退出的 ShellFlowTests 通过。未验证：真实账号上跨端关闭当前 tab 后重进详情的回落、后台恢复，以及跨启动恢复（记忆只在进程内）。
 
 ## Markdown 渲染（2026-09-29）
 
@@ -281,3 +283,12 @@
 - 原生：tab 投影为空时不再覆盖已缓存列表（根会话在其它端被归档时曾清空 tab 栏并把用户弹回 Main）；`markSessionRead` 去重覆盖 tab；`startSession` 的模板／项目配对改为按当前会话列表判断（模板属于该项目，或该项目尚无任何会话），不再依赖目录读取缓存，修复目录刷新后与操作无关的 notConnected；`sessionSummary`／`sessionTabs` 改查 `sessions` 索引；运行状态统一为 `observedActivity ?? session.activity`；`attemptedTabWrites` 按账号／工作区／会话登记；`newSessionTabOptions` 合并进 `newSessionOptions(isTab:)`，fixture 复用同一选项读取与 run-config 应用逻辑。
 - 已知未修：`ConversationTabsView` 的 `.id(activeID)` 仍随切 tab 重建会话子树（移除需要逐项重置约 18 项会话语义状态，需单独验证）；被旧版客户端「关闭并归档」的 tab 仍不能在 Closed tabs 中重开（Lody `reopenSessionTab` 会先 restoreSession）；live 客户端「上传失败且从未写入」分支仍无测试覆盖。
 - 本轮验证：frozen lockfile 安装、213 项 JS 测试与 bundle 重建通过；165 项 KurageTests 通过（含新增的技能提及重解析用例，首轮因 fixture 与 AppModel 的配对校验口径不一致失败一条，改为按会话列表判断后全通过）；4 项相关 fixture UI 测试通过（tab 创建/切换/关闭/重开与草稿独立、技能与当前项目会话提及、新建页项目提及、提及整体删除）。真实账号上的并发取消、跨端 tab 状态与根会话归档路径仍未实测。
+
+## 相对 main 的审查修复（2026-09-30）
+
+- 取消隔离：移除共享副本的动态 `activeWorkspaceOperation`。新建选项、项目目录与目录浏览的一次性网络读取使用自己的鉴权与取消作用域，完成或取消均先 abort 再销毁短期副本，避免终止共享会话的实时 SSE；鉴权返回后再次核对取消，阻止已经取消的请求继续启动。
+- 配置读取：继续复用同工作区的已同步元数据；机器 Flock 始终独立刷新。只有仍在观察、正文版本及 `lastMessageAt` 同步证明一致的历史可复用，返回前再核对，若期间变化则在独立副本重读。其它 provider 的完整历史只在短期副本中加载并释放；清理共享历史时保留活跃及等待建立的观察。
+- 标签发送：发送、取消、乐观消息、错误提示和未确认重试状态与草稿一起按 tab 保存，不随 `.id(activeID)` 重建丢失。发送中禁用该 tab 的输入框，其它 tab 仍可编辑；切回后从模型缓存接收已完成发送的正文。保留现有会话子树重建方式，让滚动、面板和读取状态继续按会话重置。
+- 标签回退：原生观察显式传递根会话 ID。已记住的 tab 被关闭、归档或删除时，桥先发布根会话的权威标签列表，再释放观察，模型切回 Main；同时覆盖正文同步期间删除和缓存元数据过期后无法打开文档的情况。根会话无法解析所产生的空投影仍不清除缓存。
+- 技能提及：来源切换后，在新来源技能加载并重新解析完成前禁用发送；失败时保留草稿并显示 Retry，即使候选菜单已经关闭也可恢复。发送失败恢复的技能草稿也会重新触发解析，避免切换 tab 后停在禁用状态。项目目录选择模板复用 `activityTime`，让没有 `lastMessageAt` 的新根会话按 `createdAt` 正确排序。
+- 本轮验证：frozen lockfile 安装、233 项 JavaScript 测试和 bundle 重建通过；167 项 Swift 测试（含 WebKit→原生请求取消）及 7 项相关 fixture UI 用例通过。最后补齐技能草稿恢复触发后，4 项提及／发送失败 UI 再次通过；技能刷新失败与重试另在深色 accessibility-extra-large 下通过。已核对浅色和深色截图中的输入、键盘避让、禁用发送与重试入口，并恢复模拟器原设置。真实账号下的持续输出、跨端关闭／归档／删除、网络恢复与后台返回仍未实测。

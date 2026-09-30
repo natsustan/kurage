@@ -14,8 +14,11 @@ struct KurageApp: App {
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
                 failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"),
-                sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
-                failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"))
+                sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-tab-send") ? .seconds(15)
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
+                failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"),
+                skillRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh") ? .seconds(3) : nil,
+                failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"))
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

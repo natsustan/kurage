@@ -186,6 +186,7 @@ struct SessionComposer: View {
 
     private var canSend: Bool {
         showsSend && canSubmit && !isSending && !isCancelling &&
+            (!mentions.hasSkillMentions || loadedMentionSourceID == mentionSourceID && skillsLoaded) &&
             !isLoadingAttachments && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
@@ -200,19 +201,23 @@ struct SessionComposer: View {
     private var mentionLoadID: String? {
         // Leaving the foreground cancels pending bridge requests.
         guard scenePhase == .active else { return nil }
-        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentionRetry)"
+        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentions.hasSkillMentions)|\(mentionRetry)"
     }
 
     var body: some View {
         VStack(spacing: 8) {
             if let query = mentionQuery {
                 mentionMenu(query)
+            } else if mentions.hasSkillMentions, mentionLoadFailed {
+                Button("Could not refresh skills. Retry") { mentionRetry += 1 }
+                    .accessibilityIdentifier("mention-retry")
             }
             VStack(spacing: 0) {
                 if !attachments.isEmpty || isLoadingAttachments {
                     ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
                 }
                 TextField(placeholder, text: editableDraft, selection: $selection, axis: .vertical)
+                    .disabled(isSending)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .fixedSize(horizontal: false, vertical: true)

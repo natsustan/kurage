@@ -15,6 +15,7 @@ struct StatusNote: Equatable {
 final class AppModel {
     private let client: any LodyClient
     private var tabsByWorkspace: [String: [String: [SessionSummary]]] = [:]
+    private var activeTabsByWorkspace: [WorkspaceSummary.ID: [SessionSummary.ID: SessionSummary.ID]] = [:]
     private var pendingTabs: [String: [String: SessionTabStart]] = [:]
     private var startingTabs: Set<String> = []
     var supportsSessionTabs: Bool { client.supportsSessionTabs }
@@ -32,6 +33,21 @@ final class AppModel {
 
     func pendingSessionTab(rootID: String) -> SessionTabStart? {
         selectedWorkspaceID.flatMap { pendingTabs[$0]?[rootID] }
+    }
+
+    /// The tab a detail reopens on. It lives here rather than in the detail's
+    /// transient state so returning from the list resumes the tab the user left
+    /// on, like the desktop viewer's restored tab. A remembered tab is kept even
+    /// when the projection does not list it yet: the tab bar drops back to the
+    /// root once a loaded projection proves the tab is gone.
+    func activeSessionTab(rootID: String) -> SessionSummary.ID {
+        guard let workspaceID = selectedWorkspaceID else { return rootID }
+        return activeTabsByWorkspace[workspaceID]?[rootID] ?? rootID
+    }
+
+    func setActiveSessionTab(_ tabID: SessionSummary.ID, rootID: String) {
+        guard let workspaceID = selectedWorkspaceID else { return }
+        activeTabsByWorkspace[workspaceID, default: [:]][rootID] = tabID
     }
 
     func newSessionOptions(templateSessionID: SessionSummary.ID, agentConfigID: String? = nil,
@@ -278,6 +294,7 @@ final class AppModel {
         projectCatalogGeneration = -1
         pendingTabs = [:]
         tabsByWorkspace = [:]
+        activeTabsByWorkspace = [:]
         startingTabs = []
         archiveOperations = [:]
         activeArchiveOperations = [:]
@@ -317,6 +334,7 @@ final class AppModel {
             activeArchiveOperations = activeArchiveOperations.filter { workspaceIDs.contains($0.key) }
             sessionsByWorkspace = sessionsByWorkspace.filter { workspaceIDs.contains($0.key) }
             tabsByWorkspace = tabsByWorkspace.filter { workspaceIDs.contains($0.key) }
+            activeTabsByWorkspace = activeTabsByWorkspace.filter { workspaceIDs.contains($0.key) }
             pendingTabs = pendingTabs.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -482,6 +500,7 @@ final class AppModel {
 
     func observeConversation(
         sessionID: String,
+        rootSessionID: String? = nil,
         onUpdate: @MainActor (ConversationUpdate) -> Void
     ) async throws {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
@@ -494,7 +513,8 @@ final class AppModel {
                 scheduleSessionSearchIndex()
             }
         }
-        let updates = try await client.observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        let updates = try await client.observeConversation(sessionID: sessionID,
+            rootSessionID: rootSessionID ?? sessionSummary(sessionID)?.parentSessionID, workspaceID: workspaceID)
         for try await update in updates {
             try Task.checkCancellation()
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
@@ -517,6 +537,11 @@ final class AppModel {
                 // empty blanks the tab bar and drops the user back to Main.
                 if !projectedTabs.isEmpty, tabsByWorkspace[workspaceID]?[rootID] != projectedTabs {
                     tabsByWorkspace[workspaceID, default: [:]][rootID] = projectedTabs
+                }
+                if !projectedTabs.isEmpty,
+                   let activeID = activeTabsByWorkspace[workspaceID]?[rootID],
+                   !projectedTabs.contains(where: { $0.id == activeID && $0.isTabClosed != true }) {
+                    activeTabsByWorkspace[workspaceID, default: [:]][rootID] = rootID
                 }
             }
             conversationCache[workspaceID, default: [:]][sessionID] = update.conversation

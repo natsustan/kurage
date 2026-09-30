@@ -539,13 +539,17 @@ final class HTTPLodyClient: LodyClient {
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        try await observeConversation(sessionID: sessionID, rootSessionID: nil, workspaceID: workspaceID)
+    }
+
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let generation = authenticationGeneration
         let access = try await streamsAccess(workspaceID: workspaceID)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        return bridge.observeConversation(sessionID: sessionID, workspaceID: workspaceID, access: access)
+        return bridge.observeConversation(sessionID: sessionID, rootSessionID: rootSessionID, workspaceID: workspaceID, access: access)
     }
 
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? {

@@ -2,6 +2,98 @@ import XCTest
 
 final class SessionTabsFlowTests: XCTestCase {
     @MainActor
+    func testSuccessfulSendKeepsItsStateAcrossTabSwitches() {
+        verifySendAcrossTabSwitches(fails: false)
+    }
+
+    @MainActor
+    func testFailedSendRestoresOnlyItsOwnTabDraft() {
+        verifySendAcrossTabSwitches(fails: true)
+    }
+
+    @MainActor
+    private func verifySendAcrossTabSwitches(fails: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-tab-send"] + (fails ? ["--fixture-send-unconfirmed"] : [])
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"].firstMatch)
+        tap(app.buttons["new-session-tab"])
+        let firstMessage = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(firstMessage)
+        firstMessage.typeText("Other tab")
+        tap(app.buttons["new-session-send"])
+        let child = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH %@ AND identifier != %@", "session-tab-", "session-tab-session-long")).firstMatch
+        XCTAssertTrue(child.waitForExistence(timeout: 5))
+        let main = app.buttons["session-tab-session-long"]
+        tap(main)
+        let field = app.descendants(matching: .any)["follow-up-field"].firstMatch
+        tap(field)
+        if fails {
+            field.typeText("$review")
+            tap(app.buttons["mention-skill-review-and-simplify-changes"])
+        }
+        field.typeText("In-flight main message")
+        let originalDraft = field.value as? String
+        let send = app.buttons["send-follow-up"]
+        tap(send)
+        tap(child)
+        tap(field)
+        field.typeText("Child stays editable")
+        tap(main)
+        XCTAssertEqual(send.label, "Sending")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "In-flight main message")).firstMatch.exists)
+        XCTAssertFalse(field.isEnabled)
+        XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
+        attachScreen(name: "Send still pending after tab switch")
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 20))
+        if fails {
+            XCTAssertEqual(field.value as? String, originalDraft)
+            XCTAssertTrue(app.buttons["Retry earlier message"].exists)
+            XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        } else {
+            XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
+            XCTAssertEqual(app.staticTexts.matching(identifier: "In-flight main message").count, 1)
+        }
+        tap(child)
+        XCTAssertEqual(field.value as? String, "Child stays editable")
+    }
+
+    @MainActor
+    func testProviderSkillRefreshBlocksSendAndOffersRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-skill-refresh"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        let field = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(field)
+        field.typeText("$review")
+        tap(app.buttons["mention-skill-review-and-simplify-changes"])
+        let send = app.buttons["new-session-send"]
+        XCTAssertTrue(send.isEnabled)
+        tap(app.buttons["run-config-menu"])
+        tap(app.buttons["run-config-advanced"])
+        tap(app.buttons["run-config-provider"])
+        tap(app.buttons["Codex"])
+        tap(app.buttons["run-config-done"])
+        XCTAssertFalse(send.isEnabled)
+        let retry = app.buttons["mention-retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 8))
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertTrue((field.value as? String)?.contains("$review-and-simplify-changes") == true)
+        attachScreen(name: "Skill refresh failure with preserved draft")
+        tap(retry)
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 8))
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        tap(send)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", ".agents/skills/review-and-simplify-changes/SKILL.md"))
+            .firstMatch.waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testCreateSwitchCloseReopenKeepsIndependentDrafts() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -76,12 +168,36 @@ final class SessionTabsFlowTests: XCTestCase {
         XCTAssertEqual(composer.value as? String, "Child draft remains separate")
         attachScreen(name: "Session tabs reopened")
 
+        // A third, long-titled tab: with three pills the restored tab can start
+        // outside the bar's viewport, so re-entry must scroll it into view.
+        tap(app.buttons["new-session-tab"])
+        let thirdMessage = app.descendants(matching: .any)["new-session-field"].firstMatch
+        XCTAssertTrue(thirdMessage.waitForExistence(timeout: 5))
+        tap(thirdMessage)
+        thirdMessage.typeText("Another long tab conversation")
+        tap(app.buttons["new-session-send"])
+        let third = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH %@ AND identifier != %@ AND identifier != %@",
+            "session-tab-", "session-tab-session-long", childID)).firstMatch
+        XCTAssertTrue(third.waitForExistence(timeout: 5))
+        XCTAssertTrue(third.isSelected)
+        let thirdID = third.identifier
+        attachScreen(name: "Session tabs third tab")
+
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-long").count, 1)
         XCTAssertFalse(app.descendants(matching: .any)["session-" + String(childID.dropFirst("session-tab-".count))].exists)
         tap(root)
-        XCTAssertTrue(app.buttons[childID].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[thirdID].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[thirdID].isSelected)
+        // The restored pill starts outside the bar's viewport, so re-entry has to
+        // scroll it into view instead of leaving it clipped at the edge.
+        XCTAssertTrue(app.buttons[thirdID].wait(for: \.isHittable, toEqual: true, timeout: 5))
+        let window = app.windows.firstMatch.frame
+        XCTAssertGreaterThanOrEqual(app.buttons[thirdID].frame.minX, window.minX)
+        XCTAssertLessThanOrEqual(app.buttons[thirdID].frame.maxX, window.maxX)
+        XCTAssertTrue(app.staticTexts["Another long tab conversation"].firstMatch.exists)
         attachScreen(name: "Session tabs after returning from list")
     }
 

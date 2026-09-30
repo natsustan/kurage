@@ -75,6 +75,7 @@ protocol LodyClient: AnyObject {
     /// The turn ID reserved for an in-flight or unconfirmed text send.
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     /// Returns the choice used to author the turn, including on retries.
     /// `nil` means the turn inherited its configuration without an explicit choice.
     /// `runConfig` applies only when this call creates the turn.
@@ -135,6 +136,10 @@ protocol LodyClient: AnyObject {
 }
 
 extension LodyClient {
+    func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     var supportsSessionTabs: Bool { false }
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
