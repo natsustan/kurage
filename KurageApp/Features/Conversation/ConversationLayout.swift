@@ -33,8 +33,11 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
 final class ConversationLayoutController<Footer: View>: UIViewController, UITableViewDelegate {
     private let contentView = UIView()
     private let tableView = ConversationTableView(frame: .zero, style: .plain)
+    private let footerScrollView = ConversationFooterScrollView()
     private let footerHost: UIHostingController<MeasuredConversationFooter<Footer>>
     private var footerHeightConstraint: NSLayoutConstraint!
+    private var footerViewportHeightConstraint: NSLayoutConstraint!
+    private var needsFooterBottomScroll = true
     private let emptyHost = UIHostingController(rootView: ConversationEmptyState(isLoading: true))
     private var dataSource: UITableViewDiffableDataSource<Int, ConversationTurn.ID>!
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
@@ -149,23 +152,39 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             return cell
         }
 
-        install(emptyHost)
-        install(footerHost)
+        install(emptyHost, in: contentView)
+        footerScrollView.translatesAutoresizingMaskIntoConstraints = false
+        footerScrollView.contentInsetAdjustmentBehavior = .never
+        footerScrollView.scrollsToTop = false
+        contentView.addSubview(footerScrollView)
+        install(footerHost, in: footerScrollView)
         footerHeightConstraint = footerHost.view.heightAnchor.constraint(equalToConstant: 78)
+        footerViewportHeightConstraint = footerScrollView.heightAnchor.constraint(equalToConstant: 78)
         // Follow the keyboard, but stay above the home indicator while it is hidden.
         // The lower-priority equality yields when the safe-area cap is tighter.
-        let footerFollowsKeyboard = footerHost.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
+        let footerFollowsKeyboard = footerScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
         footerFollowsKeyboard.priority = .defaultHigh
+        // A placeholder's minimum size must yield before keyboard avoidance,
+        // including when an accessible composer fills the entire viewport.
+        let emptyBottom = emptyHost.view.bottomAnchor.constraint(equalTo: footerScrollView.topAnchor)
+        emptyBottom.priority = .defaultLow
         NSLayoutConstraint.activate([
             footerHeightConstraint,
-            footerHost.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            footerHost.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            footerViewportHeightConstraint,
+            footerHost.view.topAnchor.constraint(equalTo: footerScrollView.contentLayoutGuide.topAnchor),
+            footerHost.view.bottomAnchor.constraint(equalTo: footerScrollView.contentLayoutGuide.bottomAnchor),
+            footerHost.view.leadingAnchor.constraint(equalTo: footerScrollView.contentLayoutGuide.leadingAnchor),
+            footerHost.view.trailingAnchor.constraint(equalTo: footerScrollView.contentLayoutGuide.trailingAnchor),
+            footerHost.view.widthAnchor.constraint(equalTo: footerScrollView.frameLayoutGuide.widthAnchor),
+            footerScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            footerScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             footerFollowsKeyboard,
-            footerHost.view.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor),
+            footerScrollView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor),
+            footerScrollView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor),
             emptyHost.view.topAnchor.constraint(equalTo: contentView.topAnchor),
             emptyHost.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             emptyHost.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            emptyHost.view.bottomAnchor.constraint(equalTo: footerHost.view.topAnchor)
+            emptyBottom
         ])
         // Empty-state artwork does not prevent pulling the list to refresh.
         emptyHost.view.isUserInteractionEnabled = false
@@ -176,14 +195,15 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         }, for: .valueChanged)
         tableView.refreshControl = refresh
         tableView.onLayout = { [weak self] in self?.adjustTranscriptLayout() }
+        footerScrollView.onLayout = { [weak self] in self?.updateFooterViewport() }
     }
 
-    private func install<Content: View>(_ host: UIHostingController<Content>) {
+    private func install<Content: View>(_ host: UIHostingController<Content>, in container: UIView) {
         addChild(host)
         host.safeAreaRegions = []
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(host.view)
+        container.addSubview(host.view)
         host.didMove(toParent: self)
     }
 
@@ -197,6 +217,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             guard let self, height.isFinite, height > 0,
                   abs(footerHeightConstraint.constant - height) > 0.5 else { return }
             footerHeightConstraint.constant = ceil(height)
+            needsFooterBottomScroll = true
             view.setNeedsLayout()
             // Keep the transcript inset in step with the newly measured footer.
             view.layoutIfNeeded()
@@ -262,7 +283,27 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateFooterViewport()
         adjustTranscriptLayout()
+    }
+
+    private func updateFooterViewport() {
+        guard contentView.bounds.height > 0 else { return }
+        let availableHeight = max(0, min(contentView.frame.maxY, view.safeAreaLayoutGuide.layoutFrame.maxY)
+            - contentView.frame.minY)
+        let height = min(footerHeightConstraint.constant, availableHeight)
+        if abs(footerViewportHeightConstraint.constant - height) > 0.5 {
+            footerViewportHeightConstraint.constant = height
+            needsFooterBottomScroll = true
+            view.setNeedsLayout()
+        }
+        footerScrollView.isScrollEnabled = footerHeightConstraint.constant > height + 0.5
+        // Keep the action row visible after adding attachments or opening the
+        // keyboard. Oversized content remains reachable by scrolling upward.
+        if needsFooterBottomScroll, abs(footerScrollView.bounds.height - height) < 0.5 {
+            footerScrollView.contentOffset.y = max(0, footerHeightConstraint.constant - height)
+            needsFooterBottomScroll = false
+        }
     }
 
     private var bottomOffset: CGFloat {
@@ -279,7 +320,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             reportBottomMessage()
         }
 
-        var bottomInset = max(0, contentView.bounds.height - footerHost.view.frame.minY) + 6
+        var bottomInset = max(0, contentView.bounds.height - footerScrollView.frame.minY) + 6
         // Keep room below a collapsed short transcript so clamping cannot pull
         // its header down while the contents are retracting upward.
         if anchorsDisclosure, let readingAnchor, let indexPath = dataSource.indexPath(for: readingAnchor.id) {
@@ -439,6 +480,17 @@ private final class ConversationTableView: UITableView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        onLayout?()
+    }
+}
+
+private final class ConversationFooterScrollView: UIScrollView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // Keyboard transitions can resize this viewport after the parent's
+        // layout callback. Apply its pending bottom scroll at the final size.
         onLayout?()
     }
 }

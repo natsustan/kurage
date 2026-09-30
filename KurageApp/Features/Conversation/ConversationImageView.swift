@@ -133,6 +133,24 @@ private struct ConversationImageGrid: Layout {
 struct ConversationImagePreview: View {
     let image: ConversationImage
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
+
+    var body: some View {
+        AttachmentImagePreview(
+            name: image.accessibilityName,
+            previewIdentifier: "conversation-image-preview",
+            closeIdentifier: "conversation-image-close"
+        ) {
+            try await loadImage(image, .original)
+        }
+    }
+}
+
+/// Shared full-size viewer for downloaded images and local composer drafts.
+struct AttachmentImagePreview: View {
+    let name: String
+    let previewIdentifier: String
+    let closeIdentifier: String
+    let loadData: @MainActor () async throws -> Data
     @Environment(\.dismiss) private var dismiss
     @State private var loaded: UIImage?
     @State private var failed = false
@@ -146,13 +164,12 @@ struct ConversationImagePreview: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .padding(16)
-                        .accessibilityLabel(image.accessibilityName)
-                        .accessibilityIdentifier("conversation-image-preview")
+                        .accessibilityLabel(name)
+                        .accessibilityIdentifier(previewIdentifier)
                 } else if failed {
                     ContentUnavailableView(
                         "Could not load image",
-                        systemImage: "photo",
-                        description: Text(image.accessibilityName)
+                        systemImage: "photo"
                     )
                     .foregroundStyle(.white)
                 } else {
@@ -161,12 +178,11 @@ struct ConversationImagePreview: View {
                         .accessibilityLabel("Loading image")
                 }
             }
-            .navigationTitle(image.accessibilityName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close", systemImage: "xmark") { dismiss() }
-                        .accessibilityIdentifier("conversation-image-close")
+                        .accessibilityIdentifier(closeIdentifier)
                 }
             }
             .toolbarBackground(.visible, for: .navigationBar)
@@ -177,7 +193,7 @@ struct ConversationImagePreview: View {
 
     private func loadOriginal() async {
         do {
-            let data = try await loadImage(image, .original)
+            let data = try await loadData()
             guard !Task.isCancelled, let uiImage = UIImage(data: data) else {
                 failed = true
                 return

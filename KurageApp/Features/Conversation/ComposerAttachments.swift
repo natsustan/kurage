@@ -192,6 +192,7 @@ struct ComposerAttachmentStrip: View {
     @Binding var attachments: [ComposerAttachment]
     let pending: [PendingComposerAttachment]
     let disabled: Bool
+    @State private var previewAttachment: ComposerAttachment?
 
     private var containsImage: Bool {
         attachments.contains(where: \.isImage) || pending.contains(where: \.isImage)
@@ -201,10 +202,14 @@ struct ComposerAttachmentStrip: View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
-                    ComposerAttachmentPreview(fileName: attachment.fileName, isImage: attachment.isImage,
-                                              thumbnailData: attachment.thumbnailData, isLoading: disabled) {
-                        attachments.removeAll { $0.id == attachment.id }
-                    }
+                    ComposerAttachmentPreview(
+                        fileName: attachment.fileName,
+                        isImage: attachment.isImage,
+                        thumbnailData: attachment.thumbnailData,
+                        isLoading: disabled,
+                        onRemove: { attachments.removeAll { $0.id == attachment.id } },
+                        onPreview: attachment.isImage ? { previewAttachment = attachment } : nil
+                    )
                 }
                 ForEach(pending) { item in
                     ComposerAttachmentPreview(fileName: item.fileName, isImage: item.isImage,
@@ -217,6 +222,15 @@ struct ComposerAttachmentStrip: View {
         .frame(height: containsImage ? 122 : nil)
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("composer-attachments")
+        .fullScreenCover(item: $previewAttachment) { attachment in
+            AttachmentImagePreview(
+                name: attachment.fileName,
+                previewIdentifier: "composer-image-preview",
+                closeIdentifier: "composer-image-close"
+            ) {
+                attachment.data
+            }
+        }
     }
 }
 
@@ -226,26 +240,35 @@ private struct ComposerAttachmentPreview: View {
     let thumbnailData: Data?
     let isLoading: Bool
     let onRemove: (() -> Void)?
+    var onPreview: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 0) {
             if isImage {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 20).fill(Color.primary.opacity(0.07))
-                    if let thumbnailData, let image = UIImage(data: thumbnailData) {
-                        Image(uiImage: image).resizable().scaledToFill()
-                            .accessibilityLabel(fileName)
+                Button {
+                    onPreview?()
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 20).fill(Color.primary.opacity(0.07))
+                        if let thumbnailData, let image = UIImage(data: thumbnailData) {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        }
+                    }
+                    .frame(width: 120, height: 120)
+                    .clipShape(.rect(cornerRadius: 20))
+                    .overlay {
+                        if isLoading {
+                            RoundedRectangle(cornerRadius: 20).fill(.black.opacity(0.2))
+                            ProgressView().tint(thumbnailData == nil ? Color.primary : .white)
+                                .accessibilityLabel("Loading \(fileName)")
+                        }
                     }
                 }
-                .frame(width: 120, height: 120)
-                .clipShape(.rect(cornerRadius: 20))
-                .overlay {
-                    if isLoading {
-                        RoundedRectangle(cornerRadius: 20).fill(.black.opacity(0.2))
-                        ProgressView().tint(thumbnailData == nil ? Color.primary : .white)
-                            .accessibilityLabel("Loading \(fileName)")
-                    }
-                }
+                .buttonStyle(.plain)
+                .disabled(onPreview == nil)
+                .accessibilityLabel(fileName)
+                .accessibilityHint("Shows the full image")
+                .accessibilityIdentifier("composer-image-thumbnail")
                 .overlay(alignment: .topTrailing) { removeButton }
             } else {
                 HStack(spacing: 8) {

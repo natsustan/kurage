@@ -569,8 +569,8 @@ final class ShellFlowTests: XCTestCase {
 
         let connect = app.buttons["sign-in-button"]
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["See running sessions when you step away."].exists)
-        XCTAssertEqual(connect.label, "Connect Lody Cloud")
+        XCTAssertTrue(app.staticTexts["welcome-title"].label.contains("Welcome to"))
+        XCTAssertEqual(connect.label, "Get Started")
         attachScreen(app, name: "sign-in")
         tap(connect)
 
@@ -775,7 +775,7 @@ final class ShellFlowTests: XCTestCase {
         assertMessageAboveComposer(latest, field: field)
         attachScreen(app, name: "multiline-keyboard")
         tap(app.buttons["send-follow-up"])
-        let sent = app.staticTexts["First line\nSecond line\nThird line\nFourth line\nFifth line"]
+        let sent = app.textViews["First line\nSecond line\nThird line\nFourth line\nFifth line"]
         XCTAssertTrue(sent.waitForExistence(timeout: 5))
         XCTAssertTrue(sent.wait(for: \.frame.isEmpty, toEqual: false, timeout: 5))
         try XCTSkipIf(!app.frame.intersects(app.keyboards.firstMatch.frame),
@@ -1251,6 +1251,90 @@ extension ShellFlowTests {
 
 extension ShellFlowTests {
     @MainActor
+    func testExistingSessionPhotoComposerStaysAboveKeyboard() throws {
+        #if !targetEnvironment(simulator)
+        throw XCTSkip("Photo selection requires an isolated test simulator with sample photos.")
+        #endif
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 8))
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 10))
+        tap(session)
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Photo above the keyboard")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        try XCTSkipIf(!app.frame.intersects(keyboard.frame) || !keyboard.isHittable,
+                      "This regression requires the simulator software keyboard to be visible.")
+        let composer = app.otherElements["follow-up-composer"]
+        let send = app.buttons["send-follow-up"]
+        XCTAssertTrue(send.isHittable)
+        let initialFrame = composer.frame
+
+        tap(app.buttons["add-attachment"])
+        tap(app.buttons["Photos"])
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
+        let privacyBannerClose = app.buttons["Close"].firstMatch
+        if privacyBannerClose.exists { tap(privacyBannerClose) }
+        let photos = app.images.matching(identifier: "PXGGridLayout-Info")
+        guard photos.firstMatch.waitForExistence(timeout: 30) else {
+            throw XCTSkip("This device needs a test photo in the system library.")
+        }
+        tap(photos.element(boundBy: photos.count - 1))
+        tap(app.buttons["Done"])
+        let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        tap(field)
+        XCTAssertTrue(keyboard.wait(for: \.isHittable, toEqual: true, timeout: 5))
+        XCTAssertGreaterThan(composer.frame.height, initialFrame.height + 100)
+        assertComposerAboveKeyboard(app, composer: composer, send: send)
+        attachScreen(app, name: "existing-photo-above-keyboard")
+
+        let changes = app.buttons["conversation-changes-hud"]
+        if changes.frame.minY < app.navigationBars.firstMatch.frame.maxY {
+            let footer = app.scrollViews.containing(.any, identifier: "follow-up-composer").firstMatch
+            XCTAssertTrue(footer.exists)
+            footer.swipeDown()
+            XCTAssertGreaterThanOrEqual(changes.frame.minY, app.navigationBars.firstMatch.frame.maxY)
+            XCTAssertTrue(changes.isHittable)
+            XCTAssertTrue(app.buttons["conversation-subtasks"].isHittable)
+            attachScreen(app, name: "existing-photo-oversized-footer-scrolled")
+            footer.swipeUp()
+            assertComposerAboveKeyboard(app, composer: composer, send: send)
+        }
+
+        verifyComposerImagePreview(app, name: "existing-photo-preview-with-keyboard")
+        tap(field)
+        XCTAssertTrue(keyboard.wait(for: \.isHittable, toEqual: true, timeout: 5))
+        attachScreen(app, name: "existing-photo-after-preview-above-keyboard")
+        assertComposerAboveKeyboard(app, composer: composer, send: send)
+        XCTAssertTrue(remove.exists)
+        tap(send)
+        XCTAssertTrue(app.staticTexts["Photo above the keyboard"].waitForExistence(timeout: 10))
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        attachScreen(app, name: "existing-photo-sent-with-keyboard")
+    }
+
+    @MainActor
+    private func assertComposerAboveKeyboard(_ app: XCUIApplication, composer: XCUIElement,
+                                            send: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        // AX Keyboard reports only the keys; inputView includes the candidate
+        // bar and follows its height changes after presentations or refocusing.
+        let inputView = app.otherElements["inputView"].firstMatch
+        XCTAssertTrue(inputView.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(app.frame.intersects(inputView.frame), file: file, line: line)
+        XCTAssertLessThanOrEqual(composer.frame.maxY, inputView.frame.minY + 0.5, file: file, line: line)
+        XCTAssertTrue(composer.frame.contains(send.frame), file: file, line: line)
+        XCTAssertTrue(send.isHittable, file: file, line: line)
+    }
+
+    @MainActor
     func testPhotoAttachmentPreviewRemovalAndSend() throws {
         #if !targetEnvironment(simulator)
         throw XCTSkip("Photo selection requires an isolated test simulator with sample photos.")
@@ -1260,7 +1344,9 @@ extension ShellFlowTests {
         app.launch()
         XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
         tap(app.buttons["sign-in-button"])
-        tap(app.buttons["new-session-local:machine-1:prism"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 10))
+        tap(newSession)
         let add = app.buttons["add-attachment"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let composer = app.otherElements["new-session-composer"]
@@ -1288,6 +1374,9 @@ extension ShellFlowTests {
             XCTAssertEqual(composer.frame.maxY, initialFrame.maxY, accuracy: 2)
             XCTAssertTrue(composer.frame.contains(send.frame))
             attachScreen(app, name: "photo-attachment-preview")
+            verifyComposerImagePreview(app, name: "new-session-photo-full-preview")
+            XCTAssertTrue(remove.exists)
+            XCTAssertTrue(send.isEnabled)
             if shouldSend {
                 tap(send)
                 XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 10))
@@ -1302,6 +1391,38 @@ extension ShellFlowTests {
                 attachScreen(app, name: "photo-attachment-removed")
             }
         }
+        tap(add)
+        tap(app.buttons["Photos"])
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
+        let photos = app.images.matching(identifier: "PXGGridLayout-Info")
+        XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 30))
+        tap(photos.element(boundBy: photos.count - 1))
+        tap(app.buttons["Done"])
+        let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        verifyComposerImagePreview(app, name: "follow-up-photo-full-preview")
+        XCTAssertTrue(remove.exists)
+        tap(remove)
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer-image-thumbnail"].waitForNonExistence(timeout: 5))
+        attachScreen(app, name: "follow-up-photo-removed-after-preview")
+    }
+
+    @MainActor
+    private func verifyComposerImagePreview(_ app: XCUIApplication, name: String) {
+        let thumbnail = app.buttons["composer-image-thumbnail"].firstMatch
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+        tap(thumbnail)
+        let preview = app.descendants(matching: .any)["composer-image-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars.staticTexts[thumbnail.label].isHittable)
+        attachScreen(app, name: name)
+        let close = app.buttons["composer-image-close"]
+        XCTAssertTrue(close.isHittable)
+        tap(close)
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
     }
 }
 

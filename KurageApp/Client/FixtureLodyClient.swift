@@ -4,7 +4,7 @@ import Foundation
 @MainActor
 final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
-    let requiresExternalAuthorization = false
+    var requiresExternalAuthorization: Bool { authorizationDelay != nil }
     let supportsConversations = true
     let supportsTextSending = true
     let supportsTextSendingWhileRunning = true
@@ -30,6 +30,7 @@ final class FixtureLodyClient: LodyClient {
     private var failSkillRefreshOnce: Bool
     private var initialSkillSource: String?
     private var failSendOnce: Bool
+    private let authorizationDelay: Duration?
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
     init(
@@ -43,8 +44,10 @@ final class FixtureLodyClient: LodyClient {
         failSendOnce: Bool = false,
         failTabStartOnce: Bool = false,
         skillRefreshDelay: Duration? = nil,
-        failSkillRefreshOnce: Bool = false
+        failSkillRefreshOnce: Bool = false,
+        authorizationDelay: Duration? = nil
     ) {
+        self.authorizationDelay = authorizationDelay
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
@@ -77,6 +80,7 @@ final class FixtureLodyClient: LodyClient {
 
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {
         guard authorization.deviceCode == "device-1" else { throw LodyClientError.signInFailed }
+        if let authorizationDelay { try await Task.sleep(for: authorizationDelay) }
         try Task.checkCancellation()
         account = Account(email: "demo@kurage.app")
     }

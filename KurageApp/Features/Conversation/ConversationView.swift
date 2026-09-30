@@ -219,13 +219,6 @@ struct ConversationContent: View {
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if isRunning {
-                ToolbarItem(placement: .topBarTrailing) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityLabel("Agent running")
-                }
-            }
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }
@@ -584,14 +577,23 @@ struct ConversationEmptyState: View {
     let isLoading: Bool
 
     var body: some View {
-        if isLoading {
-            ConversationLoadingPlaceholder()
-        } else {
-            ContentUnavailableView(
-                "No messages yet",
-                systemImage: "bubble.left.and.bubble.right",
-                description: Text("Pull down to refresh this conversation.")
-            )
+        // The placeholder fills the space above the composer. Its minimum
+        // content size must not push the composer below the keyboard, even
+        // while its hosting view is hidden behind a populated transcript.
+        GeometryReader { geometry in
+            Group {
+                if isLoading {
+                    ConversationLoadingPlaceholder()
+                } else {
+                    ContentUnavailableView(
+                        "No messages yet",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("Pull down to refresh this conversation.")
+                    )
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
     }
 }
@@ -686,12 +688,7 @@ struct TurnRow: View {
         if turn.author == .user {
             HStack(alignment: .top, spacing: 0) {
                 Spacer(minLength: 52)
-                Text(text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 12)
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
-                    .accessibilityHint("Your message")
+                UserMessageText(text: text)
             }
         } else {
             MarkdownView(text)

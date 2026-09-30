@@ -221,7 +221,6 @@ struct SessionComposer: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .fixedSize(horizontal: false, vertical: true)
-                    .submitLabel(.send)
                     .focused($isFocused)
                     .padding(.horizontal, 12)
                     .padding(.top, 10)

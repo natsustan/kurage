@@ -33,6 +33,7 @@ const snapshotCodec = {
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
+const workspaceTransports = new WeakMap();
 
 // Only a replica that authors a new session may create its document stream.
 async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
@@ -59,6 +60,7 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
       snapshotCodec,
     });
     await repo.addTransport('cloud', transport);
+    workspaceTransports.set(repo, transport);
     return repo;
   } catch (error) {
     await repo.destroy();
@@ -80,6 +82,10 @@ function createWorkspaceState(rawRepo, workspaceID, gatewayBaseURL) {
     },
     unloadDoc: async id => {
       await rawRepo.unloadDoc(id);
+      // This repo has no body storage. unloadDoc retains the Streams cursor,
+      // so reopening an empty replica would skip all history before that offset.
+      // Forget only transport-local state after a successful eviction.
+      await workspaceTransports.get(rawRepo).forgetDoc(id);
       state.documents.delete(id);
     },
   };
