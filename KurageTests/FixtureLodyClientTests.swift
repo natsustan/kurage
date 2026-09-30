@@ -962,6 +962,84 @@ struct NewSessionConfigurationTests {
         ], runConfig: id == "codex" ? .fixture : .fixtureModelOnly)
     }
 
+    @Test func staleOptionsStayUsableAndRefreshPreservesEdits() async {
+        let configuration = NewSessionConfiguration()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<NewSessionOptions, Never>?
+        let load = Task {
+            await configuration.load(providerID: nil, refresh: { id in
+                #expect(id == "codex")
+                return await withCheckedContinuation { pending in
+                    response = pending
+                    continuation.yield(())
+                }
+            }) { id in
+                var loaded = options(id ?? "codex")
+                loaded.needsRefresh = id == nil
+                return loaded
+            }
+        }
+        var iterator = events.makeAsyncIterator()
+        await iterator.next()
+        #expect(configuration.options?.agentConfigID == "codex")
+        #expect(!configuration.isLoading)
+        #expect(!configuration.loadFailed)
+        configuration.selectReasoning("low")
+        var fresh = options("codex")
+        fresh.runConfig?.selectReasoning("medium")
+        if let index = fresh.runConfig?.model?.options.firstIndex(where: { $0.value == fresh.runConfig?.model?.value }) {
+            fresh.runConfig?.model?.options[index].label = "Updated model"
+        }
+        response?.resume(returning: fresh)
+        await load.value
+        #expect(configuration.options?.needsRefresh != true)
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
+        #expect(configuration.runConfig?.selectedModel?.label == "Updated model")
+        continuation.finish()
+    }
+
+    @Test func failedRefreshKeepsCachedOptionsWithoutBlockingCreation() async {
+        let configuration = NewSessionConfiguration()
+        await configuration.load(providerID: nil, refresh: { _ in throw LodyClientError.notConnected }) { id in
+            var loaded = options(id ?? "codex")
+            loaded.needsRefresh = id == nil
+            return loaded
+        }
+        #expect(configuration.options?.agentConfigID == "codex")
+        #expect(configuration.runConfig != nil)
+        #expect(!configuration.isLoading)
+        #expect(!configuration.loadFailed)
+    }
+
+    @Test func lateBackgroundRefreshCannotReplaceAnotherProvider() async {
+        let configuration = NewSessionConfiguration()
+        let (events, continuation) = AsyncStream<Void>.makeStream()
+        var response: CheckedContinuation<NewSessionOptions, Never>?
+        // Prefetch both providers before exercising a refresh of cached options.
+        await configuration.load(providerID: nil) { id in
+            var loaded = options(id ?? "claude")
+            loaded.needsRefresh = id == "codex"
+            return loaded
+        }
+        configuration.selectProvider("codex")
+        let load = Task {
+            await configuration.load(providerID: "codex", refresh: { _ in
+                await withCheckedContinuation { pending in
+                    response = pending
+                    continuation.yield(())
+                }
+            }) { id in options(id ?? "codex") }
+        }
+        var iterator = events.makeAsyncIterator()
+        await iterator.next()
+        configuration.selectProvider("claude")
+        response?.resume(returning: options("codex"))
+        await load.value
+        #expect(configuration.options?.agentConfigID == "claude")
+        #expect(!configuration.isLoading)
+        continuation.finish()
+    }
+
     @Test func prefetchedProvidersSwitchLocallyAndRetainSelections() async {
         let configuration = NewSessionConfiguration()
         var requests: [String] = []

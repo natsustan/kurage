@@ -7,7 +7,7 @@ final class SessionTabsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedSendRestoresOnlyItsOwnTabDraft() {
+    func testUnconfirmedSendKeepsItsBubbleAndNextDraftAcrossTabs() {
         verifySendAcrossTabSwitches(fails: true)
     }
 
@@ -35,25 +35,27 @@ final class SessionTabsFlowTests: XCTestCase {
             tap(app.buttons["mention-skill-review-and-simplify-changes"])
         }
         field.typeText("In-flight main message")
-        let originalDraft = field.value as? String
         let send = app.buttons["send-follow-up"]
         tap(send)
+        XCTAssertEqual(send.label, "Sending")
+        XCTAssertTrue(field.isEnabled)
         tap(child)
         tap(field)
         field.typeText("Child stays editable")
         tap(main)
-        XCTAssertEqual(send.label, "Sending")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "In-flight main message")).firstMatch.exists)
-        XCTAssertFalse(field.isEnabled)
+        XCTAssertTrue(field.isEnabled)
         XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
+        tap(field)
+        field.typeText("Next main draft")
         attachScreen(name: "Send still pending after tab switch")
         XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 20))
         if fails {
-            XCTAssertEqual(field.value as? String, originalDraft)
-            XCTAssertTrue(app.buttons["Retry earlier message"].exists)
-            XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 5))
+            XCTAssertEqual(field.value as? String, "Next main draft")
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "retry-message-")).firstMatch.exists)
+            XCTAssertFalse(send.isEnabled)
         } else {
-            XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
+            XCTAssertEqual(field.value as? String, "Next main draft")
             XCTAssertEqual(app.staticTexts.matching(identifier: "In-flight main message").count, 1)
         }
         tap(child)
@@ -86,10 +88,11 @@ final class SessionTabsFlowTests: XCTestCase {
         attachScreen(name: "Skill refresh failure with preserved draft")
         tap(retry)
         XCTAssertFalse(send.isEnabled)
+        attachScreen(name: "Skill refresh loading with preserved draft")
         XCTAssertTrue(send.wait(for: \.isEnabled, toEqual: true, timeout: 8))
         XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
         tap(send)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", ".agents/skills/review-and-simplify-changes/SKILL.md"))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND NOT label CONTAINS %@", "review-and-simplify-changes", "Skill Path"))
             .firstMatch.waitForExistence(timeout: 5))
     }
 

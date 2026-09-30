@@ -1,14 +1,14 @@
 import SwiftUI
 
 /// The visible token stays short while the sent prompt carries Lody's stable
-/// skill path or session URI. Offsets use UTF-16, matching TextField selection.
-struct ComposerMentionState {
-    enum Kind {
+/// skill path or session URI. Offsets use UTF-16, matching native text selection.
+struct ComposerMentionState: Equatable {
+    enum Kind: Equatable {
         case session(id: String, title: String)
         case skill(token: String, path: String)
     }
 
-    struct Range {
+    struct Range: Equatable {
         var start: Int
         var end: Int
         var token: String

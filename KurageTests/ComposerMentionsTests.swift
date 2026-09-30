@@ -19,17 +19,46 @@ struct ComposerMentionsTests {
             window.rootViewController = nil
         }
 
-        try await waitForMentionLoad { probe.starts == 1 }
+        try await waitForMentionLoad(probe: probe) { probe.starts == 2 && probe.completions == 1 }
         probe.phase = .inactive
-        try await waitForMentionLoad { probe.cancellations == 1 }
+        try await waitForMentionLoad(probe: probe) { probe.cancellations == 1 }
         probe.phase = .background
         try await Task.sleep(for: .milliseconds(100))
-        #expect(probe.starts == 1)
-        #expect(probe.skillStarts == (draft.hasPrefix("$") ? 1 : 0))
+        #expect(probe.starts == 2)
+        #expect(probe.skillStarts == 1)
 
         probe.phase = .active
-        try await waitForMentionLoad { probe.completions == (draft.hasPrefix("@") ? 2 : 1) }
-        #expect(probe.starts == (draft.hasPrefix("@") ? 3 : 2))
+        try await waitForMentionLoad(probe: probe) { probe.completions == 2 }
+        #expect(probe.starts == 3)
+    }
+
+    @MainActor
+    @Test func decoratedDraftPreservesUnicodeOffsetsAndProtocolTargets() {
+        var state = ComposerMentionState()
+        var text = "🐈 看 "
+        (text, _) = state.insert("$review", kind: .skill(token: "review", path: "/skills/review/SKILL.md"),
+                                 replacing: text.endIndex..<text.endIndex, in: text)
+        (text, _) = state.insert("@会话", kind: .session(id: "chat", title: "会话"),
+                                 replacing: text.endIndex..<text.endIndex, in: text)
+        let rendered = MentionText.decorate(text, ranges: state.ranges, font: .systemFont(ofSize: 17), color: .systemBlue)
+        #expect(rendered.length == text.utf16.count)
+        #expect(!rendered.string.contains("$"))
+        #expect(!rendered.string.contains("@"))
+        #expect(MentionText.originalText(rendered) == text)
+        #expect(state.expanded(MentionText.originalText(rendered)) == state.expanded(text))
+    }
+
+    @MainActor
+    @Test func bubbleReferencesHideProtocolAndPreserveCopySource() {
+        let text = #"🐈 use /review [Skill Path](folder\)/SKILL.md) 与 [@聊天\[一\]🐈](session://chat_1)\n继续"#
+        let rendered = MentionText.message(text, font: .systemFont(ofSize: 17), color: .systemBlue)
+        #expect(rendered.string.contains("review"))
+        #expect(rendered.string.contains("聊天[一]🐈"))
+        #expect(!rendered.string.contains("Skill Path"))
+        #expect(!rendered.string.contains("session://"))
+        #expect(MentionText.originalText(rendered) == text)
+        let ordinary = "Use $review, @someone and [a link](https://example.com)."
+        #expect(MentionText.references(in: ordinary).isEmpty)
     }
 
     @Test func skillAndSessionMentionsExpandToLodyPromptForms() {
@@ -205,10 +234,10 @@ private struct MentionLifecycleHarness: View {
 }
 
 @MainActor
-private func waitForMentionLoad(_ condition: () -> Bool) async throws {
+private func waitForMentionLoad(probe: MentionLoadProbe, _ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now + .seconds(5)
     while !condition(), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
     }
-    try #require(condition())
+    try #require(condition(), "starts: \(probe.starts), skills: \(probe.skillStarts), cancellations: \(probe.cancellations), completions: \(probe.completions)")
 }

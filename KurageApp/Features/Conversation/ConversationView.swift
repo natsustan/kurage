@@ -47,16 +47,12 @@ struct ConversationContent: View {
     @Binding var draft: String
     @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
-    @Binding var isSending: Bool
-    @Binding var pendingTurns: [ConversationTurn]
     @Binding var isCancelling: Bool
     @State private var scrollRequestID = 0
     @Binding var banner: String?
     @State private var connectionStatus: String?
     @State private var showsConnectionIndicator = false
     @State private var showsConnectionMessage = false
-    @Binding var previousPendingText: String?
-    @Binding var previousPendingWorkspaceID: String?
     @Binding var runConfigState: ConversationRunConfigState
     let rootSessionID: SessionSummary.ID
     var onNewTab: (() -> Void)? = nil
@@ -90,11 +86,21 @@ struct ConversationContent: View {
         return model.cachedConversation(sessionID: sessionID)
     }
 
+    private var outgoingMessage: OutgoingMessage? { model.outgoingMessage(sessionID: sessionID) }
+    private var isSending: Bool { outgoingMessage?.delivery == .sending }
+    private var canRetryMessage: Bool {
+        guard !isReadOnly, isCurrentWorkspace, scenePhase == .active, !isCancelling,
+              let message = outgoingMessage, message.canRetry else { return false }
+        return message.delivery != .sending && message.delivery != .sent &&
+            (message.delivery == .unconfirmed || !isRunning || model.supportsTextSendingWhileRunning)
+    }
+    private var canEditMessage: Bool {
+        !isReadOnly && isCurrentWorkspace && scenePhase == .active &&
+            draft.isEmpty && attachments.isEmpty && !isSending
+    }
+
     private var displayedTurns: [ConversationTurn] {
-        let turns = displayedConversation?.turns ?? []
-        guard !pendingTurns.isEmpty else { return turns }
-        let receivedIDs = Set(turns.map(\.id))
-        return turns + pendingTurns.filter { !receivedIDs.contains($0.id) }
+        model.displayedTurns(displayedConversation?.turns ?? [], sessionID: sessionID)
     }
 
     var body: some View {
@@ -111,7 +117,11 @@ struct ConversationContent: View {
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             },
             onPreviewImage: { previewImage = $0 },
-            onRefresh: { refreshID += 1 }
+            onRefresh: { refreshID += 1 },
+            canRetryMessage: canRetryMessage,
+            canEditMessage: canEditMessage,
+            onRetryMessage: { id in if outgoingMessage?.id == id { retryMessage() } },
+            onEditMessage: { id in if outgoingMessage?.id == id { editMessage() } }
         ) {
             ConversationFooter(
                 permission: displayedConversation?.permission,
@@ -132,6 +142,7 @@ struct ConversationContent: View {
                 onOpenSubtasks: { selectedSubtask = $0 },
                 draft: $draft, mentions: $mentions, attachments: $attachments,
                 isSending: isSending,
+                canSubmit: outgoingMessage == nil,
                 isCancelling: isCancelling,
                 isSessionRunning: isRunning,
                 banner: banner,
@@ -151,9 +162,6 @@ struct ConversationContent: View {
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
-                canRetryPrevious: previousPendingText != nil &&
-                    previousPendingWorkspaceID == model.selectedWorkspaceID,
-                onRetryPrevious: retryPreviousSend,
                 onDecision: respond
             )
         }
@@ -228,6 +236,11 @@ struct ConversationContent: View {
                 receiveConversation(latest)
             }
         }
+        .onChange(of: outgoingMessage?.id) { _, id in
+            if id == nil, isCurrentWorkspace, let latest = model.cachedConversation(sessionID: sessionID) {
+                receiveConversation(latest)
+            }
+        }
         .task(id: readReceiptTimestamp) {
             guard let timestamp = readReceiptTimestamp else { return }
             // Keep transient receipt failures separate from conversation delivery.
@@ -269,14 +282,7 @@ struct ConversationContent: View {
 
     private func observe() async {
         guard isCurrentWorkspace else { return }
-        // Restore only when this scoped view first opens; reconnecting must preserve edits.
-        if observedSessionID == nil, !isReadOnly, !isSending,
-           let pending = model.pendingTextSend(sessionID: sessionID) {
-            previousPendingText = pending.text
-            previousPendingWorkspaceID = model.selectedWorkspaceID
-            if draft.isEmpty { draft = pending.text; attachments = pending.attachments }
-            banner = "Send could not be confirmed. Retry to resume the same message."
-        }
+        if !isReadOnly { model.restoreOutgoingMessage(sessionID: sessionID) }
         observedWorkspaceID = model.selectedWorkspaceID
         observedSessionID = sessionID
         conversation = model.cachedConversation(sessionID: sessionID)
@@ -326,103 +332,53 @@ struct ConversationContent: View {
 
     private func receiveConversation(_ latest: Conversation) {
         conversation = latest
-        guard !pendingTurns.isEmpty else { return }
-        let receivedIDs = Set(latest.turns.map(\.id))
-        pendingTurns.removeAll { receivedIDs.contains($0.id) }
-    }
-
-    private func addPendingTurn(id: ConversationTurn.ID?, text: String) {
-        guard let id, !displayedTurns.contains(where: { $0.id == id }) else { return }
-        pendingTurns.append(ConversationTurn(id: id, author: .user, text: text))
-    }
-
-    private func removePendingTurn(id: ConversationTurn.ID?) {
-        guard let id else { return }
-        pendingTurns.removeAll { $0.id == id }
     }
 
     private func sendDraft() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
-              model.supportsTextSendingWhileRunning ||
-                !isRunning else { return }
-        let originalDraft = draft
-        let originalMentions = mentions
-        let text = mentions.expanded(draft)
-        let sentAttachments = attachments
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || !attachments.isEmpty else { return }
-        let pending = model.pendingTextSend(sessionID: sessionID)
-        let turnID: ConversationTurn.ID
-        if let pending, pending.text == trimmed {
-            turnID = pending.turnID
-        } else {
-            turnID = UUID().uuidString.lowercased()
+              outgoingMessage == nil,
+              model.supportsTextSendingWhileRunning || !isRunning else { return }
+        do {
+            try model.stageOutgoingMessage(mentions.expanded(draft), composerText: draft, mentions: mentions,
+                attachments: attachments, runConfig: runConfigState.choice, sessionID: sessionID)
+        } catch {
+            banner = "Could not prepare this message. Try again."
+            return
         }
-        let choice = runConfigState.choice
         draft = ""
         mentions.clear()
+        attachments = []
         scrollRequestID += 1
         banner = nil
-        isSending = true
-        // A different unconfirmed message must be retried before this one can be authored.
-        if pending == nil || pending?.text == trimmed { addPendingTurn(id: turnID, text: trimmed) }
+        deliverMessage()
+    }
+
+    private func retryMessage() {
+        guard canRetryMessage, model.retryOutgoingMessage(sessionID: sessionID) else { return }
+        deliverMessage()
+    }
+
+    private func editMessage() {
+        guard canEditMessage, let message = model.takeFailedOutgoingMessage(sessionID: sessionID) else { return }
+        draft = message.composerText
+        mentions = message.mentions
+        attachments = message.attachments
+        banner = nil
+    }
+
+    private func deliverMessage() {
+        let sendingWorkspaceID = model.selectedWorkspaceID
+        let sendingTurnID = outgoingMessage?.id
         Task {
-            guard isCurrentWorkspace else { return }
-            defer { isSending = false }
             do {
-                let sentChoice = try await model.send(text, attachments: sentAttachments, runConfig: choice, turnID: turnID,
-                                                       sessionID: sessionID)
+                let choice = try await model.deliverOutgoingMessage(sessionID: sessionID,
+                    workspaceID: sendingWorkspaceID, turnID: sendingTurnID)
                 guard isCurrentWorkspace else { return }
-                attachments.removeAll { sentAttachments.contains($0) }
-                previousPendingText = nil
-                previousPendingWorkspaceID = nil
-                runConfigState.didSend(sentChoice)
-                if let latest = try? await model.conversation(sessionID: sessionID) {
-                    receiveConversation(latest)
-                }
-            } catch LodyClientError.deliveryUnconfirmed {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                draft = originalDraft
-                mentions = originalMentions
-                previousPendingText = trimmed
-                previousPendingWorkspaceID = model.selectedWorkspaceID
-                banner = "Send could not be confirmed. Retry to resume the same message."
-            } catch LodyClientError.previousSendPending(let previousText) {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                draft = originalDraft
-                mentions = originalMentions
-                previousPendingText = previousText
-                previousPendingWorkspaceID = model.selectedWorkspaceID
-                banner = "An earlier send is unconfirmed. Retry it before sending different text."
-            } catch LodyClientError.sendSuperseded {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                draft = originalDraft
-                mentions = originalMentions
-                previousPendingText = nil
-                previousPendingWorkspaceID = nil
-                banner = "A newer message took precedence. Send again to create a new message."
-            } catch LodyClientError.sessionBusy {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                draft = originalDraft
-                mentions = originalMentions
-                banner = "Wait for the current reply before sending."
-            } catch is CancellationError {
-                removePendingTurn(id: turnID)
-                return
+                runConfigState.didSend(choice)
+                if let latest = model.cachedConversation(sessionID: sessionID) { receiveConversation(latest) }
             } catch {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                draft = originalDraft
-                mentions = originalMentions
-                previousPendingText = model.pendingTextSend(sessionID: sessionID)?.text
-                previousPendingWorkspaceID = previousPendingText == nil ? nil : model.selectedWorkspaceID
-                banner = previousPendingText == nil
-                    ? "Could not upload attachments. Review your draft and try again."
-                    : "Could not confirm send. Retry to resume the same message."
+                // AppModel retains the message and its retry identity. A newer
+                // draft is never replaced by the completion of an earlier send.
             }
         }
     }
@@ -446,56 +402,6 @@ struct ConversationContent: View {
                 return
             } catch {
                 banner = "Could not stop the current reply. Try again."
-            }
-        }
-    }
-
-    private func retryPreviousSend() {
-        guard !isReadOnly, isCurrentWorkspace, !isSending, let text = previousPendingText,
-              previousPendingWorkspaceID == model.selectedWorkspaceID else { return }
-        let pending = model.pendingTextSend(sessionID: sessionID)
-        let turnID = pending?.text == text ? pending?.turnID : nil
-        isSending = true
-        addPendingTurn(id: turnID, text: text)
-        banner = nil
-        Task {
-            guard isCurrentWorkspace else { return }
-            defer { isSending = false }
-            do {
-                let sentChoice = try await model.send(text, attachments: pending?.attachments ?? [],
-                    turnID: turnID ?? UUID().uuidString.lowercased(), sessionID: sessionID)
-                guard isCurrentWorkspace else { return }
-                attachments.removeAll { pending?.attachments.contains($0) == true }
-                runConfigState.didSend(sentChoice)
-                previousPendingText = nil
-                previousPendingWorkspaceID = nil
-                if mentions.expanded(draft).trimmingCharacters(in: .whitespacesAndNewlines) == text {
-                    draft = ""
-                    mentions.clear()
-                }
-                banner = draft.isEmpty ? nil : "Earlier message confirmed. Review your draft before sending."
-                if let latest = try? await model.conversation(sessionID: sessionID) {
-                    receiveConversation(latest)
-                }
-            } catch LodyClientError.sendSuperseded {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                previousPendingText = nil
-                previousPendingWorkspaceID = nil
-                banner = "Earlier message was replaced. You can send your draft as a new message."
-            } catch is CancellationError {
-                removePendingTurn(id: turnID)
-                return
-            } catch {
-                guard isCurrentWorkspace else { return }
-                removePendingTurn(id: turnID)
-                if model.pendingTextSend(sessionID: sessionID) == nil {
-                    previousPendingText = nil
-                    previousPendingWorkspaceID = nil
-                    banner = "Could not upload attachments. Review your draft and try again."
-                } else {
-                    banner = "Earlier send is still unconfirmed. Retry it before sending different text."
-                }
             }
         }
     }
@@ -629,6 +535,10 @@ struct TurnRow: View {
     var onToggleChanges: () -> Void = {}
     var disclosures = TurnDisclosures()
     var isRunning = false
+    var canRetryMessage = false
+    var canEditMessage = false
+    var onRetryMessage: () -> Void = {}
+    var onEditMessage: () -> Void = {}
 
     var body: some View {
         let alignment: HorizontalAlignment = turn.author == .user ? .trailing : .leading
@@ -646,6 +556,11 @@ struct TurnRow: View {
                 blocks(Array(content.dropFirst(insertionIndex)), alignment: alignment)
             } else {
                 blocks(turn.content, alignment: alignment)
+            }
+            if turn.author == .user {
+                MessageDeliveryView(turnID: turn.id, delivery: turn.delivery,
+                    canRetry: canRetryMessage, canEdit: canEditMessage,
+                    onRetry: onRetryMessage, onEdit: onEditMessage)
             }
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
@@ -701,6 +616,64 @@ struct TurnRow: View {
     }
 }
 
+private struct MessageDeliveryView: View {
+    let turnID: String
+    let delivery: MessageDelivery?
+    let canRetry: Bool
+    let canEdit: Bool
+    let onRetry: () -> Void
+    let onEdit: () -> Void
+    @State private var showsProgress = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            switch delivery {
+            case .sending:
+                if showsProgress {
+                    ProgressView().controlSize(.mini)
+                    Text("Sending").foregroundStyle(.secondary)
+                }
+            case .unconfirmed:
+                Label("Waiting for confirmation", systemImage: "clock")
+                    .foregroundStyle(.secondary)
+                retryButton
+            case .failed(let reason):
+                Label(reason, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+                retryButton
+                Button("Edit", action: onEdit)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .disabled(!canEdit)
+                    .accessibilityIdentifier("edit-message-\(turnID)")
+            case .superseded:
+                Label("Not run: replaced by a newer message", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.secondary)
+            case .sent, nil:
+                EmptyView()
+            }
+        }
+        .font(.caption)
+        .buttonStyle(.plain)
+        .frame(minHeight: 44, alignment: .trailing)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("message-delivery-\(turnID)")
+        .task(id: delivery) {
+            showsProgress = false
+            guard delivery == .sending else { return }
+            do { try await Task.sleep(for: .milliseconds(600)) }
+            catch { return }
+            showsProgress = true
+        }
+    }
+
+    private var retryButton: some View {
+        Button("Retry", action: onRetry)
+            .frame(minWidth: 44, minHeight: 44)
+            .disabled(!canRetry)
+            .accessibilityIdentifier("retry-message-\(turnID)")
+    }
+}
+
 private struct ConversationFooter: View {
     let permission: PermissionPrompt?
     let question: ConversationQuestionRequest?
@@ -714,6 +687,7 @@ private struct ConversationFooter: View {
     @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
     let isSending: Bool
+    let canSubmit: Bool
     let isCancelling: Bool
     let isSessionRunning: Bool
     let banner: String?
@@ -730,8 +704,6 @@ private struct ConversationFooter: View {
     let onSend: () -> Void
     let onCancel: () -> Void
     let onChooseRunConfig: (String) -> Void
-    let canRetryPrevious: Bool
-    let onRetryPrevious: () -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
@@ -751,11 +723,6 @@ private struct ConversationFooter: View {
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("conversation-connection-message")
                 }
-                if canRetryPrevious {
-                    Button("Retry earlier message", action: onRetryPrevious)
-                        .font(.footnote)
-                        .disabled(isSending)
-                }
                 if let question {
                     ConversationQuestionCard(request: question, isReady: questionReady) { answers in
                         try await onQuestionResponse(question, answers)
@@ -774,13 +741,14 @@ private struct ConversationFooter: View {
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
                     SessionComposer(draft: $draft, mentions: $mentions, attachments: $attachments,
-                                    isSending: isSending, isCancelling: isCancelling,
+                                    isSending: isSending, allowsEditingWhileSending: true, isCancelling: isCancelling,
                                     isSessionRunning: isSessionRunning,
                                     supportsTextSending: supportsTextSending,
                                     supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                     supportsSessionCancellation: supportsSessionCancellation,
                                     runConfig: runConfig?.menu,
                                     contextWindowUsage: contextWindowUsage,
+                                    canSubmit: canSubmit,
                                     mentionSourceID: mentionSourceID,
                                     loadMentionSessions: loadMentionSessions,
                                     loadMentionSkills: loadMentionSkills,

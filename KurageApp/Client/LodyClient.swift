@@ -100,6 +100,7 @@ protocol LodyClient: AnyObject {
         agentConfigID: String?,
         projectID: String?,
         isTab: Bool,
+        refresh: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions
     func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
@@ -201,6 +202,7 @@ extension LodyClient {
         agentConfigID: String?,
         projectID: String?,
         isTab: Bool,
+        refresh: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected

@@ -85,6 +85,11 @@ struct NewSessionView: View {
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == route.workspaceGeneration }
 
+    private var machineName: String? {
+        guard isCurrentWorkspace else { return nil }
+        return options?.machineName ?? model.sessionSummary(templateSessionID)?.machineName
+    }
+
     var body: some View {
         // Short details sit just above the composer; large text scrolls instead of
         // pushing the composer under the keyboard.
@@ -145,8 +150,9 @@ struct NewSessionView: View {
     @ViewBuilder
     private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let options {
-                detailRow(options.machineName, imageName: "laptop")
+            if let machineName {
+                detailRow(machineName, imageName: "laptop")
+                    .accessibilityIdentifier("new-session-machine")
             }
             if route.parentSessionID == nil {
                 SessionProjectMenu(
@@ -218,19 +224,20 @@ struct NewSessionView: View {
 
     private func load() async {
         guard isCurrentWorkspace else { return }
-        await configuration.load(providerID: request.agentConfigID) { providerID in
-            guard isCurrentWorkspace else { throw CancellationError() }
-            let loaded: NewSessionOptions
-            if let rootID = route.parentSessionID {
-                loaded = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: providerID, isTab: true)
-            } else {
-                loaded = try await model.newSessionOptions(
-                    templateSessionID: templateSessionID, agentConfigID: providerID, projectID: projectID
-                )
-            }
-            guard isCurrentWorkspace else { throw CancellationError() }
-            return loaded
-        }
+        await configuration.load(providerID: request.agentConfigID,
+                                 refresh: { try await fetchOptions(providerID: $0, refresh: true) },
+                                 using: { try await fetchOptions(providerID: $0, refresh: false) })
+    }
+
+    private func fetchOptions(providerID: String?, refresh: Bool) async throws -> NewSessionOptions {
+        guard isCurrentWorkspace else { throw CancellationError() }
+        let loaded = try await model.newSessionOptions(
+            templateSessionID: route.parentSessionID ?? templateSessionID, agentConfigID: providerID,
+            projectID: route.parentSessionID == nil ? projectID : nil,
+            isTab: route.parentSessionID != nil, refresh: refresh
+        )
+        guard isCurrentWorkspace else { throw CancellationError() }
+        return loaded
     }
 
     private func choose(_ kind: RunConfigMenu.Section.Kind, _ value: String) {
@@ -376,7 +383,9 @@ final class NewSessionConfiguration {
         if let id = options?.agentConfigID, let runConfig { selections[id] = runConfig }
     }
 
-    func load(providerID: String?, using fetch: @escaping @MainActor (String?) async throws -> NewSessionOptions) async {
+    func load(providerID: String?,
+              refresh: (@MainActor (String?) async throws -> NewSessionOptions)? = nil,
+              using fetch: @escaping @MainActor (String?) async throws -> NewSessionOptions) async {
         guard !Task.isCancelled else { return }
         generation += 1
         let request = generation
@@ -400,6 +409,12 @@ final class NewSessionConfiguration {
                 return
             }
         }
+        // A stale snapshot remains usable while refreshing. Explicit edits are
+        // stored in selections and survive activation of the fresh capabilities.
+        if let activeID = options?.agentConfigID, options?.needsRefresh == true, let refresh {
+            await refreshOptions(activeID, request: request, using: refresh)
+            guard request == generation, !Task.isCancelled else { return }
+        }
         // Resolve other providers during the time spent composing. Their most
         // recent run configuration still comes from the service, not a guess.
         let providers = options?.providers ?? []
@@ -410,10 +425,27 @@ final class NewSessionConfiguration {
                 try Task.checkCancellation()
                 guard request == generation else { return }
                 cached[loaded.agentConfigID] = loaded
+                if loaded.needsRefresh == true, let refresh {
+                    await refreshOptions(loaded.agentConfigID, request: request, using: refresh)
+                }
             } catch {
                 // A failed prefetch is retried only if this provider is chosen.
                 if Task.isCancelled || request != generation { return }
             }
+        }
+    }
+
+    private func refreshOptions(_ id: String, request: Int,
+                                using refresh: @escaping @MainActor (String?) async throws -> NewSessionOptions) async {
+        do {
+            let loaded = try await fetchOptions(id, refreshing: true, using: refresh)
+            try Task.checkCancellation()
+            guard request == generation else { return }
+            cached[loaded.agentConfigID] = loaded
+            if options?.agentConfigID == loaded.agentConfigID { activate(loaded) }
+        } catch {
+            // Keep the snapshot on a transient failure; a later load retries it.
+            // Creation always validates again on an independent writing replica.
         }
     }
 
@@ -425,9 +457,10 @@ final class NewSessionConfiguration {
 
     private func fetchOptions(
         _ providerID: String?,
+        refreshing: Bool = false,
         using fetch: @escaping @MainActor (String?) async throws -> NewSessionOptions
     ) async throws -> NewSessionOptions {
-        let key = providerID ?? ""
+        let key = "\(refreshing):\(providerID ?? "")"
         let pending: PendingLoad
         if let existing = inFlight[key] {
             pending = existing
@@ -447,7 +480,13 @@ final class NewSessionConfiguration {
 
     private func activate(_ loaded: NewSessionOptions) {
         options = loaded
-        runConfig = selections[loaded.agentConfigID] ?? loaded.runConfig
+        var current = loaded.runConfig
+        if let selected = selections[loaded.agentConfigID] {
+            if let value = selected.model?.value { current?.selectModel(value) }
+            if let value = selected.reasoning?.value { current?.selectReasoning(value) }
+            selections[loaded.agentConfigID] = current
+        }
+        runConfig = current
         isLoading = false
         loadFailed = false
     }

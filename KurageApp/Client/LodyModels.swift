@@ -78,6 +78,14 @@ struct ConversationImage: Codable, Equatable, Sendable, Identifiable {
     var storageSessionID: String?
     var width: Int?
     var height: Int?
+    /// Process-local previews are never encoded into synchronized documents.
+    var localPreviewData: Data? = nil
+    var localOriginalData: Data? = nil
+    var localPreviewScopeID: UUID? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case imageID, mimeType, fileName, storageSessionID, width, height
+    }
 
     var id: String { "\(storageSessionID ?? "")\n\(imageID)" }
 
@@ -278,6 +286,8 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     /// Folded earlier work of a finished agent turn; `parts` then holds its answer.
     var work: ConversationWork?
     var timing: ConversationTiming?
+    /// A local presentation state, excluded from the wire representation.
+    var delivery: MessageDelivery? = nil
 
     init(id: String, author: TurnAuthor, text: String, parts: [ConversationPart] = [], work: ConversationWork? = nil, timing: ConversationTiming? = nil) {
         self.id = id
@@ -604,6 +614,8 @@ struct NewSessionOptions: Codable, Equatable, Sendable {
     /// Agent configs on the machine, labelled by name.
     var providers: [SessionRunConfig.Value]
     var runConfig: NewSessionRunConfig?
+    /// Cached options can be displayed while a scoped request refreshes them.
+    var needsRefresh: Bool? = nil
 
     var provider: SessionRunConfig.Value? {
         providers.first { $0.value == agentConfigID }

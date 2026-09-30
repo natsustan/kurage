@@ -655,13 +655,14 @@ final class HTTPLodyClient: LodyClient {
         agentConfigID: String?,
         projectID: String? = nil,
         isTab: Bool = false,
+        refresh: Bool = false,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         let (bridge, access, generation) = try await authorizedSessionBridge(workspaceID: workspaceID)
         let options = try await bridge.newSessionOptions(
             templateSessionID: templateSessionID, agentConfigID: agentConfigID,
             projectID: isTab ? nil : projectID,
-            workspaceID: workspaceID, access: access, isTab: isTab
+            workspaceID: workspaceID, access: access, isTab: isTab, refresh: refresh
         )
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
@@ -1040,6 +1041,14 @@ final class HTTPLodyClient: LodyClient {
             // uploads completed before either caller published the turn.
             let stableBlock = uploadedAttachments[key] ?? block
             uploadedAttachments[key] = stableBlock
+            if let imageID = stableBlock.imageId, attachment.isImage {
+                for variant in [SessionImageVariant.inline, .square, .original] {
+                    let cacheKey = SessionImageCacheKey(credentialID: Self.credentialID(token, baseURL: baseURL),
+                        workspaceID: workspaceID, sessionID: sessionID, imageID: imageID, variant: variant)
+                    storeSessionImage(variant == .original ? attachment.data : attachment.thumbnailData ?? attachment.data,
+                                      for: cacheKey)
+                }
+            }
             uploaded.append(stableBlock)
         }
         return uploaded

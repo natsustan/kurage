@@ -4,12 +4,8 @@ private struct TabDraft {
     var text = ""
     var mentions = ComposerMentionState()
     var attachments: [ComposerAttachment] = []
-    var isSending = false
-    var pendingTurns: [ConversationTurn] = []
     var isCancelling = false
     var banner: String?
-    var previousPendingText: String?
-    var previousPendingWorkspaceID: String?
     var runConfig = ConversationRunConfigState()
 }
 
@@ -38,10 +34,7 @@ struct ConversationTabsContent: View {
         ConversationContent(sessionID: activeID, title: model.sessionSummary(activeID)?.title ?? title,
                             model: model, workspaceGeneration: workspaceGeneration, isReadOnly: isReadOnly, isReading: !showsNewTab,
                             draft: draft.text, mentions: draft.mentions, attachments: draft.attachments,
-                            isSending: draft.isSending, pendingTurns: draft.pendingTurns,
                             isCancelling: draft.isCancelling, banner: draft.banner,
-                            previousPendingText: draft.previousPendingText,
-                            previousPendingWorkspaceID: draft.previousPendingWorkspaceID,
                             runConfigState: draft.runConfig,
                             rootSessionID: rootID,
                             onNewTab: !isReadOnly && model.supportsSessionTabs ? { showsNewTab = true } : nil,

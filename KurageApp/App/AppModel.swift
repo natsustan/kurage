@@ -18,6 +18,10 @@ final class AppModel {
     private var activeTabsByWorkspace: [WorkspaceSummary.ID: [SessionSummary.ID: SessionSummary.ID]] = [:]
     private var pendingTabs: [String: [String: SessionTabStart]] = [:]
     private var startingTabs: Set<String> = []
+    private var outgoingByWorkspace: [String: [String: OutgoingMessage]] = [:]
+    private var activeMessageSends: Set<String> = []
+    private var imagePreviewScopes: [String: UUID] = [:]
+    private var supersededMessages: [String: [String: Set<String>]] = [:]
     var supportsSessionTabs: Bool { client.supportsSessionTabs }
 
     func sessionSummary(_ id: String) -> SessionSummary? {
@@ -51,12 +55,12 @@ final class AppModel {
     }
 
     func newSessionOptions(templateSessionID: SessionSummary.ID, agentConfigID: String? = nil,
-                           projectID: String? = nil, isTab: Bool = false) async throws -> NewSessionOptions {
+                           projectID: String? = nil, isTab: Bool = false, refresh: Bool = false) async throws -> NewSessionOptions {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let selection = workspaceGeneration
         let result = try await client.newSessionOptions(templateSessionID: templateSessionID, agentConfigID: agentConfigID,
-                                                        projectID: projectID, isTab: isTab, workspaceID: workspaceID)
+                                                        projectID: projectID, isTab: isTab, refresh: refresh, workspaceID: workspaceID)
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
         return result
@@ -311,6 +315,10 @@ final class AppModel {
         selectedSessionProjects = [:]
         projectCatalogGeneration = -1
         pendingTabs = [:]
+        outgoingByWorkspace = [:]
+        activeMessageSends = []
+        imagePreviewScopes = [:]
+        supersededMessages = [:]
         tabsByWorkspace = [:]
         activeTabsByWorkspace = [:]
         startingTabs = []
@@ -354,6 +362,9 @@ final class AppModel {
             tabsByWorkspace = tabsByWorkspace.filter { workspaceIDs.contains($0.key) }
             activeTabsByWorkspace = activeTabsByWorkspace.filter { workspaceIDs.contains($0.key) }
             pendingTabs = pendingTabs.filter { workspaceIDs.contains($0.key) }
+            outgoingByWorkspace = outgoingByWorkspace.filter { workspaceIDs.contains($0.key) }
+            imagePreviewScopes = imagePreviewScopes.filter { workspaceIDs.contains($0.key) }
+            supersededMessages = supersededMessages.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -485,9 +496,9 @@ final class AppModel {
         let generation = authenticationGeneration
         let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
         guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else { throw LodyClientError.signedOut }
-        conversationCache[workspaceID, default: [:]][sessionID] = loaded
+        let conversation = storeConversation(loaded, workspaceID: workspaceID)
         invalidateSearchBody(sessionID: sessionID, workspaceID: workspaceID)
-        return loaded
+        return conversation
     }
 
     func sessionSearchBody(sessionID: SessionSummary.ID) -> String {
@@ -562,7 +573,8 @@ final class AppModel {
                     activeTabsByWorkspace[workspaceID, default: [:]][rootID] = rootID
                 }
             }
-            conversationCache[workspaceID, default: [:]][sessionID] = update.conversation
+            var update = update
+            update.conversation = storeConversation(update.conversation, workspaceID: workspaceID)
             invalidateSearchBody(sessionID: sessionID, workspaceID: workspaceID)
             if let activity = update.activity, let index = sessions.firstIndex(where: { $0.id == sessionID }),
                sessions[index].activity != activity {
@@ -588,6 +600,9 @@ final class AppModel {
         guard image.isDisplayable, let workspaceID = selectedWorkspaceID else {
             throw LodyClientError.notConnected
         }
+        try Task.checkCancellation()
+        if let scope = imagePreviewScopes[workspaceID], image.localPreviewScopeID == scope,
+           let data = variant == .original ? image.localOriginalData : image.localPreviewData { return data }
         let generation = authenticationGeneration
         let storageSessionID = image.storageSessionID ?? conversationSessionID
         let data = try await client.loadSessionImage(
@@ -610,6 +625,153 @@ final class AppModel {
     func pendingTextSend(sessionID: SessionSummary.ID) -> PendingTextSend? {
         guard let workspaceID = selectedWorkspaceID else { return nil }
         return client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    func outgoingMessage(sessionID: String) -> OutgoingMessage? {
+        guard let workspaceID = selectedWorkspaceID else { return nil }
+        return outgoingByWorkspace[workspaceID]?[sessionID]
+    }
+
+    func stageOutgoingMessage(_ text: String, composerText: String, mentions: ComposerMentionState,
+                              attachments: [ComposerAttachment], runConfig: RunConfigChoice?,
+                              sessionID: String) throws {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
+        guard outgoingByWorkspace[workspaceID]?[sessionID] == nil,
+              client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID) == nil else {
+            throw LodyClientError.previousSendPending(outgoingMessage(sessionID: sessionID)?.text ?? "")
+        }
+        if imagePreviewScopes[workspaceID] == nil { imagePreviewScopes[workspaceID] = UUID() }
+        outgoingByWorkspace[workspaceID, default: [:]][sessionID] = OutgoingMessage(
+            id: UUID().uuidString.lowercased(), text: text, composerText: composerText, mentions: mentions,
+            attachments: attachments, runConfig: runConfig, previewScopeID: imagePreviewScopes[workspaceID]
+        )
+    }
+
+    func restoreOutgoingMessage(sessionID: String) {
+        guard let workspaceID = selectedWorkspaceID, outgoingByWorkspace[workspaceID]?[sessionID] == nil,
+              let pending = client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID) else { return }
+        if imagePreviewScopes[workspaceID] == nil { imagePreviewScopes[workspaceID] = UUID() }
+        outgoingByWorkspace[workspaceID, default: [:]][sessionID] = OutgoingMessage(
+            id: pending.turnID, text: pending.text, composerText: pending.text, mentions: ComposerMentionState(),
+            attachments: pending.attachments, runConfig: nil, previewScopeID: imagePreviewScopes[workspaceID], delivery: .unconfirmed
+        )
+    }
+
+    func retryOutgoingMessage(sessionID: String) -> Bool {
+        guard let workspaceID = selectedWorkspaceID, let message = outgoingByWorkspace[workspaceID]?[sessionID],
+              message.canRetry, message.delivery != .sending, message.delivery != .sent else { return false }
+        outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sending
+        return true
+    }
+
+    /// Only a definitely rejected message can be edited or removed. An
+    /// unconfirmed write must first be reconciled using its original turn ID.
+    func takeFailedOutgoingMessage(sessionID: String) -> OutgoingMessage? {
+        guard let workspaceID = selectedWorkspaceID, let message = outgoingByWorkspace[workspaceID]?[sessionID],
+              case .failed = message.delivery,
+              client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID) == nil else { return nil }
+        outgoingByWorkspace[workspaceID]?[sessionID] = nil
+        if !message.canRetry {
+            supersededMessages[workspaceID, default: [:]][sessionID, default: []].insert(message.id)
+            if let cached = conversationCache[workspaceID]?[sessionID] {
+                _ = storeConversation(cached, workspaceID: workspaceID)
+            }
+        }
+        return message
+    }
+
+    func displayedTurns(_ turns: [ConversationTurn], sessionID: String) -> [ConversationTurn] {
+        guard let outgoing = outgoingMessage(sessionID: sessionID) else { return turns }
+        if turns.contains(where: { $0.id == outgoing.id }) {
+            // Seeing history alone does not confirm that the daemon accepted
+            // the metadata dispatch; keep delivery state until send confirms.
+            return turns.map { $0.id == outgoing.id ? outgoing.turn : $0 }
+        }
+        return turns + [outgoing.turn]
+    }
+
+    @discardableResult
+    func deliverOutgoingMessage(sessionID: String, workspaceID: String? = nil,
+                                turnID: String? = nil) async throws -> RunConfigChoice? {
+        guard let workspaceID = workspaceID ?? selectedWorkspaceID,
+              let message = outgoingByWorkspace[workspaceID]?[sessionID], message.delivery == .sending,
+              turnID == nil || turnID == message.id else {
+            throw LodyClientError.notConnected
+        }
+        let generation = authenticationGeneration
+        let operationKey = "\(generation):\(workspaceID):\(sessionID):\(message.id)"
+        guard activeMessageSends.insert(operationKey).inserted else { throw LodyClientError.deliveryUnconfirmed }
+        defer { activeMessageSends.remove(operationKey) }
+        let choice: RunConfigChoice?
+        do {
+            choice = try await client.send(message.text, attachments: message.attachments,
+                runConfig: message.runConfig, turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
+        } catch {
+            guard isCurrentAuthentication(generation),
+                  outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+            if client.pendingTextSend(sessionID: sessionID, workspaceID: workspaceID) != nil {
+                outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .unconfirmed
+            } else {
+                let reason: String
+                switch error {
+                case LodyClientError.sessionBusy:
+                    reason = "Wait for the current reply, then retry."
+                case LodyClientError.sendSuperseded:
+                    reason = "A newer message took precedence. Edit to send again."
+                    outgoingByWorkspace[workspaceID]?[sessionID]?.canRetry = false
+                case is CancellationError:
+                    reason = "Send interrupted. Retry when connected."
+                default:
+                    reason = "Could not send. Retry or edit this message."
+                }
+                outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .failed(reason)
+            }
+            throw error
+        }
+        guard isCurrentAuthentication(generation),
+              outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+        outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sent
+        if let cached = conversationCache[workspaceID]?[sessionID] {
+            _ = storeConversation(cached, workspaceID: workspaceID)
+        }
+        // Refreshing the list or waiting for a stream echo does not keep the
+        // message in Sending, and navigation never discards its local content.
+        if let conversation = try? await client.conversation(sessionID: sessionID, workspaceID: workspaceID),
+           isCurrentAuthentication(generation) {
+            _ = storeConversation(conversation, workspaceID: workspaceID)
+        }
+        guard isCurrentAuthentication(generation) else { throw CancellationError() }
+        if selectedWorkspaceID == workspaceID {
+            if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
+                var session = sessions.remove(at: index)
+                session.preview = message.text
+                sessions.insert(session, at: 0)
+                sessionsByWorkspace[workspaceID] = sessions
+                persistSession()
+            }
+            await refreshSessions(restart: true)
+        }
+        return choice
+    }
+
+    @discardableResult
+    private func storeConversation(_ value: Conversation, workspaceID: String) -> Conversation {
+        let sessionID = value.sessionID
+        var conversation = value.preservingPreviews(from: conversationCache[workspaceID]?[sessionID])
+        if let ids = supersededMessages[workspaceID]?[sessionID] {
+            for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) {
+                conversation.turns[index].delivery = .superseded
+            }
+        }
+        if let message = outgoingByWorkspace[workspaceID]?[sessionID],
+           let index = conversation.turns.firstIndex(where: { $0.id == message.id }) {
+            conversation.turns[index] = message.preservingPreviews(in: conversation.turns[index])
+            if message.delivery == .sent { outgoingByWorkspace[workspaceID]?[sessionID] = nil }
+        }
+        conversationCache[workspaceID, default: [:]][sessionID] = conversation
+        return conversation
     }
 
     @discardableResult
@@ -869,6 +1031,8 @@ final class AppModel {
         }
         pendingTabs[workspaceID]?.removeValue(forKey: sessionID)
         for id in archivedIDs {
+            outgoingByWorkspace[workspaceID]?.removeValue(forKey: id)
+            supersededMessages[workspaceID]?.removeValue(forKey: id)
             conversationCache[workspaceID]?.removeValue(forKey: id)
             searchBodies[workspaceID]?.removeValue(forKey: id)
             freshSearchBodies[workspaceID]?.remove(id)

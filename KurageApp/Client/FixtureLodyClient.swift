@@ -27,9 +27,11 @@ final class FixtureLodyClient: LodyClient {
     private let sendDelay: Duration?
     private var failTabStartOnce: Bool
     private let skillRefreshDelay: Duration?
+    private let mentionDelay: Duration?
     private var failSkillRefreshOnce: Bool
     private var initialSkillSource: String?
     private var failSendOnce: Bool
+    private var rejectSendOnce: Bool
     private let authorizationDelay: Duration?
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
 
@@ -42,8 +44,10 @@ final class FixtureLodyClient: LodyClient {
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
         failSendOnce: Bool = false,
+        rejectSendOnce: Bool = false,
         failTabStartOnce: Bool = false,
         skillRefreshDelay: Duration? = nil,
+        mentionDelay: Duration? = nil,
         failSkillRefreshOnce: Bool = false,
         authorizationDelay: Duration? = nil
     ) {
@@ -54,8 +58,10 @@ final class FixtureLodyClient: LodyClient {
         self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
         self.failSendOnce = failSendOnce
+        self.rejectSendOnce = rejectSendOnce
         self.failTabStartOnce = failTabStartOnce
         self.skillRefreshDelay = skillRefreshDelay
+        self.mentionDelay = mentionDelay
         self.failSkillRefreshOnce = failSkillRefreshOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
@@ -111,6 +117,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] {
+        if let mentionDelay { try await Task.sleep(for: mentionDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
         return records.filter { $0.summary.projectID == projectID && $0.summary.id != sessionID &&
@@ -122,10 +129,13 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+        if let mentionDelay { try await Task.sleep(for: mentionDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
         let template = try record(templateSessionID)
-        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? "")"
+        // A nil provider means the template's default, including a prefetch
+        // that begins before the new-session options have resolved.
+        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? template.summary.agentName)"
         if initialSkillSource == nil { initialSkillSource = source }
         if source != initialSkillSource {
             if let skillRefreshDelay { try await Task.sleep(for: skillRefreshDelay) }
@@ -279,6 +289,10 @@ final class FixtureLodyClient: LodyClient {
         if let sendDelay { try await Task.sleep(for: sendDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if rejectSendOnce {
+            rejectSendOnce = false
+            throw LodyClientError.sessionBusy
+        }
         if failSendOnce {
             failSendOnce = false
             pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID, attachments: attachments), effectiveRunConfig)
@@ -307,6 +321,7 @@ final class FixtureLodyClient: LodyClient {
         agentConfigID: String?,
         projectID: String? = nil,
         isTab: Bool = false,
+        refresh: Bool = false,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         try requireAccount()

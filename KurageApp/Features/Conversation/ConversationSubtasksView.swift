@@ -15,16 +15,17 @@ struct ConversationSubtasksButton: View {
                 Image("robot")
                     .resizable()
                     .scaledToFit()
-                    .frame(width: 16, height: 16)
+                    .frame(width: 13, height: 13)
             }
-            .font(.footnote.weight(.medium))
-            .padding(.horizontal, 14)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .glassEffect(.regular.tint(showsTasks ? .primary : .clear), in: .capsule)
             .frame(minHeight: 44)
-            .contentShape(Capsule())
+            .contentShape(.rect)
         }
         .foregroundStyle(showsTasks ? Color(uiColor: .systemBackground) : .primary)
         .buttonStyle(.plain)
-        .glassEffect(.regular.tint(showsTasks ? .primary : .clear), in: .capsule)
         .accessibilityIdentifier("conversation-subtasks")
         .accessibilityHint("View the subagents this conversation spawned")
         .popover(isPresented: $showsTasks, arrowEdge: .bottom) {

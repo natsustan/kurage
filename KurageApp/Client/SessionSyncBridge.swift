@@ -158,17 +158,17 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
     }
 
     func newSessionOptions(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: String,
-                           access: StreamsAccess, isTab: Bool = false) async throws -> NewSessionOptions {
+                           access: StreamsAccess, isTab: Bool = false, refresh: Bool = false) async throws -> NewSessionOptions {
         let operationID = UUID().uuidString
         fetchHandler.beginOperation(operationID)
         defer { fetchHandler.endOperation(operationID) }
         let json = try await withTaskCancellationHandler {
             try await callBridge(
-                "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL, operationID, projectID, isTab))",
+                "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL, operationID, projectID, isTab, refresh))",
                 workspaceID: workspaceID,
                 access: access,
                 arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
-                            "operationID": operationID, "projectID": projectID ?? NSNull(), "isTab": isTab]
+                            "operationID": operationID, "projectID": projectID ?? NSNull(), "isTab": isTab, "refresh": refresh]
             )
         } onCancel: {
             Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }

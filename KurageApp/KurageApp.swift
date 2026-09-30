@@ -17,7 +17,9 @@ struct KurageApp: App {
                 sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-tab-send") ? .seconds(15)
                     : ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
                 failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"),
+                rejectSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-rejected"),
                 skillRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh") ? .seconds(3) : nil,
+                mentionDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-mentions") ? .seconds(6) : nil,
                 failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"),
                 authorizationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-browser")
                     ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)

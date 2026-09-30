@@ -28,17 +28,21 @@ function readProviders(flock, machineID) {
 
 // The most recent session with this agent across projects gives
 // the first turn's permission mode, model, options and MCP selection.
-async function readBaseline(repo, rows, meta, agentConfigID, signal) {
+async function readBaseline(repo, rows, meta, agentConfigID, signal, cache) {
   const candidates = rows
     .filter(row => isRootSession(row) && row.meta.machineId === meta.machineId &&
       row.meta.agentConfigId === agentConfigID)
     .sort((a, b) => activityTime(b.meta) - activityTime(a.meta));
   const source = candidates[0];
   if (!source) return {};
-  return readDocumentBaseline(repo, source.docId, signal);
+  return readDocumentBaseline(repo, source.docId, signal, cache);
 }
 
-async function readDocumentBaseline(repo, docID, signal) {
+async function readDocumentBaseline(repo, docID, signal, cache) {
+  const before = cache ? JSON.parse(JSON.stringify(await repo.getDocMeta(docID) ?? null)) : undefined;
+  signal?.throwIfAborted();
+  const cached = cache?.baseline(docID, before);
+  if (cached !== undefined) return cached;
   const handle = await repo.openPersistedDoc(docID);
   if (!synced(await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal }))) {
     throw new Error('Session history sync failed');
@@ -51,6 +55,11 @@ async function readDocumentBaseline(repo, docID, signal) {
   for (const key of INHERITED_CONFIG_KEYS) {
     if (inherited[key] !== undefined) baseline[key] = inherited[key];
   }
+  if (cache) {
+    const after = await repo.getDocMeta(docID);
+    signal?.throwIfAborted();
+    cache.rememberBaseline(docID, before, after, baseline);
+  }
   return baseline;
 }
 
@@ -58,7 +67,7 @@ async function readDocumentBaseline(repo, docID, signal) {
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.
 async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal,
-  { allowArchived = false, projectID, tab = false, includeBaseline = true } = {}) {
+  { allowArchived = false, projectID, tab = false, includeBaseline = true, cache } = {}) {
   signal?.throwIfAborted();
   const rows = await repo.listDoc();
   const templateDocID = `session-${templateSessionID}`;
@@ -82,12 +91,18 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     targetMeta = { ...meta, project: project.localProjectId === projectID.slice(prefix.length)
       ? project : { kind: 'local', localProjectId: projectID.slice(prefix.length) } };
   }
-  let flock;
   const flockDocID = `${workspaceID}:mf:${meta.machineId}`;
+  let flock = cache?.machine(flockDocID);
   try {
-    const machine = await repo.openFlockDoc(flockDocID);
-    const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'], signal });
-    if (report.ok) flock = machine.flock;
+    if (!flock) {
+      const machine = await repo.openFlockDoc(flockDocID);
+      const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'], signal });
+      signal?.throwIfAborted();
+      if (report.ok) {
+        flock = machine.flock;
+        cache?.rememberMachine(flockDocID, flock);
+      }
+    }
   } catch {
     signal?.throwIfAborted();
     // Without the machine document only the template's agent is offered, at its inherited values.
@@ -117,11 +132,11 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   const baseline = !includeBaseline ? {}
     : !tab
     ? (text(agent.id)
-        ? await readBaseline(repo, rows, meta, agent.id, signal)
-        : await readDocumentBaseline(repo, templateDocID, signal))
+        ? await readBaseline(repo, rows, meta, agent.id, signal, cache)
+        : await readDocumentBaseline(repo, templateDocID, signal, cache))
     : (inheritsAgent
-        ? await readDocumentBaseline(repo, templateDocID, signal)
-        : await readBaseline(repo, rows, meta, agent.id, signal));
+        ? await readDocumentBaseline(repo, templateDocID, signal, cache)
+        : await readBaseline(repo, rows, meta, agent.id, signal, cache));
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   return {
@@ -138,13 +153,14 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   };
 }
 
-export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, signal, projectID, tab = false) {
-  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { projectID, tab });
+export async function newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, signal, projectID, tab = false, cache) {
+  const template = await readTemplate(repo, workspaceID, templateSessionID, agentConfigID, signal, { projectID, tab, cache });
   return {
     machineName: template.machineName,
     agentConfigID: template.agent.id ?? '',
     providers: template.providers,
     runConfig: template.runConfig,
+    ...(cache?.needsRefresh ? { needsRefresh: true } : {}),
   };
 }
 
