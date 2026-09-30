@@ -129,6 +129,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             [weak self] table, indexPath, id in
             let cell = table.dequeueReusableCell(withIdentifier: "turn", for: indexPath) as! ConversationTurnCell
             guard let turn = self?.turnsByID[id] else { return cell }
+            cell.accessibilityIdentifier = "conversation-turn-\(id)"
             cell.backgroundColor = .clear
             let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
             if let imageLoader = self?.loadImage {

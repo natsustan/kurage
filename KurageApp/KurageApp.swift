@@ -16,8 +16,10 @@ struct KurageApp: App {
                 failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"),
                 sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-tab-send") ? .seconds(15)
                     : ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
+                startDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-start") ? .seconds(8) : nil,
                 failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"),
                 rejectSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-rejected"),
+                failTabStartOnce: ProcessInfo.processInfo.arguments.contains("--fixture-tab-start-unconfirmed"),
                 skillRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh") ? .seconds(3) : nil,
                 mentionDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-mentions") ? .seconds(6) : nil,
                 failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"),

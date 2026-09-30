@@ -7,11 +7,6 @@ struct SessionNavigation {
     }
 
     var path: [Route] = []
-
-    mutating func completeStart(_ sessionID: SessionSummary.ID, from route: NewSessionRoute) {
-        guard path.last == .newSession(route) else { return }
-        path[path.count - 1] = .conversation(sessionID)
-    }
 }
 
 struct SessionListView: View {
@@ -86,9 +81,7 @@ struct SessionListView: View {
                         model: model
                     )
                 case .newSession(let route):
-                    NewSessionView(route: route, model: model) { sessionID in
-                        navigation.completeStart(sessionID, from: route)
-                    }
+                    NewSessionView(route: route, model: model)
                 }
             }
             .toolbar {

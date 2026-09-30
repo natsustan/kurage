@@ -25,6 +25,7 @@ final class FixtureLodyClient: LodyClient {
     private var failingConversationIDsOnce: Set<String>
     private let conversationDelay: Duration?
     private let sendDelay: Duration?
+    private let startDelay: Duration?
     private var failTabStartOnce: Bool
     private let skillRefreshDelay: Duration?
     private let mentionDelay: Duration?
@@ -43,6 +44,7 @@ final class FixtureLodyClient: LodyClient {
         conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
+        startDelay: Duration? = nil,
         failSendOnce: Bool = false,
         rejectSendOnce: Bool = false,
         failTabStartOnce: Bool = false,
@@ -57,6 +59,7 @@ final class FixtureLodyClient: LodyClient {
         self.failingConversationIDsOnce = failingConversationIDsOnce
         self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
+        self.startDelay = startDelay
         self.failSendOnce = failSendOnce
         self.rejectSendOnce = rejectSendOnce
         self.failTabStartOnce = failTabStartOnce
@@ -229,6 +232,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
+        if let startDelay { try await Task.sleep(for: startDelay) }
         try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
@@ -389,8 +393,12 @@ final class FixtureLodyClient: LodyClient {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
+        if let startDelay { try await Task.sleep(for: startDelay) }
+        try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
         if let pending = pendingSessionStarts(workspaceID: workspaceID).first(where: { $0.projectID == projectID }) {
@@ -407,7 +415,7 @@ final class FixtureLodyClient: LodyClient {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         let runConfig = try appliedRunConfig(options, selections: selections, mismatch: LodyClientError.notConnected)
-        let id = "session-new-\(makeTurnID())"
+        let id = sessionID
         let created = SessionRecord(
             summary: SessionSummary(
                 id: id, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: options.agentConfigID,
@@ -415,7 +423,7 @@ final class FixtureLodyClient: LodyClient {
                 projectID: projectID, projectName: addedProjects[projectID]?.name ?? template.summary.projectName,
                 machineName: template.summary.machineName
             ),
-            turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
+            turns: [ConversationTurn(id: turnID, author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
             permission: nil,
             runConfig: SessionRunConfig(
                 model: runConfig.selectedModel.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
@@ -426,7 +434,7 @@ final class FixtureLodyClient: LodyClient {
         if failStartAndArchiveProjectOnce {
             failStartAndArchiveProjectOnce = false
             pendingStarts[id] = (PendingSessionStart(id: id, projectID: projectID,
-                templateSessionID: templateSessionID, text: trimmed, attachments: attachments), created)
+                templateSessionID: templateSessionID, text: trimmed, attachments: attachments, turnID: turnID), created)
             archivedSessionIDs.formUnion(records.filter { $0.summary.projectID == projectID }.map(\.summary.id))
             throw LodyClientError.deliveryUnconfirmed
         }
@@ -440,6 +448,8 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        if let startDelay { try await Task.sleep(for: startDelay) }
+        try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
         guard let pending = pendingStarts.removeValue(forKey: sessionID) else { throw LodyClientError.sessionMissing }

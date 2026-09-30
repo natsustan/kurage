@@ -4,6 +4,142 @@ import Testing
 
 @MainActor
 struct OutgoingMessageTests {
+    @Test(arguments: [false, true])
+    func firstTurnIsVisibleBeforeCreationAndKeepsItsIdentityThroughTheEcho(isTab: Bool) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let template = try #require(model.sessionSummary("session-long"))
+        let options = try await model.newSessionOptions(templateSessionID: template.id, isTab: isTab)
+        var config = try #require(options.runConfig)
+        config.selectModel("gpt-5.4-mini")
+        config.selectReasoning("low")
+        let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png", data: FixtureImage.png, isImage: true)
+        let id = try model.stageSessionStart("  First turn  ", composerText: "  First turn  ", mentions: .init(),
+            attachments: [image], agentConfigID: options.agentConfigID, selections: config.selections,
+            projectID: try #require(template.projectID), projectName: template.projectName ?? "Project",
+            templateSessionID: template.id, parentSessionID: isTab ? template.id : nil)
+        let message = try #require(model.outgoingMessage(sessionID: id))
+        #expect(model.displayedTurns([], sessionID: id).map(\.id) == [message.id])
+        #expect(message.delivery == .sending)
+        #expect(model.isSessionStartPending(sessionID: id))
+        #expect(model.cachedConversation(sessionID: id) == nil)
+        #expect(!model.sessions.contains { $0.id == id })
+        if isTab {
+            model.setActiveSessionTab(id, rootID: template.id)
+            // A root projection from before the write must not erase the new tab.
+            try await model.observeConversation(sessionID: template.id) { _ in }
+            #expect(model.activeSessionTab(rootID: template.id) == id)
+            #expect(model.sessionTabs(rootID: template.id).last?.id == id)
+        }
+        try await model.deliverOutgoingMessage(sessionID: id)
+        #expect(!model.isSessionStartPending(sessionID: id))
+        #expect(model.outgoingMessage(sessionID: id)?.delivery == .sent)
+        #expect(model.displayedTurns([], sessionID: id).map(\.id) == [message.id])
+        try await model.observeConversation(sessionID: id, rootSessionID: isTab ? template.id : id) { update in
+            #expect(update.runConfig?.model?.value == "gpt-5.4-mini")
+            #expect(update.runConfig?.reasoning?.value == "low")
+        }
+        let received = try #require(model.cachedConversation(sessionID: id))
+        #expect(model.outgoingMessage(sessionID: id) == nil)
+        #expect(received.turns.map(\.id) == [message.id])
+        guard case .image(let preview) = received.turns[0].content.first(where: {
+            if case .image = $0 { return true }; return false
+        }) else { Issue.record("Missing first-turn image"); return }
+        #expect(preview.localPreviewData == image.data)
+    }
+
+    @Test(arguments: [false, true])
+    func unconfirmedFirstTurnRetriesTheOriginalSessionAndAttachments(isTab: Bool) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: !isTab, failTabStartOnce: isTab)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let template = try #require(model.sessionSummary("session-long"))
+        let file = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain", data: Data("notes".utf8), isImage: false)
+        let id = try model.stageSessionStart("Recover first turn", composerText: "Recover first turn", mentions: .init(),
+            attachments: [file], agentConfigID: nil, selections: [], projectID: try #require(template.projectID),
+            projectName: "Project", templateSessionID: template.id, parentSessionID: isTab ? template.id : nil)
+        let turnID = try #require(model.outgoingMessage(sessionID: id)?.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await model.deliverOutgoingMessage(sessionID: id) }
+        #expect(model.outgoingMessage(sessionID: id)?.delivery == .unconfirmed)
+        #expect(model.takeFailedOutgoingMessage(sessionID: id) == nil)
+        if !isTab {
+            await model.refreshSessions()
+            #expect(model.sessionSummary(template.id) == nil)
+            let pending = try #require(model.pendingSessionStarts.first)
+            #expect(try model.restoreSessionStart(pending, projectName: "Project") == id)
+        }
+        #expect(model.retryOutgoingMessage(sessionID: id))
+        try await model.deliverOutgoingMessage(sessionID: id)
+        let received = try await model.conversation(sessionID: id)
+        #expect(received.turns.map(\.id) == [turnID])
+        #expect(received.turns.first?.content.contains { if case .file = $0 { return true }; return false } == true)
+        #expect(model.pendingSessionStarts.isEmpty)
+        #expect(model.pendingSessionTab(rootID: template.id) == nil)
+    }
+
+    @Test func rejectedFirstTurnCanRestoreTheDraftWithoutCreatingASession() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let id = try model.stageSessionStart("First", composerText: "First", mentions: .init(), attachments: [],
+            agentConfigID: nil, selections: [.init(configOptionID: "invalid", value: "invalid")],
+            projectID: "local:machine-1:kurage", projectName: "Kurage", templateSessionID: "session-long", parentSessionID: "session-long")
+        await #expect(throws: LodyClientError.sessionCreationRejected) { try await model.deliverOutgoingMessage(sessionID: id) }
+        #expect(model.takeFailedOutgoingMessage(sessionID: id)?.composerText == "First")
+        #expect(model.sessionSummary(id) == nil)
+        #expect(model.sessionTabs(rootID: "session-long").allSatisfy { $0.id != id })
+        #expect(model.pendingSessionTab(rootID: "session-long") == nil)
+    }
+
+    @Test func editingAFailedFollowUpKeepsAConfirmedTabWhileMetadataCatchesUp() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, rejectSendOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let id = try model.stageSessionStart("First", composerText: "First", mentions: .init(), attachments: [],
+            agentConfigID: nil, selections: [], projectID: "local:machine-1:kurage", projectName: "Kurage",
+            templateSessionID: "session-long", parentSessionID: "session-long")
+        try await model.deliverOutgoingMessage(sessionID: id)
+        _ = try await model.conversation(sessionID: id)
+        #expect(model.outgoingMessage(sessionID: id) == nil)
+        try model.stageOutgoingMessage("Follow-up", composerText: "Follow-up", mentions: .init(),
+            attachments: [], runConfig: nil, sessionID: id)
+        await #expect(throws: LodyClientError.sessionBusy) { try await model.deliverOutgoingMessage(sessionID: id) }
+        #expect(model.takeFailedOutgoingMessage(sessionID: id)?.text == "Follow-up")
+        #expect(model.sessionSummary(id)?.parentSessionID == "session-long")
+        #expect(model.sessionTabs(rootID: "session-long").contains { $0.id == id })
+    }
+
+    @Test(arguments: [false, true])
+    func lateFirstTurnCompletionPreservesWorkspaceAndAccountIsolation(signsOut: Bool) async throws {
+        let client = ControlledSessionStartClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let id = try model.stageSessionStart("Original workspace", composerText: "Original workspace", mentions: .init(),
+            attachments: [], agentConfigID: nil, selections: [], projectID: "local:machine:project",
+            projectName: "Project", templateSessionID: "root")
+        var started = client.started.makeAsyncIterator()
+        let send = Task { try await model.deliverOutgoingMessage(sessionID: id, workspaceID: "a") }
+        _ = await started.next()
+        if signsOut { model.signOut() } else { await model.selectWorkspace("b") }
+        #expect(model.outgoingMessage(sessionID: id) == nil)
+        #expect(model.sessionSummary(id) == nil)
+        client.finish()
+        if signsOut {
+            await #expect(throws: CancellationError.self) { try await send.value }
+            #expect(model.sessionSummary(id) == nil)
+        } else {
+            try await send.value
+            #expect(!model.sessions.contains { $0.id == id })
+            await model.selectWorkspace("a")
+            #expect(model.outgoingMessage(sessionID: id)?.delivery == .sent)
+            #expect(model.sessionSummary(id)?.title == "Original workspace")
+            let received = try await model.conversation(sessionID: id)
+            #expect(received.turns.count == 1)
+            #expect(model.outgoingMessage(sessionID: id) == nil)
+        }
+    }
+
     @Test func stageImmediatelyIncludesTextImagesFilesAndOriginalPreview() async throws {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()
@@ -169,6 +305,48 @@ struct OutgoingMessageTests {
         #expect(model.outgoingMessage(sessionID: "same-session") == nil)
         #expect(model.cachedConversation(sessionID: "same-session") == nil)
     }
+}
+
+@MainActor
+private final class ControlledSessionStartClient: LodyClient {
+    var account: Account? = Account(email: "fixture@example.com", id: "fixture")
+    let supportsSessionCreation = true
+    private var gate: CheckedContinuation<Void, Never>?
+    private var records: [String: [(SessionSummary, Conversation)]] = [:]
+    let started: AsyncStream<Void>
+    private let signal: AsyncStream<Void>.Continuation
+
+    init() { (started, signal) = AsyncStream.makeStream() }
+    func finish() { gate?.resume(); gate = nil }
+    func beginDeviceAuthorization() async throws -> DeviceAuthorization { throw LodyClientError.notConnected }
+    func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {}
+    func restoreSession() async -> Account? { account }
+    func signOut() { account = nil }
+    func workspaces() async throws -> [WorkspaceSummary] {
+        [.init(id: "a", name: "A", slug: "a"), .init(id: "b", name: "B", slug: "b")]
+    }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] {
+        [SessionSummary(id: "root", title: "Root", agentName: "Agent", activity: .idle, preview: "",
+                        projectID: "local:machine:project", projectName: "Project")] + (records[workspaceID] ?? []).map { $0.0 }
+    }
+    func startSession(_ text: String, attachments: [ComposerAttachment], agentConfigID: String?, selections: [RunConfigChoice],
+                      projectID: String, templateSessionID: String, sessionID: String, turnID: String, workspaceID: String) async throws -> String {
+        await withCheckedContinuation { gate = $0; signal.yield(()) }
+        records[workspaceID, default: []].append((
+            SessionSummary(id: sessionID, title: text, agentName: "Agent", activity: .idle, preview: text, projectID: projectID),
+            Conversation(sessionID: sessionID, turns: [ConversationTurn(id: turnID, author: .user, text: text)])))
+        return sessionID
+    }
+    func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
+        guard let record = records[workspaceID]?.first(where: { $0.0.id == sessionID }) else { throw LodyClientError.sessionMissing }
+        return record.1
+    }
+    func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?,
+              turnID: String, sessionID: String, workspaceID: String) async throws -> RunConfigChoice? {
+        throw LodyClientError.notConnected
+    }
+    func cancelSession(sessionID: String, workspaceID: String) async throws {}
+    func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws {}
 }
 
 @MainActor

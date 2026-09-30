@@ -45,7 +45,7 @@ extension NewSessionOptions {
 struct NewSessionView: View {
     let route: NewSessionRoute
     let model: AppModel
-    let onStarted: (SessionSummary.ID) -> Void
+    var onStaged: ((SessionSummary.ID) -> Void)? = nil
 
     @State private var selectedProject: SessionProject?
     private var projectID: String { selectedProject?.id ?? route.projectID }
@@ -62,17 +62,28 @@ struct NewSessionView: View {
     @State private var draft = ""
     @State private var mentions = ComposerMentionState()
     @State private var attachments: [ComposerAttachment] = []
-    @State private var isStarting = false
-    @State private var startTask: Task<Void, Never>?
+    @State private var startedSessionID: SessionSummary.ID?
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
+
+    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
+         onStaged: ((SessionSummary.ID) -> Void)? = nil) {
+        self.route = route
+        self.model = model
+        self.onStaged = onStaged
+        _draft = State(initialValue: restoredMessage?.composerText ?? "")
+        _mentions = State(initialValue: restoredMessage?.mentions ?? .init())
+        _attachments = State(initialValue: restoredMessage?.attachments ?? [])
+    }
+
+    private var isStarting: Bool { startedSessionID != nil }
 
     private var pendingStart: PendingSessionStart? {
         guard isCurrentWorkspace else { return nil }
         if let rootID = route.parentSessionID {
             return model.pendingSessionTab(rootID: rootID).map {
                 PendingSessionStart(id: $0.sessionID, projectID: projectID, templateSessionID: rootID,
-                                    text: $0.text, attachments: $0.attachments)
+                                    text: $0.text, attachments: $0.attachments, turnID: $0.turnID)
             }
         }
         return model.pendingSessionStarts.first { $0.projectID == projectID }
@@ -91,6 +102,20 @@ struct NewSessionView: View {
     }
 
     var body: some View {
+        Group {
+            if let startedSessionID, isCurrentWorkspace {
+                // Keep this navigation destination alive through confirmation.
+                // Its local first turn and the synchronized turn share an ID.
+                ConversationTabsContent(rootID: startedSessionID, title: model.sessionSummary(startedSessionID)?.title ?? "Session",
+                    model: model, workspaceGeneration: route.workspaceGeneration, isReadOnly: false,
+                    onEditSessionStart: restoreDraft)
+            } else {
+                composition
+            }
+        }
+    }
+
+    private var composition: some View {
         // Short details sit just above the composer; large text scrolls instead of
         // pushing the composer under the keyboard.
         ScrollView {
@@ -137,9 +162,9 @@ struct NewSessionView: View {
         .navigationTitle(route.parentSessionID == nil ? "New Session" : "New Tab")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: request) { await load() }
+        .onAppear { resumePendingStart() }
         .onDisappear {
             configuration.cancelLoads()
-            startTask?.cancel()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { request.attempt += 1 }
@@ -177,12 +202,7 @@ struct NewSessionView: View {
                     .lineLimit(4)
                     .foregroundStyle(.primary)
                 Button("Retry earlier start", systemImage: "arrow.clockwise") {
-                    performStart {
-                        if let rootID = route.parentSessionID {
-                            return try await model.startSessionTab(pendingStart.text, attachments: pendingStart.attachments, rootID: rootID)
-                        }
-                        return try await model.retrySessionStart(pendingStart)
-                    }
+                    resumePendingStart(retry: true)
                 }
                 .disabled(!isCurrentWorkspace || isStarting)
                 .accessibilityIdentifier("new-session-retry-start")
@@ -223,7 +243,7 @@ struct NewSessionView: View {
     }
 
     private func load() async {
-        guard isCurrentWorkspace else { return }
+        guard isCurrentWorkspace, !isStarting, pendingStart == nil else { return }
         await configuration.load(providerID: request.agentConfigID,
                                  refresh: { try await fetchOptions(providerID: $0, refresh: true) },
                                  using: { try await fetchOptions(providerID: $0, refresh: false) })
@@ -256,53 +276,55 @@ struct NewSessionView: View {
     private func start() {
         guard isCurrentWorkspace, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
-        let text = mentions.expanded(draft)
-        let sentAttachments = attachments
-        let selections = runConfig?.selections ?? []
-        performStart {
-            if let rootID = route.parentSessionID {
-                return try await model.startSessionTab(text, attachments: sentAttachments, selections: selections,
-                                                       agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
-                                                       rootID: rootID)
-            }
-            return try await model.startSession(
-                text, attachments: sentAttachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
-                selections: selections, projectID: projectID,
-                templateSessionID: templateSessionID
-            )
+        do {
+            let id = try model.stageSessionStart(mentions.expanded(draft), composerText: draft, mentions: mentions,
+                attachments: attachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+                selections: runConfig?.selections ?? [], projectID: projectID, projectName: projectName,
+                templateSessionID: route.parentSessionID ?? templateSessionID, parentSessionID: route.parentSessionID)
+            draft = ""
+            mentions.clear()
+            attachments = []
+            showConversation(id)
+            deliverStart(id)
+        } catch {
+            banner = "Could not prepare the new session. Try again."
         }
     }
 
-    private func performStart(_ operation: @escaping @MainActor () async throws -> SessionSummary.ID) {
-        guard isCurrentWorkspace, !isStarting else { return }
-        isStarting = true
+    private func showConversation(_ id: String) {
+        configuration.cancelLoads()
+        startedSessionID = id
         banner = nil
-        startTask = Task {
-            defer { isStarting = false }
-            do {
-                let sessionID = try await operation()
-                try Task.checkCancellation()
-                guard isCurrentWorkspace else { return }
-                onStarted(sessionID)
-            } catch LodyClientError.sessionCreationRejected {
-                guard isCurrentWorkspace else { return }
-                configuration.cancelLoads()
-                configuration = NewSessionConfiguration()
-                request = LoadRequest(attempt: request.attempt + 1)
-                banner = "The session was not created. Review the refreshed agent settings and try again."
-            } catch LodyClientError.previousSendPending(let previousText) {
-                draft = previousText
-                mentions.clear()
-                banner = "An earlier start is unconfirmed. Use Retry earlier start to resume it."
-            } catch is CancellationError {
-                return
-            } catch {
-                guard isCurrentWorkspace else { return }
-                banner = pendingStart != nil
-                    ? "The start is unconfirmed. Retry the original task above."
-                    : "Could not confirm the new session. Try again."
-            }
+        onStaged?(id)
+    }
+
+    private func resumePendingStart(retry: Bool = false) {
+        guard isCurrentWorkspace, !isStarting, let pendingStart else { return }
+        do {
+            let id = try model.restoreSessionStart(pendingStart, projectName: projectName, parentSessionID: route.parentSessionID)
+            showConversation(id)
+            if retry, model.retryOutgoingMessage(sessionID: id) { deliverStart(id) }
+        } catch {
+            banner = "Could not reopen the earlier start. Try again."
         }
+    }
+
+    private func deliverStart(_ id: String) {
+        let workspaceID = model.selectedWorkspaceID
+        let turnID = model.outgoingMessage(sessionID: id)?.id
+        // Delivery belongs to the model's outbox and survives leaving this page.
+        Task { try? await model.deliverOutgoingMessage(sessionID: id, workspaceID: workspaceID, turnID: turnID) }
+    }
+
+    private func restoreDraft(_ message: OutgoingMessage) {
+        guard isCurrentWorkspace else { return }
+        startedSessionID = nil
+        draft = message.composerText
+        mentions = message.mentions
+        attachments = message.attachments
+        configuration = NewSessionConfiguration()
+        request = LoadRequest(attempt: request.attempt + 1)
+        banner = nil
     }
 }
 

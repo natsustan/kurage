@@ -1031,7 +1031,7 @@ final class ShellFlowTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(newSession.waitForExistence(timeout: 5))
         let started = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH 'session-session-new-'")
+            NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "session-", "Add a settings screen")
         ).firstMatch
         XCTAssertTrue(started.waitForExistence(timeout: 5))
         XCTAssertLessThan(started.frame.minY, app.descendants(matching: .any)["session-session-pr"].frame.minY)
@@ -1052,11 +1052,11 @@ final class ShellFlowTests: XCTestCase {
         tap(field)
         field.typeText("Recover original task")
         tap(app.buttons["new-session-send"])
-        let retry = app.buttons["new-session-retry-start"]
+        let retry = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "retry-message-")).firstMatch
         XCTAssertTrue(retry.waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(app.buttons["new-session-retry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Recover original task"].waitForExistence(timeout: 5))
         XCTAssertTrue(retry.isEnabled)
         attachScreen(app, name: "pending-start-options-failed")
         app.navigationBars.buttons.firstMatch.tap()
@@ -1070,7 +1070,7 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["new-session-local:machine-1:prism"].waitForNonExistence(timeout: 5))
         tap(pending)
         tap(app.buttons["Recover original task"])
-        XCTAssertTrue(app.buttons["new-session-retry"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Recover original task"].waitForExistence(timeout: 5))
         attachScreen(app, name: "pending-start-reopened")
         tap(retry)
         XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))

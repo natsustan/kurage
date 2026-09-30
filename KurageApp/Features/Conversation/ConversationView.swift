@@ -58,6 +58,7 @@ struct ConversationContent: View {
     var onNewTab: (() -> Void)? = nil
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
+    var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
     @State private var changesSelection: FileChangesSelection?
@@ -87,6 +88,7 @@ struct ConversationContent: View {
     }
 
     private var outgoingMessage: OutgoingMessage? { model.outgoingMessage(sessionID: sessionID) }
+    private var isStarting: Bool { model.isSessionStartPending(sessionID: sessionID) }
     private var isSending: Bool { outgoingMessage?.delivery == .sending }
     private var canRetryMessage: Bool {
         guard !isReadOnly, isCurrentWorkspace, scenePhase == .active, !isCancelling,
@@ -108,7 +110,7 @@ struct ConversationContent: View {
             turns: displayedTurns,
             fileChanges: displayedConversation?.fileChanges ?? [],
             onOpenTurnChanges: { changesSelection = FileChangesSelection(turnNumber: $0) },
-            isLoading: displayedConversation == nil,
+            isLoading: displayedConversation == nil && outgoingMessage == nil,
             isRunning: isRunning,
             scrollRequestID: scrollRequestID,
             messageTimestamp: loadedMessageAt,
@@ -149,16 +151,20 @@ struct ConversationContent: View {
                 connectionMessage: showsConnectionMessage ? connectionStatus : nil,
                 supportsTextSending: !isReadOnly && model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
-                supportsSessionCancellation: !isReadOnly && model.supportsSessionCancellation,
+                supportsSessionCancellation: !isReadOnly && !isStarting && model.supportsSessionCancellation,
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
-                mentionSourceID: "\(workspaceGeneration):\(sessionID)",
+                focusesComposerOnAppear: isStarting,
+                mentionSourceID: "\(workspaceGeneration):\(sessionID):\(isStarting)",
                 loadMentionSessions: {
                     guard let projectID = session?.projectID else { return [] }
                     return try await model.mentionSessions(projectID: projectID, excluding: sessionID)
                 },
-                loadMentionSkills: { try await model.mentionSkills(templateSessionID: sessionID) },
+                loadMentionSkills: {
+                    guard !isStarting else { return [] }
+                    return try await model.mentionSkills(templateSessionID: sessionID)
+                },
                 onSend: sendDraft,
                 onCancel: cancelSession,
                 onChooseRunConfig: chooseRunConfig,
@@ -193,7 +199,7 @@ struct ConversationContent: View {
                         }
                         .accessibilityLabel("New tab")
                         .accessibilityIdentifier("new-session-tab")
-                        .disabled(!model.supportsSessionCreation)
+                        .disabled(!model.supportsSessionCreation || isStarting)
                     }
                     Menu {
                         if !closedTabs.isEmpty {
@@ -217,6 +223,7 @@ struct ConversationContent: View {
                         Image(systemName: "ellipsis").accessibilityLabel("Session options")
                     }
                     .accessibilityIdentifier("session-options")
+                    .disabled(isStarting)
                 }
             }
             ToolbarItem(placement: .principal) {
@@ -259,8 +266,8 @@ struct ConversationContent: View {
             }
         }
         .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
-                                 active: scenePhase == .active, refreshID: refreshID)) {
-            guard scenePhase == .active else { return }
+                                 active: scenePhase == .active && !isStarting, refreshID: refreshID)) {
+            guard scenePhase == .active, !isStarting else { return }
             await observe()
         }
         .task(id: scenePhase == .active ? connectionStatus : nil) {
@@ -359,7 +366,12 @@ struct ConversationContent: View {
     }
 
     private func editMessage() {
+        let editsStart = isStarting
         guard canEditMessage, let message = model.takeFailedOutgoingMessage(sessionID: sessionID) else { return }
+        if editsStart {
+            onEditSessionStart?(message)
+            return
+        }
         draft = message.composerText
         mentions = message.mentions
         attachments = message.attachments
@@ -715,6 +727,7 @@ private struct ConversationFooter: View {
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
+    var focusesComposerOnAppear = false
     let mentionSourceID: String
     let loadMentionSessions: @MainActor () async throws -> [MentionSession]
     let loadMentionSkills: @MainActor () async throws -> [MentionSkill]
@@ -766,6 +779,7 @@ private struct ConversationFooter: View {
                                     runConfig: runConfig?.menu,
                                     contextWindowUsage: contextWindowUsage,
                                     canSubmit: canSubmit,
+                                    focusesOnAppear: focusesComposerOnAppear,
                                     mentionSourceID: mentionSourceID,
                                     loadMentionSessions: loadMentionSessions,
                                     loadMentionSkills: loadMentionSkills,

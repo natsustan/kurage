@@ -2,6 +2,100 @@ import XCTest
 
 final class SessionTabsFlowTests: XCTestCase {
     @MainActor
+    func testFirstSessionShowsBubbleBeforeCreationAndKeepsTheNextDraftThroughSync() {
+        verifyFirstTurn(isTab: false)
+    }
+
+    @MainActor
+    func testFirstTabShowsBubbleBeforeCreationAndKeepsTheNextDraftThroughSync() {
+        verifyFirstTurn(isTab: true)
+    }
+
+    @MainActor
+    private func verifyFirstTurn(isTab: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-slow-start", "--fixture-slow-conversation"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        if isTab {
+            tap(app.descendants(matching: .any)["session-session-long"].firstMatch)
+            tap(app.buttons["new-session-tab"])
+        } else {
+            tap(app.buttons["new-session-local:machine-1:prism"])
+        }
+        let field = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(field)
+        field.typeText("Immediate first turn")
+        tap(app.buttons["new-session-send"])
+        let transcript = app.tables["conversation-transcript"]
+        let bubble = transcript.staticTexts["Immediate first turn"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 2))
+        let nextDraft = app.descendants(matching: .any)["follow-up-field"].firstMatch
+        XCTAssertTrue(nextDraft.waitForExistence(timeout: 2))
+        XCTAssertTrue(nextDraft.isEnabled)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        let send = app.buttons["send-follow-up"]
+        XCTAssertEqual(send.label, "Sending")
+        XCTAssertFalse(app.buttons["new-session-send"].exists)
+        tap(nextDraft)
+        nextDraft.typeText("Next draft survives creation")
+        let turn = transcript.cells.firstMatch
+        let turnID = turn.identifier
+        XCTAssertTrue(turnID.hasPrefix("conversation-turn-"))
+        if isTab {
+            let child = app.buttons.matching(NSPredicate(format:
+                "identifier BEGINSWITH %@ AND identifier != %@", "session-tab-", "session-tab-session-long")).firstMatch
+            XCTAssertTrue(child.exists)
+            XCTAssertTrue(child.isSelected)
+            tap(app.buttons["session-tab-session-long"])
+            tap(child)
+            XCTAssertTrue(bubble.exists)
+            XCTAssertEqual(nextDraft.value as? String, "Next draft survives creation")
+            XCTAssertTrue(transcript.cells[turnID].exists)
+        }
+        attachScreen(name: isTab ? "First tab before creation" : "First session before creation")
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 15))
+        XCTAssertTrue(bubble.exists)
+        XCTAssertEqual(nextDraft.value as? String, "Next draft survives creation")
+        let deliveryID = "message-delivery-" + String(turnID.dropFirst("conversation-turn-".count))
+        XCTAssertTrue(app.descendants(matching: .any)[deliveryID].waitForNonExistence(timeout: 8))
+        XCTAssertEqual(transcript.cells.matching(identifier: turnID).count, 1)
+        XCTAssertEqual(transcript.staticTexts.matching(identifier: "Immediate first turn").count, 1)
+        XCTAssertFalse(app.navigationBars[isTab ? "New Tab" : "New Session"].exists)
+        attachScreen(name: isTab ? "First tab after sync" : "First session after sync")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testUnconfirmedFirstTabRetriesOneBubbleAndKeepsItsNextDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-tab-start-unconfirmed"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"].firstMatch)
+        tap(app.buttons["new-session-tab"])
+        let field = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(field)
+        field.typeText("Retry first tab")
+        tap(app.buttons["new-session-send"])
+        let retry = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "retry-message-")).firstMatch
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        let child = app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH %@ AND identifier != %@", "session-tab-", "session-tab-session-long")).firstMatch
+        let childID = child.identifier
+        let nextDraft = app.descendants(matching: .any)["follow-up-field"].firstMatch
+        tap(nextDraft)
+        nextDraft.typeText("Next tab task")
+        tap(retry)
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(nextDraft.value as? String, "Next tab task")
+        XCTAssertTrue(app.buttons[childID].isSelected)
+        XCTAssertEqual(app.tables["conversation-transcript"].staticTexts.matching(identifier: "Retry first tab").count, 1)
+        attachScreen(name: "First tab retried without replacement")
+    }
+
+    @MainActor
     func testSuccessfulSendKeepsItsStateAcrossTabSwitches() {
         verifySendAcrossTabSwitches(fails: false)
     }

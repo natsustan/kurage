@@ -514,7 +514,7 @@ private struct ContextWindowButton: View {
                     .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: 25, height: 25)
+            .frame(width: 22, height: 22)
             .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
@@ -733,10 +733,13 @@ private struct ReasoningGauge: View {
 
     var body: some View {
         Canvas { context, size in
-            let center = CGPoint(x: size.width / 2, y: size.height * 0.63)
-            let radius = size.width * 0.43
+            let radius = min(size.width, size.height) * 0.46
             let start = 145.0
             let sweep = 250.0
+            // Center the visible arc, whose lower ends stop above a full circle's bottom.
+            let lowerExtent = sin(start * .pi / 180) * radius
+            let center = CGPoint(x: size.width / 2,
+                                 y: (size.height + radius - lowerExtent) / 2)
             func point(_ angle: Double, radius: Double) -> CGPoint {
                 CGPoint(x: center.x + cos(angle * .pi / 180) * radius,
                         y: center.y + sin(angle * .pi / 180) * radius)

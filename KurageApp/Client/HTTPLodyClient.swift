@@ -710,7 +710,8 @@ final class HTTPLodyClient: LodyClient {
         pendingStarts.compactMap { key, pending in
             guard key.userID == account?.id, key.workspaceID == workspaceID else { return nil }
             return PendingSessionStart(id: pending.sessionID, projectID: key.projectID,
-                                       templateSessionID: pending.templateSessionID, text: pending.text, attachments: pending.attachments)
+                                       templateSessionID: pending.templateSessionID, text: pending.text,
+                                       attachments: pending.attachments, turnID: pending.turnID)
         }.sorted { $0.id < $1.id }
     }
 
@@ -731,6 +732,8 @@ final class HTTPLodyClient: LodyClient {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -746,8 +749,8 @@ final class HTTPLodyClient: LodyClient {
         try Task.checkCancellation()
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
-            attachments: attachments, templateSessionID: templateSessionID, text: trimmed, sessionID: UUID().uuidString.lowercased(),
-            turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
+            attachments: attachments, templateSessionID: templateSessionID, text: trimmed, sessionID: sessionID,
+            turnID: turnID, agentConfigID: agentConfigID, selections: selections
         )
         pendingStarts[key] = pending
         let waiterID = UUID()

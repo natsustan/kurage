@@ -181,13 +181,16 @@ struct HTTPLodyClientTests {
         var calls = starter.started.makeAsyncIterator()
         let first = Task {
             try await client.startSession("Read", attachments: [image], agentConfigID: nil, selections: [],
-                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+                                          projectID: "p", templateSessionID: "t", sessionID: "first-session",
+                                          turnID: "first-turn", workspaceID: "work")
         }
         _ = await calls.next()
         starter.finish(0, result: "unconfirmed")
         await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
         let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
         #expect(pending.attachments == [image])
+        #expect(pending.id == "first-session")
+        #expect(pending.turnID == "first-turn")
         await #expect(throws: LodyClientError.previousSendPending("Read")) {
             try await client.startSession("Read", agentConfigID: nil, selections: [],
                                           projectID: "p", templateSessionID: "t", workspaceID: "work")

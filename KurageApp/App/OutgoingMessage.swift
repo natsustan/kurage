@@ -9,6 +9,21 @@ enum MessageDelivery: Equatable, Sendable {
     case sent
 }
 
+/// Identity and context exist before a first message reaches the service.
+struct OutgoingSessionStart {
+    let request: SessionTabStart
+    let summary: SessionSummary
+    let templateSessionID: SessionSummary.ID
+    let stagedAt = Date()
+    var isConfirmed = false
+
+    var pending: PendingSessionStart {
+        PendingSessionStart(id: request.sessionID, projectID: summary.projectID ?? "",
+                            templateSessionID: templateSessionID, text: request.text,
+                            attachments: request.attachments, turnID: request.turnID)
+    }
+}
+
 struct OutgoingMessage: Identifiable, Equatable {
     let id: ConversationTurn.ID
     let text: String
