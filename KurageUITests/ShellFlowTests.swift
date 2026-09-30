@@ -1260,7 +1260,9 @@ extension ShellFlowTests {
         app.launch()
         XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
         tap(app.buttons["sign-in-button"])
-        tap(app.buttons["new-session-local:machine-1:prism"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 10))
+        tap(newSession)
         let add = app.buttons["add-attachment"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let composer = app.otherElements["new-session-composer"]
@@ -1288,6 +1290,9 @@ extension ShellFlowTests {
             XCTAssertEqual(composer.frame.maxY, initialFrame.maxY, accuracy: 2)
             XCTAssertTrue(composer.frame.contains(send.frame))
             attachScreen(app, name: "photo-attachment-preview")
+            verifyComposerImagePreview(app, name: "new-session-photo-full-preview")
+            XCTAssertTrue(remove.exists)
+            XCTAssertTrue(send.isEnabled)
             if shouldSend {
                 tap(send)
                 XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 10))
@@ -1302,6 +1307,38 @@ extension ShellFlowTests {
                 attachScreen(app, name: "photo-attachment-removed")
             }
         }
+        tap(add)
+        tap(app.buttons["Photos"])
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
+        let photos = app.images.matching(identifier: "PXGGridLayout-Info")
+        XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 30))
+        tap(photos.element(boundBy: photos.count - 1))
+        tap(app.buttons["Done"])
+        let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 10))
+        verifyComposerImagePreview(app, name: "follow-up-photo-full-preview")
+        XCTAssertTrue(remove.exists)
+        tap(remove)
+        XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["composer-image-thumbnail"].waitForNonExistence(timeout: 5))
+        attachScreen(app, name: "follow-up-photo-removed-after-preview")
+    }
+
+    @MainActor
+    private func verifyComposerImagePreview(_ app: XCUIApplication, name: String) {
+        let thumbnail = app.buttons["composer-image-thumbnail"].firstMatch
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+        tap(thumbnail)
+        let preview = app.descendants(matching: .any)["composer-image-preview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars.staticTexts[thumbnail.label].isHittable)
+        attachScreen(app, name: name)
+        let close = app.buttons["composer-image-close"]
+        XCTAssertTrue(close.isHittable)
+        tap(close)
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
     }
 }
 

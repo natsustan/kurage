@@ -295,7 +295,7 @@ private struct SessionList: View {
                             .offset(y: -44)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 24)
                 .padding(.bottom, 8)
                 .safeAreaPadding(.bottom)
         }

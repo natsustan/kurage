@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## 启动封面（2026-09-30）
+
+- 系统 Launch Screen 与账号恢复阶段共用 64 pt 的灰色水母／细圆环标识，浅色白底、深色黑底，居中于安全区；不显示文字或进度条。
+- `RootView` 每次冷启动至少展示同款封面 0.8 秒，然后以 0.2 秒淡出；启用 Reduce Motion 时直接切换。账号恢复和内容加载同时进行，有缓存账号也展示封面；尚未确定账号时继续保留封面，结束后进入登录页或会话列表。后台返回不重放，封面展示期间屏蔽下层交互及无障碍焦点。
+- 本次验证：Simulator 构建通过；暂停 App 于 main 执行前截图核对系统 Launch Screen 浅色／深色，另以仓库中的同一 `LaunchCoverView` 与编译后的资源在临时模拟器验证壳中核对 SwiftUI 封面，两者位置与配色一致；正常 fixture 启动可进入登录页，`ShellFlowTests/testSignInOpenSessionAllowAndSend` 通过（1 项／0 失败）。真机冷启动、真实账号恢复及后台返回仍待实测。
+- 最短展示时间修订验证：重新 Simulator 构建通过，`ShellFlowTests/testSignInOpenSessionAllowAndSend` 再次通过（1 项／0 失败）；正常 fixture 冷启动录像确认封面持续显示、随后可进入登录。模拟器启动延迟较大，本次未能从系统启动时间中单独测量 0.8 秒停留与 0.2 秒淡出；真机时长与真实账号恢复仍待实测。
+
 ## 会话顶部运行指示调整（2026-09-30）
 
 - 移除会话详情右上角胶囊内由 `isRunning` 控制的持续转圈。该指示表示 Agent 运行状态；连接／重连提示位于标题旁。
@@ -105,6 +112,7 @@
 - 输入框左下新增「＋」菜单，已有会话与新建会话共用 Files、Camera、Photos。Files 使用系统文档选择器并在安全作用域内读取；Photos 使用 PhotosPicker，仅读取选择项目，不请求相册访问权限；Camera 按需申请相机权限，不写入相册。选择中阻止发送，附件可预览和移除，最多 8 项；HEIC/过大照片转换成最长边 2048px JPEG，图片上限 5 MiB，普通文件暂限 16 MiB（Lody 单次上传上限，尚未接分片上传）。草稿字节仅留内存，不落入会话磁盘缓存。
 - 图片使用 cloud API 的 session-images/upload multipart（sessionId + file），文件使用 session-files/upload 原始字节与 x-session-id/x-file-* metadata、SHA-256。发送前完成上传，将返回的显式 image/file block 同时写入 history 和 inputConfig.inputBlocks，允许只有附件的消息，也支持新建首轮；保持正文先同步、metadata 后派发。上传引用按账号代次/工作区/会话/附件 ID 复用；未确认发送保留原始附件与 turn ID，重试不可替换附件。对话显示图片和文件名/大小卡片；文件下载/预览尚未提供。真实账号附件上传、机器读取附件、真机拍照和 iCloud 文件选择尚未验证。
 - 附件输入区改为 120pt 圆角图片预览和紧凑横向文件标签；加号使用自适应中性色，选取后的加载占位和发送中的进度显示在附件内，保留 44pt 删除点击区域。 本次构建及附件来源 UI 测试通过；修复图片无障碍标签覆盖删除按钮后，照片预览/删除/发送测试在浅色及深色 + 辅助大字号下通过。真实服务上传与慢速照片加载仍待实测。
+- 输入框中的已添加图片支持点按打开全屏大图：已有会话与新建首轮共用，直接读取内存中的待发送图片数据，复用对话图片的黑底等比预览页；关闭后保留草稿和附件，删除按钮保持独立。加载中的占位图片不可预览；大图预览不展示图片名称，保留关闭按钮和无障碍图片名称。此次 Simulator 构建通过，两项 fixture UI 测试通过，覆盖新会话/已有会话的大图打开与关闭、附件保留、删除与发送，以及既有对话图片预览。真机、深色、辅助字号与横屏尚未验证。
 - 附件协议参考：Lody `packages/components/src/lib/session-image-upload.ts`、`session-file-upload.ts` 与 `packages/shared/src/session-image.ts`、`session-file.ts`、`ai.ts`；Photos 使用 Apple 的系统 PhotosPicker。
 - PR #13 review 修复：附件上传将任务取消及 `URLError.cancelled` 统一转换为 `CancellationError`，其他网络错误原样传播，避免取消被界面误报为上传失败。本轮 28 项 HTTP Swift 测试通过，新增覆盖图片/文件在途取消、网络层取消、超时与连接中断；真实账号上传取消尚未验证。
 - PR #13 二轮 review 修复：上传重定向 delegate 使用锁保护拒绝状态；任务真正取消时仍返回 `CancellationError`，否则被拒绝的重定向返回普通连接错误，使发送界面恢复正文并提示失败。307/308 回归覆盖同主机 HTTPS、跨主机及 HTTP 降级的错误分类，并保留在途取消及普通网络错误测试。本轮 HTTP 与图片相关 Swift 测试通过；真实服务器重定向及界面端到端恢复未实测。
