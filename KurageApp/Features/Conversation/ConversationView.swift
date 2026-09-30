@@ -554,13 +554,19 @@ struct TurnRow: View {
                     blocks(work.parts, alignment: alignment)
                 }
                 blocks(Array(content.dropFirst(insertionIndex)), alignment: alignment)
+            } else if turn.author == .user {
+                HStack(alignment: .bottom, spacing: 8) {
+                    Spacer(minLength: 44)
+                    MessageDeliveryView(turnID: turn.id, delivery: turn.delivery,
+                        canRetry: canRetryMessage, canEdit: canEditMessage,
+                        onRetry: onRetryMessage, onEdit: onEditMessage)
+                        .fixedSize()
+                    VStack(alignment: .trailing, spacing: 8) {
+                        blocks(turn.content, alignment: alignment)
+                    }
+                }
             } else {
                 blocks(turn.content, alignment: alignment)
-            }
-            if turn.author == .user {
-                MessageDeliveryView(turnID: turn.id, delivery: turn.delivery,
-                    canRetry: canRetryMessage, canEdit: canEditMessage,
-                    onRetry: onRetryMessage, onEdit: onEditMessage)
             }
             if turn.author == .agent, let fileChanges, !fileChanges.files.isEmpty {
                 TurnFileChangesCard(group: fileChanges,
@@ -601,10 +607,7 @@ struct TurnRow: View {
     @ViewBuilder
     private func messageText(_ text: String) -> some View {
         if turn.author == .user {
-            HStack(alignment: .top, spacing: 0) {
-                Spacer(minLength: 52)
-                UserMessageText(text: text)
-            }
+            UserMessageText(text: text)
         } else {
             MarkdownView(text)
                 .tint(.primary)
@@ -626,37 +629,50 @@ private struct MessageDeliveryView: View {
     @State private var showsProgress = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            switch delivery {
-            case .sending:
-                if showsProgress {
-                    ProgressView().controlSize(.mini)
-                    Text("Sending").foregroundStyle(.secondary)
+        Group {
+            if let delivery, delivery != .sent {
+                HStack(spacing: 0) {
+                    switch delivery {
+                    case .sending:
+                        if showsProgress {
+                            ProgressView().controlSize(.mini)
+                                .frame(width: 44, height: 44)
+                                .accessibilityLabel("Sending")
+                        }
+                    case .unconfirmed:
+                        retryButton
+                            .accessibilityValue("Waiting for confirmation")
+                    case .failed(let reason):
+                        HStack(spacing: 0) {
+                            retryButton
+                                .accessibilityValue(reason)
+                            Button("Edit", systemImage: "pencil", action: onEdit)
+                                .labelStyle(.iconOnly)
+                                .frame(width: 44, height: 44)
+                                .disabled(!canEdit)
+                                .accessibilityIdentifier("edit-message-\(turnID)")
+                        }
+                        .foregroundStyle(.red)
+                        .contextMenu {
+                            Text(reason)
+                            Button("Retry", action: onRetry).disabled(!canRetry)
+                            Button("Edit", action: onEdit).disabled(!canEdit)
+                        }
+                    case .superseded:
+                        Image(systemName: "exclamationmark.circle")
+                            .frame(width: 44, height: 44)
+                            .accessibilityLabel("Not run: replaced by a newer message")
+                    case .sent:
+                        EmptyView()
+                    }
                 }
-            case .unconfirmed:
-                Label("Waiting for confirmation", systemImage: "clock")
-                    .foregroundStyle(.secondary)
-                retryButton
-            case .failed(let reason):
-                Label(reason, systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.red)
-                retryButton
-                Button("Edit", action: onEdit)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .disabled(!canEdit)
-                    .accessibilityIdentifier("edit-message-\(turnID)")
-            case .superseded:
-                Label("Not run: replaced by a newer message", systemImage: "exclamationmark.circle")
-                    .foregroundStyle(.secondary)
-            case .sent, nil:
-                EmptyView()
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("message-delivery-\(turnID)")
             }
         }
-        .font(.caption)
-        .buttonStyle(.plain)
-        .frame(minHeight: 44, alignment: .trailing)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("message-delivery-\(turnID)")
         .task(id: delivery) {
             showsProgress = false
             guard delivery == .sending else { return }
@@ -667,8 +683,9 @@ private struct MessageDeliveryView: View {
     }
 
     private var retryButton: some View {
-        Button("Retry", action: onRetry)
-            .frame(minWidth: 44, minHeight: 44)
+        Button("Retry", systemImage: "arrow.clockwise", action: onRetry)
+            .labelStyle(.iconOnly)
+            .frame(width: 44, height: 44)
             .disabled(!canRetry)
             .accessibilityIdentifier("retry-message-\(turnID)")
     }
