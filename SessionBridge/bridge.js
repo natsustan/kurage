@@ -545,7 +545,7 @@ window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessi
         const token = await window.webkit.messageHandlers.streamFetch.postMessage({
           command: 'auth', workspaceID, operationID,
         });
-        return token;
+        return token.token;
       },
     };
     const run = repo => sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor,

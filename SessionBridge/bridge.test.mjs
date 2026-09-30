@@ -722,6 +722,41 @@ test('project catalogs refresh on an isolated reader while browsing reuses cache
   assert.equal(syncs.length, before + 1);
 });
 
+for (const action of ['browse', 'select']) {
+  test(`project ${action} sends the scoped native token through Streams authentication`, async () => {
+    const commands = [];
+    const operationID = `project-${action}`;
+    const token = `${operationID}-token`;
+    let native;
+    const { window } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [localSession], undefined, undefined, {
+      createNativeFetch: (send, fallback) => native = createNativeFetch(send, fallback),
+      postMessage: async command => {
+        commands.push(command);
+        if (command.command === 'auth') return { token };
+        if (command.command === 'start') {
+          await native.receive({ id: command.id, type: 'headers', status: 201,
+            headers: { 'content-type': 'application/json', 'stream-next-offset': '0' } });
+          await native.receive({ id: command.id, type: 'end' });
+        }
+      },
+      sessionProjects: async (_repo, _workspace, _template, _action, _path, _cursor, access, signal) => {
+        signal.throwIfAborted();
+        const client = new StreamsClient({ url: `${access.baseURL}/ds/lody/response`,
+          auth: access.auth, fetch: native.fetch });
+        assert.equal((await client.create({ contentType: 'application/json' })).ok, true);
+        return {};
+      },
+    });
+    await window.kurageSessionProjects('workspace', 'https://gateway.lody.ai', 'local', action,
+      '/projects', null, operationID);
+    const auth = commands.find(command => command.command === 'auth');
+    assert.equal(auth.workspaceID, 'workspace');
+    assert.equal(auth.operationID, operationID);
+    const request = commands.find(command => command.command === 'start');
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
+  });
+}
+
 for (const outcome of ['success', 'failure', 'cancel']) {
   test(`a cold baseline stays out of the shared cache on ${outcome}`, async () => {
     const started = Promise.withResolvers();
