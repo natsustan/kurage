@@ -13,6 +13,10 @@ struct ConversationFileChange: Codable, Equatable, Sendable, Identifiable {
     let deletions: Int?
     let edits: [ConversationFileEdit]
     var previewLimited: Bool? = nil
+    /// Historical checkpoint identity; changes invalidate an already loaded preview.
+    var previewRevision: String? = nil
+    /// A running turn's final checkpoint can arrive without changing its counts.
+    var previewFinished: Bool? = nil
 
     var name: String { (path as NSString).lastPathComponent }
     var directory: String { (path as NSString).deletingLastPathComponent }
@@ -22,6 +26,35 @@ struct ConversationFileEdit: Codable, Hashable, Sendable, Identifiable {
     let id: String
     let oldText: String
     let newText: String
+}
+
+struct ConversationFilePreview: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Sendable { case ready, unavailable }
+    let status: Status
+    var edit: ConversationFileEdit? = nil
+    var reason: String? = nil
+
+    var explanation: String {
+        switch reason {
+        case "turn_unavailable": "Historical snapshots are unavailable for this turn."
+        case "not_changed": "No text differences recorded for this file."
+        case "binary": "Binary files cannot be previewed as code."
+        case "too_large": "This code difference is too large to preview."
+        case "unsupported": "This machine does not support historical code previews."
+        case "machine_offline": "The session machine is offline. Try again when it is online."
+        case "permission_denied": "This file cannot be read with the current permissions."
+        default: "Historical code preview is unavailable for this file."
+        }
+    }
+}
+
+struct FileDiffHunk: Identifiable, Equatable, Sendable {
+    let id: Int
+    let lines: [FileDiffLine]
+    var additions: Int { lines.filter { $0.kind == .addition }.count }
+    var deletions: Int { lines.filter { $0.kind == .deletion }.count }
+    var firstNumber: Int { lines.first.flatMap { $0.newNumber ?? $0.oldNumber } ?? 1 }
+    var lastNumber: Int { lines.last.flatMap { $0.newNumber ?? $0.oldNumber } ?? firstNumber }
 }
 
 struct FileChangeSummary: Equatable {
@@ -58,6 +91,20 @@ struct FileDiffLine: Identifiable, Equatable, Sendable {
 }
 
 enum RecordedFileDiff {
+    static func hunks(for edit: ConversationFileEdit) -> [FileDiffHunk]? {
+        guard let lines = lines(for: edit) else { return nil }
+        var hunks: [FileDiffHunk] = []
+        var current: [FileDiffLine] = []
+        for line in lines {
+            if line.kind == .gap {
+                if let first = current.first { hunks.append(FileDiffHunk(id: first.id, lines: current)) }
+                current = []
+            } else { current.append(line) }
+        }
+        if let first = current.first { hunks.append(FileDiffHunk(id: first.id, lines: current)) }
+        return hunks
+    }
+
     // Keep expensive comparisons bounded, including fixtures and decoded payloads.
     static func lines(for edit: ConversationFileEdit) -> [FileDiffLine]? {
         guard edit.oldText.utf8.count + edit.newText.utf8.count <= 128 * 1024 else { return nil }

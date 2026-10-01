@@ -313,6 +313,7 @@ final class ShellFlowTests: XCTestCase {
         keyboardCapture.lifetime = .keepAlways
         add(keyboardCapture)
         tap(hud)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let scope = app.buttons["file-changes-title"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "All turns")
@@ -334,24 +335,73 @@ final class ShellFlowTests: XCTestCase {
         let file = app.descendants(matching: .any)["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
         attachScreen(app, name: "File changes before expanding")
         if !file.isHittable {
-            app.scrollViews.firstMatch.swipeUp()
+            app.scrollViews["file-changes-list"].swipeUp()
         }
         XCTAssertTrue(file.isHittable)
         XCTAssertEqual(file.value as? String, "Collapsed")
         tap(file)
         XCTAssertEqual(file.value as? String, "Expanded")
         let changedLine = app.staticTexts["    let showsChanges = true"]
+        XCTAssertTrue(app.descendants(matching: .any)["historical-file-diff-KurageApp/Features/Conversation/ConversationView.swift"].waitForExistence(timeout: 5))
         XCTAssertTrue(changedLine.waitForExistence(timeout: 5))
         for _ in 0..<4 where !changedLine.isHittable {
-            app.scrollViews.firstMatch.swipeUp()
+            app.scrollViews["file-changes-list"].swipeUp()
         }
         XCTAssertTrue(changedLine.isHittable)
         let diffCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         diffCapture.name = "Recorded code difference"
         diffCapture.lifetime = .keepAlways
         add(diffCapture)
+        let hunk = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'file-diff-hunk-'")).firstMatch
+        XCTAssertTrue(hunk.exists)
+        for _ in 0..<4 where !hunk.isHittable {
+            app.scrollViews["file-changes-list"].swipeDown()
+        }
+        let hunkTitle = hunk.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Lines '")).firstMatch
+        XCTAssertTrue(hunkTitle.exists)
+        let expandedHunkFrame = hunk.frame
+        let expandedTitleFrame = hunkTitle.frame
+        tap(hunk)
+        XCTAssertEqual(hunk.value as? String, "Collapsed")
+        XCTAssertEqual(hunk.frame.height, expandedHunkFrame.height, accuracy: 0.5)
+        XCTAssertEqual(hunk.frame.width, expandedHunkFrame.width, accuracy: 0.5)
+        XCTAssertEqual(hunkTitle.frame.minX - hunk.frame.minX,
+                       expandedTitleFrame.minX - expandedHunkFrame.minX, accuracy: 0.5)
+        XCTAssertEqual(hunkTitle.frame.minY - hunk.frame.minY,
+                       expandedTitleFrame.minY - expandedHunkFrame.minY, accuracy: 0.5)
+        XCTAssertEqual(hunkTitle.frame.height, expandedTitleFrame.height, accuracy: 0.5)
+        attachScreen(app, name: "Collapsed code difference header")
+        tap(hunk)
+        XCTAssertEqual(hunk.value as? String, "Expanded")
+        XCTAssertEqual(hunk.frame.height, expandedHunkFrame.height, accuracy: 0.5)
+        XCTAssertEqual(hunkTitle.frame.minX - hunk.frame.minX,
+                       expandedTitleFrame.minX - expandedHunkFrame.minX, accuracy: 0.5)
+        XCTAssertEqual(hunkTitle.frame.minY - hunk.frame.minY,
+                       expandedTitleFrame.minY - expandedHunkFrame.minY, accuracy: 0.5)
+        attachScreen(app, name: "Expanded code difference header")
         tap(app.buttons["close-file-changes"])
         XCTAssertEqual(field.value as? String, "Keep this draft")
+    }
+
+    @MainActor
+    func testSummaryOnlyFileLoadsHistoricalCodePreview() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-file-preview-failure"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        tap(app.buttons["conversation-changes-hud"])
+        let file = app.buttons["changed-file-KurageTests/ConversationChangesTests.swift"]
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        tap(file)
+        let retry = app.buttons["retry-file-preview"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        attachScreen(app, name: "Historical preview retry after network failure")
+        tap(retry)
+        let preview = app.descendants(matching: .any)["historical-file-diff-KurageTests/ConversationChangesTests.swift"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["// Historical test line 1"].exists)
+        attachScreen(app, name: "Summary-only file historical preview")
     }
 
     @MainActor

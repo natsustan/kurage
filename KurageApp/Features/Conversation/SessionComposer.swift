@@ -144,6 +144,7 @@ struct SessionComposer: View {
     /// Blocks sending while prerequisites load, without blocking typing.
     var canSubmit = true
     var focusesOnAppear = false
+    var dismissFocus = false
     var mentionSourceID = ""
     var loadMentionSessions: (@MainActor () async throws -> [MentionSession])? = nil
     var loadMentionSkills: (@MainActor () async throws -> [MentionSkill])? = nil
@@ -260,7 +261,10 @@ struct SessionComposer: View {
             .onAppear {
                 targetGaugeProgress = runConfig?.reasoningProgress ?? 1
                 gaugeProgress = targetGaugeProgress
-                if focusesOnAppear { isFocused = true }
+                if focusesOnAppear && !dismissFocus { isFocused = true }
+            }
+            .onChange(of: dismissFocus) { _, shouldDismiss in
+                if shouldDismiss { isFocused = false }
             }
             .onChange(of: runConfig?.reasoningProgress) { _, progress in
                 targetGaugeProgress = progress ?? 1

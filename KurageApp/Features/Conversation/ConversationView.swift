@@ -156,6 +156,7 @@ struct ConversationContent: View {
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
                 focusesComposerOnAppear: isStarting,
+                dismissComposerFocus: changesSelection != nil,
                 mentionSourceID: "\(workspaceGeneration):\(sessionID):\(isStarting)",
                 loadMentionSessions: {
                     guard let projectID = session?.projectID else { return [] }
@@ -187,7 +188,12 @@ struct ConversationContent: View {
         .sheet(item: $changesSelection) { selection in
             ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
                                     latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
-                                    initialTurnNumber: selection.turnNumber)
+                                    initialTurnNumber: selection.turnNumber,
+                                    loadPreview: model.supportsHistoricalFilePreviews ? { group, file in
+                                        guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
+                                        return try await model.filePreview(sessionID: sessionID, turnID: group.id,
+                                                                            file: file, workspaceID: workspaceID)
+                                    } : nil)
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: { dismiss() }))
         .toolbar {
@@ -747,6 +753,7 @@ private struct ConversationFooter: View {
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
     var focusesComposerOnAppear = false
+    var dismissComposerFocus = false
     let mentionSourceID: String
     let loadMentionSessions: @MainActor () async throws -> [MentionSession]
     let loadMentionSkills: @MainActor () async throws -> [MentionSkill]
@@ -799,6 +806,7 @@ private struct ConversationFooter: View {
                                     contextWindowUsage: contextWindowUsage,
                                     canSubmit: canSubmit,
                                     focusesOnAppear: focusesComposerOnAppear,
+                                    dismissFocus: dismissComposerFocus,
                                     mentionSourceID: mentionSourceID,
                                     loadMentionSessions: loadMentionSessions,
                                     loadMentionSkills: loadMentionSkills,

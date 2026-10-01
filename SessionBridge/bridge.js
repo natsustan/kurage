@@ -13,6 +13,7 @@ import { observeConversation, readSyncedConversation, syncedConversationVersion 
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
 import { requestMachine } from './machine-rpc.mjs';
+import { turnDiffSource, loadTurnDiff } from './turn-diff.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
@@ -75,6 +76,38 @@ async function createWorkspaceRepo(workspaceID, gatewayBaseURL,
 
 window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
+};
+
+window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, path, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    // Resolve metadata under the read lock, then perform the machine read outside
+    // it. A slow diff must not block conversation or workspace refreshes.
+    const sourceController = new AbortController();
+    const cancelSource = () => sourceController.abort();
+    controller.signal.addEventListener('abort', cancelSource, { once: true });
+    let source;
+    try {
+      controller.signal.throwIfAborted();
+      source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
+        repo => turnDiffSource(repo, sessionID, controller.signal), operationID, sourceController);
+    } finally { controller.signal.removeEventListener('abort', cancelSource); }
+    controller.signal.throwIfAborted();
+    const access = { baseURL: gatewayBaseURL, auth: async context => {
+      const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+        command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+      });
+      controller.signal.throwIfAborted();
+      nativeFetch.bindSignal(access.token, controller.signal);
+      return access.token;
+    } };
+    return JSON.stringify(await loadTurnDiff(source, access, workspaceID, sessionID, turnID, path,
+      controller.signal));
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
 };
 
 function createWorkspaceState(rawRepo, workspaceID, gatewayBaseURL) {

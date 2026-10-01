@@ -6,6 +6,8 @@ const sumCounts = (left, right) => left === null || right === null ? null : coun
 const validPath = value => typeof value === 'string' && value.trim() && !value.includes('\0');
 // Match Lody's display-path normalization; never guess a root from suffixes.
 const normalizedPath = value => value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+const validOpID = value => value === undefined ||
+  (typeof value === 'string' && value.length <= 128 && /^\d+:\d+$/.test(value));
 
 export function projectFileChanges(history) {
   const groups = [];
@@ -20,12 +22,18 @@ export function projectFileChanges(history) {
       const path = normalizedPath(diff.filePath);
       if (!path) continue;
       const existing = files.get(path);
+      const checkpoint = diff.cc?.v === 1 && typeof diff.cc.fileId === 'string' &&
+        diff.cc.fileId.length > 0 && diff.cc.fileId.length <= 512 && validOpID(diff.cc.opId) && validOpID(diff.cc.baseOpId)
+        ? JSON.stringify([turn.finished === true, Number.isFinite(turn.endedAt) ? turn.endedAt : null,
+            diff.cc.fileId, diff.cc.opId, diff.cc.baseOpId, diff.cc.base === 'missing', diff.cc.deleted === true]) : '';
       // A turn may contain multiple checkpoints for the same path. Lody sums
       // their deltas; a later zero-count record must not erase an earlier edit.
       files.set(path, { path,
         additions: existing ? sumCounts(existing.additions, count(diff.add)) : count(diff.add),
         deletions: existing ? sumCounts(existing.deletions, count(diff.del)) : count(diff.del),
         edits: [],
+        ...(checkpoint || existing?.previewRevision ? { previewRevision:
+          `${existing?.previewRevision ?? ''}${checkpoint.length}:${checkpoint}` } : {}),
       });
     }
     for (const tool of Array.isArray(turn.items) ? turn.items : []) {
@@ -47,6 +55,9 @@ export function projectFileChanges(history) {
         }
         files.set(path, file);
       }
+    }
+    if (typeof turn.finished === 'boolean' || turn.endedAt != null) {
+      for (const file of files.values()) file.previewFinished = turn.finished === true || turn.endedAt != null;
     }
     if (files.size) groups.push({ id: turn.id, turnNumber: Math.max(1, turnNumber), files: [...files.values()] });
   }

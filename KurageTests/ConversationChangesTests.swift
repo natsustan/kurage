@@ -1,8 +1,83 @@
 import Foundation
 import Testing
+import SwiftUI
+import UIKit
 @testable import Kurage
 
 struct ConversationChangesTests {
+    @MainActor @Test(.serialized, .timeLimit(.minutes(1)))
+    func historicalLoadCancelsInBackgroundAndResumesWithoutRecordedText() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let probe = FilePreviewLoadProbe()
+        let host = UIHostingController(rootView: FilePreviewLifecycleHarness(probe: probe))
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        func waitUntil(_ ready: () -> Bool) async throws {
+            for _ in 0..<200 {
+                if ready() { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            Issue.record("Historical preview did not reach expected state")
+        }
+        try await waitUntil { probe.starts == 1 }
+        probe.phase = .inactive
+        try await waitUntil { probe.cancellations == 1 }
+        probe.phase = .background
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.starts == 1)
+        probe.phase = .active
+        try await waitUntil { probe.completions == 1 }
+        #expect(probe.starts == 2)
+        probe.phase = .background
+        probe.phase = .active
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.starts == 2)
+    }
+
+    @MainActor @Test func lateHistoricalPreviewCannotSurviveSignOutOrWrongWorkspace() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        let file = ConversationFileChangeGroup.fixture.files[1]
+        await #expect(throws: CancellationError.self) {
+            try await model.filePreview(sessionID: "session-long", turnID: "long-agent-20", file: file, workspaceID: "other-workspace")
+        }
+        let task = Task { try await model.filePreview(sessionID: "session-long", turnID: "long-agent-20", file: file, workspaceID: "ws-demo") }
+        try await Task.sleep(for: .milliseconds(50))
+        model.signOut()
+        await #expect(throws: CancellationError.self) { try await task.value }
+    }
+    @Test func historicalPreviewDecodesFullSnapshotsAndHunksKeepAbsoluteLineNumbers() throws {
+        let preview = try JSONDecoder().decode(ConversationFilePreview.self, from: Data(#"{"status":"ready","edit":{"id":"turn:file","oldText":"old","newText":"new"}}"#.utf8))
+        #expect(preview.status == .ready)
+        #expect(preview.edit?.newText == "new")
+        let old = (1...100).map { "line \($0)" }.joined(separator: "\n")
+        let new = old.replacingOccurrences(of: "line 10\n", with: "changed 10\n")
+            .replacingOccurrences(of: "line 80\n", with: "changed 80\n")
+        let hunks = try #require(RecordedFileDiff.hunks(for: .init(id: "diff", oldText: old, newText: new)))
+        #expect(hunks.count == 2)
+        #expect(hunks.map(\.firstNumber) == [7, 77])
+        #expect(hunks.map(\.lastNumber) == [13, 83])
+        #expect(hunks.map(\.additions) == [1, 1])
+        #expect(hunks.map(\.deletions) == [1, 1])
+        #expect(hunks[1].lines.first { $0.kind == .deletion }?.oldNumber == 80)
+    }
+
+    @MainActor @Test func fixtureHistoricalPreviewReadsSummaryOnlyFileAndRejectsAnotherWorkspace() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let preview = try await client.filePreview(sessionID: "session-long", turnID: "long-agent-20",
+            path: "KurageTests/ConversationChangesTests.swift", workspaceID: "ws-demo")
+        #expect(preview.status == .ready)
+        #expect(preview.edit?.newText.contains("Historical test line 12") == true)
+        await #expect(throws: LodyClientError.self) {
+            try await client.filePreview(sessionID: "session-long", turnID: "long-agent-20",
+                path: "KurageTests/ConversationChangesTests.swift", workspaceID: "other-workspace")
+        }
+        let missing = try await client.filePreview(sessionID: "session-long", turnID: "another-turn",
+            path: "KurageTests/ConversationChangesTests.swift", workspaceID: "ws-demo")
+        #expect(missing.reason == "turn_unavailable")
+    }
     @Test func subtaskPatchesReplaceAndClearWithoutLosingParentContent() throws {
         let subtask = ConversationSubtask(id: "child", title: "Review", agentName: "codex", status: .running)
         let previous = Conversation(sessionID: "root", turns: [
@@ -128,5 +203,33 @@ struct ConversationChangesTests {
         #expect(lines.count == 10)
         let oversized = ConversationFileEdit(id: "large", oldText: "", newText: String(repeating: "line\n", count: 2_001))
         #expect(RecordedFileDiff.lines(for: oversized) == nil)
+    }
+}
+
+@MainActor @Observable
+private final class FilePreviewLoadProbe {
+    var phase = ScenePhase.active
+    var starts = 0
+    var cancellations = 0
+    var completions = 0
+
+    func load() async throws -> ConversationFilePreview {
+        starts += 1
+        if starts == 1 {
+            do { try await Task.sleep(for: .seconds(60)) }
+            catch { cancellations += 1; throw error }
+        }
+        completions += 1
+        return ConversationFilePreview(status: .ready, edit: .init(id: "full", oldText: "old", newText: "new"))
+    }
+}
+
+private struct FilePreviewLifecycleHarness: View {
+    let probe: FilePreviewLoadProbe
+
+    var body: some View {
+        FileChangeCardDetails(group: .fixture, file: ConversationFileChangeGroup.fixture.files[1],
+                              loadPreview: { _, _ in try await probe.load() })
+            .environment(\.scenePhase, probe.phase)
     }
 }

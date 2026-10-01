@@ -28,7 +28,8 @@ struct KurageApp: App {
                 authorizationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-browser")
                     ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)
                     : nil,
-                streamsConversationUpdates: true)
+                streamsConversationUpdates: true,
+                failFilePreviewOnce: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-failure"))
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }
