@@ -552,7 +552,7 @@
 				PRODUCT_MODULE_NAME = Kurage;
 				PRODUCT_NAME = Kurage;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -580,7 +580,7 @@
 				PRODUCT_MODULE_NAME = Kurage;
 				PRODUCT_NAME = Kurage;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};

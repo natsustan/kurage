@@ -34,6 +34,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage
         PRODUCT_NAME: Kurage
         PRODUCT_MODULE_NAME: Kurage
+        TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: YES

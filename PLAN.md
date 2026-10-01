@@ -430,3 +430,9 @@
 - 发送状态移到我方消息内容左侧，与内容底部对齐；发送中显示延迟出现的进度图标，未确认显示重试图标，失败显示重试／编辑图标，失败原因可通过长按菜单或辅助功能描述读取。保留重试／编辑和发送状态的 accessibility identifier。
 - 已发送与没有本地发送状态的历史消息不生成状态栏，移除原本气泡下方额外的 44pt 最小高度及 8pt 纵向间距。状态跟随整组我方正文／附件，避免给每个内容块重复添加状态。
 - 本轮最终代码通过 3 项 fixture UI 用例（发送、未确认重试、失败后编辑），并检查浅色默认字号截图中的侧边图标、消息间距和键盘避让。未验证深色、大字号、VoiceOver 实际朗读或真实账号网络恢复。
+
+## TestFlight 发布（2026-10-01）
+
+- App Store Connect 应用名称为 Kurage for Lody，Bundle ID 为 `com.spike.kurage`；设备上的显示名称仍为 Kurage。
+- 在应用目标显式设置 `TARGETED_DEVICE_FAMILY: "1"` 并重新生成工程，防止 XcodeGen 的目标默认值覆盖项目级 iPhone 设置。原归档被 Apple 以 iPad 多任务方向配置不完整拒绝；修正后的归档已确认 `UIDeviceFamily` 为 `[1]`。
+- 本轮 Release 归档和 App Store Connect 上传成功，版本为 0.1.0（1），Apple 正在处理。TestFlight 审核登录信息已保存；凭据不记录在仓库中。本轮未运行单元／UI 测试或真实账号回归。
