@@ -386,7 +386,7 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     func testSummaryOnlyFileLoadsHistoricalCodePreview() {
         let app = XCUIApplication()
-        app.launchArguments = ["--fixture", "--fixture-file-preview-failure"]
+        app.launchArguments = ["--fixture", "--fixture-file-preview-failure", "--fixture-slow-file-preview"]
         app.launch()
         tap(app.buttons["sign-in-button"])
         tap(app.descendants(matching: .any)["session-session-long"])
@@ -395,14 +395,43 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(file.waitForExistence(timeout: 5))
         tap(file)
         let retry = app.buttons["retry-file-preview"]
-        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        XCTAssertTrue(retry.waitForExistence(timeout: 8))
         attachScreen(app, name: "Historical preview retry after network failure")
         tap(retry)
         let preview = app.descendants(matching: .any)["historical-file-diff-KurageTests/ConversationChangesTests.swift"]
-        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["// Historical test line 1"].exists)
         XCTAssertFalse(app.buttons["retry-file-preview"].exists)
         attachScreen(app, name: "Large file with small historical additions")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(preview.exists)
+        XCTAssertFalse(preview.waitForNonExistence(timeout: 1))
+        XCTAssertFalse(app.progressIndicators["file-preview-loading"].exists)
+        XCTAssertTrue(app.staticTexts["// Historical test line 1"].exists)
+    }
+
+    @MainActor
+    func testHistoricalComparisonLimitKeepsRecordedExcerpt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-file-preview-large-rewrite"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        tap(app.buttons["conversation-changes-hud"])
+        let file = app.buttons["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        tap(file)
+        XCTAssertTrue(app.staticTexts["This file has too many changes to compare on this device."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Recorded excerpt · relative line numbers"].exists)
+        let changedLine = app.staticTexts["    let showsChanges = true"]
+        XCTAssertTrue(changedLine.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !changedLine.isHittable {
+            app.scrollViews["file-changes-list"].swipeUp()
+        }
+        XCTAssertTrue(changedLine.isHittable)
+        XCTAssertFalse(app.buttons["retry-file-preview"].exists)
+        attachScreen(app, name: "Historical comparison limit with recorded excerpt")
     }
 
     @MainActor

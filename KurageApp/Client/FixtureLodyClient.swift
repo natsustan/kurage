@@ -45,6 +45,8 @@ final class FixtureLodyClient: LodyClient {
     private var conversationObservers: [UUID: ConversationObserver] = [:]
     private var failFilePreviewOnce: Bool
     private let filePreviewUnavailableReason: String?
+    private let filePreviewDelay: Duration
+    private let filePreviewLargeRewrite: Bool
 
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
         let conversation = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
@@ -54,7 +56,7 @@ final class FixtureLodyClient: LodyClient {
         }
         // A summary-only fixture exercises the historical loader independently
         // of text embedded in a tool call.
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: filePreviewDelay)
         if failFilePreviewOnce {
             failFilePreviewOnce = false
             throw URLError(.timedOut)
@@ -70,6 +72,12 @@ final class FixtureLodyClient: LodyClient {
         }
         guard let edit = file.edits.first else {
             return ConversationFilePreview(status: .unavailable, reason: "turn_unavailable")
+        }
+        if filePreviewLargeRewrite {
+            return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
+                id: "\(turnID):\(path)",
+                oldText: (0..<5_000).map { "old \($0)" }.joined(separator: "\n"),
+                newText: (0..<5_000).map { "new \($0)" }.joined(separator: "\n")))
         }
         let prefix = (1...46).map { "// Context line \($0)\n" }.joined()
         return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
@@ -94,10 +102,14 @@ final class FixtureLodyClient: LodyClient {
         authorizationDelay: Duration? = nil,
         streamsConversationUpdates: Bool = false,
         failFilePreviewOnce: Bool = false,
-        filePreviewUnavailableReason: String? = nil
+        filePreviewUnavailableReason: String? = nil,
+        filePreviewDelay: Duration = .milliseconds(200),
+        filePreviewLargeRewrite: Bool = false
     ) {
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
+        self.filePreviewDelay = filePreviewDelay
+        self.filePreviewLargeRewrite = filePreviewLargeRewrite
         self.streamsConversationUpdates = streamsConversationUpdates
         self.authorizationDelay = authorizationDelay
         self.records = records

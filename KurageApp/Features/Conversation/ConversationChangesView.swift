@@ -302,6 +302,7 @@ struct FileChangeCardDetails: View {
     @State private var loadedFile: ConversationFileChange?
     @State private var failed = false
     @State private var attempt = 0
+    @State private var completedAttempt: Int?
 
     private struct LoadKey: Equatable {
         let file: ConversationFileChange
@@ -313,7 +314,7 @@ struct FileChangeCardDetails: View {
         let currentPreview = loadedFile == file ? preview : nil
         VStack(alignment: .leading, spacing: 0) {
             if let edit = currentPreview?.edit, currentPreview?.status == .ready {
-                RecordedFileDiffView(edit: edit)
+                RecordedFileDiffView(edit: edit, fallbackEdits: file.edits, fallbackLimited: file.previewLimited == true)
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("historical-file-diff-\(file.path)")
             } else {
@@ -337,28 +338,14 @@ struct FileChangeCardDetails: View {
                         .foregroundStyle(.secondary)
                         .padding(12)
                 }
-                if !file.edits.isEmpty {
-                    Text("Recorded excerpt · relative line numbers")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                }
-                ForEach(file.edits) { edit in
-                    RecordedFileDiffView(edit: edit)
-                }
-            }
-            if file.previewLimited == true && currentPreview?.status != .ready {
-                Text("Some code differences are omitted from this preview.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(12)
+                RecordedFileExcerptsView(edits: file.edits, limited: file.previewLimited == true)
             }
         }
         .task(id: LoadKey(file: file, active: scenePhase == .active, attempt: attempt)) {
             guard scenePhase == .active, let loadPreview else { return }
             // A completed preview survives backgrounding. In-flight loads are
             // cancelled by the task identity and resumed when the scene activates.
-            if loadedFile == file && preview != nil && attempt == 0 { return }
+            if loadedFile == file && preview != nil && completedAttempt == attempt { return }
             loadedFile = file
             preview = nil
             failed = false
@@ -366,9 +353,35 @@ struct FileChangeCardDetails: View {
                 let result = try await loadPreview(group, file)
                 try Task.checkCancellation()
                 preview = result
+                completedAttempt = attempt
             } catch {
                 guard !Task.isCancelled, !(error is CancellationError) else { return }
                 failed = true
+            }
+        }
+    }
+}
+
+private struct RecordedFileExcerptsView: View {
+    let edits: [ConversationFileEdit]
+    let limited: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !edits.isEmpty {
+                Text("Recorded excerpt · relative line numbers")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
+            ForEach(edits) { edit in
+                RecordedFileDiffView(edit: edit)
+            }
+            if limited {
+                Text("Some code differences are omitted from this preview.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
             }
         }
     }
@@ -393,6 +406,8 @@ private struct FilePreviewNotice: View {
 
 private struct RecordedFileDiffView: View {
     let edit: ConversationFileEdit
+    var fallbackEdits: [ConversationFileEdit] = []
+    var fallbackLimited = false
     @State private var preview: RecordedFileDiff.Preview?
 
     var body: some View {
@@ -415,6 +430,7 @@ private struct RecordedFileDiffView: View {
                 }
             case .unavailable(let reason):
                 FilePreviewNotice(message: ConversationFilePreview(status: .unavailable, reason: reason).explanation)
+                RecordedFileExcerptsView(edits: fallbackEdits, limited: fallbackLimited)
             }
         }
         .task(id: edit) {
