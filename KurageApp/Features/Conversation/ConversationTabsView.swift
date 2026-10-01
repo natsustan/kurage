@@ -4,12 +4,8 @@ private struct TabDraft {
     var text = ""
     var mentions = ComposerMentionState()
     var attachments: [ComposerAttachment] = []
-    var isSending = false
-    var pendingTurns: [ConversationTurn] = []
     var isCancelling = false
     var banner: String?
-    var previousPendingText: String?
-    var previousPendingWorkspaceID: String?
     var runConfig = ConversationRunConfigState()
 }
 
@@ -19,9 +15,11 @@ struct ConversationTabsContent: View {
     let model: AppModel
     let workspaceGeneration: Int
     let isReadOnly: Bool
+    var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
     @Environment(\.scenePhase) private var scenePhase
     @State private var drafts: [String: TabDraft] = [:]
     @State private var showsNewTab = false
+    @State private var restoredTabMessage: OutgoingMessage?
     @State private var errorMessage: String?
     @State private var changingTab = false
 
@@ -35,46 +33,65 @@ struct ConversationTabsContent: View {
     }
 
     var body: some View {
-        ConversationContent(sessionID: activeID, title: model.sessionSummary(activeID)?.title ?? title,
-                            model: model, workspaceGeneration: workspaceGeneration, isReadOnly: isReadOnly, isReading: !showsNewTab,
-                            draft: draft.text, mentions: draft.mentions, attachments: draft.attachments,
-                            isSending: draft.isSending, pendingTurns: draft.pendingTurns,
-                            isCancelling: draft.isCancelling, banner: draft.banner,
-                            previousPendingText: draft.previousPendingText,
-                            previousPendingWorkspaceID: draft.previousPendingWorkspaceID,
-                            runConfigState: draft.runConfig,
-                            rootSessionID: rootID,
-                            onNewTab: !isReadOnly && model.supportsSessionTabs ? { showsNewTab = true } : nil,
-                            closedTabs: closedTabs, onReopenTab: { setClosed(false, tab: $0) })
-            .id(activeID)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if !isReadOnly, model.supportsSessionTabs, openTabs.count > 1 {
-                    SessionTabBar(rootID: rootID, activeID: activeID, openTabs: openTabs,
-                                  select: { model.setActiveSessionTab($0, rootID: rootID) },
-                                  setClosed: setClosed)
-                        .disabled(changingTab || scenePhase != .active)
-                }
-            }
-            .navigationDestination(isPresented: $showsNewTab) {
+        Group {
+            if showsNewTab {
                 NewSessionView(route: NewSessionRoute(
                     projectID: model.sessionSummary(rootID)?.projectID ?? "",
                     projectName: model.sessionSummary(rootID)?.projectName ?? "Shared working directory",
                     templateSessionID: rootID, workspaceGeneration: workspaceGeneration, parentSessionID: rootID
-                ), model: model) { id in
+                ), model: model, restoredMessage: restoredTabMessage) { id in
                     model.setActiveSessionTab(id, rootID: rootID)
                     showsNewTab = false
+                    restoredTabMessage = nil
                 }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Cancel") { showsNewTab = false }
+                            .accessibilityIdentifier("cancel-new-session-tab")
+                    }
+                }
+            } else {
+                ConversationContent(sessionID: activeID, title: model.sessionSummary(activeID)?.title ?? title,
+                    model: model, workspaceGeneration: workspaceGeneration, isReadOnly: isReadOnly, isReading: true,
+                    draft: draft.text, mentions: draft.mentions, attachments: draft.attachments,
+                    isCancelling: draft.isCancelling, banner: draft.banner,
+                    runConfigState: draft.runConfig,
+                    rootSessionID: rootID,
+                    onNewTab: !isReadOnly && model.supportsSessionTabs ? {
+                        restoredTabMessage = nil
+                        showsNewTab = true
+                    } : nil,
+                    closedTabs: closedTabs, onReopenTab: { setClosed(false, tab: $0) },
+                    onEditSessionStart: { message in
+                        if activeID == rootID {
+                            onEditSessionStart?(message)
+                        } else {
+                            restoredTabMessage = message
+                            showsNewTab = true
+                        }
+                    })
+                    .id(activeID)
             }
-            .alert("Could not update tab", isPresented: Binding(
-                get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-            )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
-            .onChange(of: openTabs.map(\.id)) { _, ids in
-                if activeID != rootID, !ids.contains(activeID) { model.setActiveSessionTab(rootID, rootID: rootID) }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !showsNewTab, !isReadOnly, model.supportsSessionTabs, openTabs.count > 1 {
+                SessionTabBar(rootID: rootID, activeID: activeID, openTabs: openTabs,
+                              select: { model.setActiveSessionTab($0, rootID: rootID) },
+                              setClosed: setClosed)
+                    .disabled(changingTab || scenePhase != .active)
             }
+        }
+        .alert("Could not update tab", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
+        .onChange(of: openTabs.map(\.id)) { _, ids in
+            if activeID != rootID, !ids.contains(activeID) { model.setActiveSessionTab(rootID, rootID: rootID) }
+        }
     }
 
     private func setClosed(_ closed: Bool, tab: SessionSummary) {
-        guard model.workspaceGeneration == workspaceGeneration, !changingTab else { return }
+        guard model.workspaceGeneration == workspaceGeneration, !changingTab,
+              !model.isSessionStartPending(sessionID: tab.id) else { return }
         changingTab = true
         Task { @MainActor in
             defer { changingTab = false }

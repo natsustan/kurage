@@ -7,6 +7,10 @@ import { StreamsClient } from '@loro-dev/streams-client';
 import { createNativeFetch } from './native-fetch.mjs';
 import { readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { selectMentionSkills } from './mention-skills.mjs';
+import { createSessionOptionsCache } from './session-options-cache.mjs';
+import { newSessionOptions } from './session-start.mjs';
+import { runningSessionTabParents } from './session-tabs.mjs';
+import { projectSessionActivity } from './session-activity.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -32,6 +36,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     async sync(options) { return sync(options, this); }
     async listDoc() { return rows; }
     async openFlockDoc(docID) {
+      if (extras.openFlockDoc) return extras.openFlockDoc(docID, this);
       return {
         syncOnce: () => sync({ scope: 'doc', flockDocIds: [docID] }),
         flock: { scan: () => [] },
@@ -43,7 +48,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
       return { doc: { getList: () => ({ toJSON: () => [] }), getMap: () => ({ toJSON: () => ({ modelId: this.model }) }) } };
     }
     async unloadDoc(id) { this.loaded.delete(id); await extras.unloadDoc?.(id, this); }
-    async getDocMeta() { return undefined; }
+    async getDocMeta(id) { return extras.getDocMeta ? extras.getDocMeta(id, this) : rows.find(row => row.docId === id); }
     async destroy() { this.destroyed = true; }
   }
   class Transport {
@@ -57,13 +62,16 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     StreamsTransportAdapter: Transport,
     decompressZstd: async (bytes) => bytes,
     createNativeFetch: extras.createNativeFetch ?? (() => ({ fetch: async () => {}, receive: async () => {} })),
+    createSessionOptionsCache: () => createSessionOptionsCache(extras.now),
     projectConversation: () => ({}),
-    projectSessionActivity: () => 'idle',
+    projectSessionActivity,
+    runningSessionTabParents,
     observeConversation: extras.observeConversation ?? (async () => {}),
     readSyncedConversation,
     syncedConversationVersion: extras.syncedConversationVersion ?? syncedConversationVersion,
     cancelSession: cancel,
-    newSessionOptions: extras.newSessionOptions,
+    newSessionOptions: extras.newSessionOptions ?? newSessionOptions,
+    startSession: extras.startSession,
     sessionProjects: extras.sessionProjects,
     archiveSession: archive,
     updateSessionMetadata: extras.updateSessionMetadata,
@@ -74,6 +82,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
     deleteArchivedSession: extras.deleteArchivedSession ?? deleteArchivedSession,
     mentionSkills: extras.mentionSkills,
+    sendText: extras.sendText,
+    requestMachine: extras.requestMachine,
     fetch: async () => {},
     AbortController,
     setTimeout,
@@ -144,6 +154,43 @@ test('mention sessions stay in the current project and include child sessions', 
   const result = JSON.parse(await window.kurageMentionSessions('workspace', 'https://gateway.lody.ai',
     'current', 'local:machine:project', 'request'));
   assert.deepEqual(result.sessions.map(session => session.id), ['child', 'root']);
+});
+
+test('mention reads reuse synced workspace metadata without another network sync', async () => {
+  let metaSyncs = 0;
+  const rows = [{ docId: 'session-template', meta: {
+    machineId: 'machine', agentType: 'codex',
+    project: { kind: 'local', localProjectId: 'project' },
+  } }];
+  const { window, repos } = makeBridge(async options => {
+    if (options.scope === 'meta') metaSyncs++;
+    return { ok: true };
+  }, rows, undefined, undefined, { mentionSkills: async () => [] });
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  await window.kurageMentionSessions('workspace', 'https://gateway.lody.ai', 'template', 'local:machine:project', 'sessions');
+  await window.kurageMentionSkills('workspace', 'https://gateway.lody.ai', 'template', null, 'user', 'skills');
+  assert.equal(metaSyncs, 1);
+  assert.equal(repos.length, 1);
+  assert.equal(repos[0].destroyed, false);
+  await window.kurageMentionSessions('other-workspace', 'https://gateway.lody.ai', 'template', 'local:machine:project', 'other');
+  assert.equal(metaSyncs, 2);
+  assert.equal(repos[1].destroyed, true);
+});
+
+test('cancelling a skill source read does not start the machine scan', async () => {
+  let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  let scanned = false;
+  const { window, repos } = makeBridge(async options => {
+    entered();
+    await new Promise((_, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true }));
+  }, [], undefined, undefined, { mentionSkills: async () => { scanned = true; return []; } });
+  const request = window.kurageMentionSkills('workspace', 'https://gateway.lody.ai', 'template', null, 'user', 'cancel-source');
+  await started;
+  window.kurageCancel('cancel-source');
+  await assert.rejects(request, { name: 'AbortError' });
+  assert.equal(scanned, false);
+  assert.equal(repos[0].destroyed, true);
 });
 
 test('skill request uses the template machine, project, agent, workspace and user', async () => {
@@ -712,6 +759,133 @@ test('options reuse a confirmed live transcript while refreshing machine configu
   assert.deepEqual(syncs.slice(stopped).flatMap(read => Array.from(read.options.docIds)), ['session-local']);
 });
 
+function optionsBridge(sync, extras = {}) {
+  const rows = [{ docId: 'session-template', meta: {
+    machineId: 'machine', agentConfigId: 'codex', cliType: 'builtin', agentType: 'codex',
+    lastMessageAt: 8, status: { type: 'idle' },
+    project: { kind: 'local', localProjectId: 'project' },
+  } }];
+  const doc = new LoroDoc();
+  doc.getList('history').push({ id: 'turn', role: 'user', inputConfig: { modelId: 'model' } });
+  doc.commit();
+  const entries = [
+    { key: ['localProject', 'project'], value: { name: 'Project' } },
+    { key: ['agentConfig', 'codex'], value: { name: 'Codex', cliType: 'builtin', agentType: 'codex' } },
+    { key: ['acpCapability', 'codex'], value: { cliType: 'builtin', agentType: 'codex',
+      models: [{ modelId: 'model' }] } },
+  ];
+  const bridge = makeBridge(sync, rows, undefined, undefined, {
+    openPersistedDoc: () => ({ doc }),
+    openFlockDoc: () => ({ flock: {
+      scan: ({ prefix }) => entries.filter(row => prefix.every((part, index) => row.key[index] === part)),
+      get: key => entries.find(row => JSON.stringify(row.key) === JSON.stringify(key))?.value,
+    } }),
+    ...extras,
+  });
+  return { ...bridge, entries };
+}
+
+test('new-session options reuse the list machine snapshot and compact defaults across page opens', async () => {
+  const reads = [];
+  const { window, repos } = optionsBridge(async options => { reads.push(options); return { ok: true, outcome: 'synced' }; });
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  reads.length = 0;
+  const first = await window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'first');
+  assert.deepEqual(reads.map(read => Array.from(read.docIds)), [['session-template']]);
+  assert.equal(repos[1].destroyed, true);
+  reads.length = 0;
+  assert.equal(await window.kurageNewSessionOptions('workspace', 'template', null,
+    'https://gateway.lody.ai', 'second'), first);
+  assert.equal(reads.length, 0);
+  assert.equal(repos.length, 2);
+  assert.equal(repos[0].loaded.size, 0);
+});
+
+test('a cached unavailable project refreshes once before rejecting restored server state', async () => {
+  const reads = [];
+  const { window, entries } = optionsBridge(async options => {
+    reads.push(options);
+    return { ok: true, outcome: 'synced' };
+  });
+  const project = entries.shift();
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  entries.unshift(project);
+  reads.length = 0;
+  const options = JSON.parse(await window.kurageNewSessionOptions('workspace', 'template', null,
+    'https://gateway.lody.ai', 'restored'));
+  assert.equal(options.runConfig.model.value, 'model');
+  assert.equal(reads.length, 2);
+  reads.length = 0;
+  await window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'again');
+  assert.equal(reads.length, 0);
+});
+
+test('stale options return immediately and an explicit refresh has its own cancellable replica', async () => {
+  let time = 0;
+  let block = false;
+  const started = Promise.withResolvers();
+  const reads = [];
+  const { window, repos } = optionsBridge(async options => {
+    reads.push(options);
+    if (block && options.flockDocIds?.length) {
+      started.resolve();
+      await new Promise((_resolve, reject) => options.signal.addEventListener('abort',
+        () => reject(options.signal.reason), { once: true }));
+    }
+    return { ok: true, outcome: 'synced' };
+  }, { now: () => time });
+  await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+  await window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'first');
+  time = 30_000;
+  reads.length = 0;
+  const cached = JSON.parse(await window.kurageNewSessionOptions('workspace', 'template', null,
+    'https://gateway.lody.ai', 'stale'));
+  assert.equal(cached.needsRefresh, true);
+  assert.equal(reads.length, 0);
+  block = true;
+  const refresh = window.kurageNewSessionOptions('workspace', 'template', null,
+    'https://gateway.lody.ai', 'refresh', null, false, true);
+  const rejected = assert.rejects(refresh, { name: 'AbortError' });
+  await started.promise;
+  window.kurageCancel('refresh');
+  await rejected;
+  assert.equal(repos[2].destroyed, true);
+  assert.equal(repos[0].destroyed, false);
+  reads.length = 0;
+  assert.equal(JSON.parse(await window.kurageNewSessionOptions('workspace', 'template', null,
+    'https://gateway.lody.ai', 'after-cancel')).runConfig.model.value, 'model');
+  assert.equal(reads.length, 0);
+});
+
+test('new-session configuration never crosses a workspace or gateway replacement', async () => {
+  const reads = [];
+  const { window, repos } = optionsBridge(async options => { reads.push(options); return { ok: true, outcome: 'synced' }; });
+  for (const [workspace, gateway] of [['workspace', 'https://gateway.lody.ai'],
+    ['other', 'https://gateway.lody.ai'], ['other', 'https://other.lody.ai']]) {
+    await window.kurageSessions(workspace, gateway, 'list');
+    reads.length = 0;
+    await window.kurageNewSessionOptions(workspace, 'template', null, gateway, 'options');
+    assert.deepEqual(reads.map(read => Array.from(read.docIds)), [['session-template']]);
+  }
+  assert.equal(repos.filter(repo => !repo.destroyed).length, 1);
+});
+
+for (const result of ['sent', 'rejected']) {
+  test(`a ${result} creation ${result === 'sent' ? 'preserves' : 'invalidates'} the display configuration cache`, async () => {
+    const reads = [];
+    const { window } = optionsBridge(async options => {
+      reads.push(options);
+      return { ok: true, outcome: 'synced' };
+    }, { startSession: async () => result });
+    await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
+    await window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'first');
+    assert.equal(await window.kurageStartSession('workspace', 'https://gateway.lody.ai', {}), result);
+    reads.length = 0;
+    await window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'again');
+    assert.equal(reads.length, result === 'sent' ? 0 : 2);
+  });
+}
+
 for (const state of ['stopped', 'advanced', 'changed-during-read']) {
   test(`options refresh the baseline when its live evidence is ${state}`, async () => {
     let remoteModel = 'old';
@@ -922,4 +1096,95 @@ test('cancelling while scoped auth is pending prevents native requests from star
   await result;
   assert.equal(requests, 0);
   assert.equal(repos[0].destroyed, true);
+});
+
+test('session list refresh rolls up tab activity while preserving the main activity', async () => {
+  const rows = [
+    { docId: 'session-root', meta: { status: { type: 'idle' } } },
+    { docId: 'session-child', meta: { parentSessionId: 'root', status: { type: 'running' } } },
+    { docId: 'session-other', meta: { status: { type: 'idle' } } },
+  ];
+  const { window } = makeBridge(undefined, rows);
+  const first = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai'));
+  assert.equal(first.sessions.length, 2);
+  assert.equal(first.sessions.find(session => session.id === 'root').activity, 'idle');
+  assert.equal(first.sessions.find(session => session.id === 'root').hasRunningTabs, true);
+  assert.equal(first.sessions.find(session => session.id === 'other').hasRunningTabs, false);
+  rows[1].meta.status = { type: 'idle' };
+  const next = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai'));
+  assert.equal(next.sessions.find(session => session.id === 'root').hasRunningTabs, false);
+});
+
+test('native send routes steer RPC with workspace auth and retains its target across replicas', async () => {
+  const states = [];
+  const requests = [];
+  const auth = [];
+  const { window, repos } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    postMessage: async command => { auth.push(command); return { token: 'test-token' }; },
+    requestMachine: async (access, workspaceID, machineID, method, params, signal) => {
+      assert.equal(await access.auth({ reason: 'unauthorized' }), 'test-token');
+      requests.push({ workspaceID, machineID, method, params, signal });
+      return { applied: true };
+    },
+    sendText: async (_repo, sessionID, turnID, userID, text, timestamp, config, attachments, steering) => {
+      assert.equal(sessionID, 'chat');
+      assert.equal(turnID, 'guide');
+      assert.equal(text, 'Guidance');
+      assert.equal(attachments.length, 1);
+      states.push(steering.state);
+      steering.state.expectedTurnID ??= 'original-assistant';
+      await steering.request('machine', { sessionId: sessionID, userTurnId: turnID,
+        expectedTurnId: steering.state.expectedTurnID });
+      return states.length === 1 ? 'unconfirmed' : 'sent';
+    },
+  });
+  const send = (workspaceID, operationID) => window.kurageSendText(workspaceID, 'chat',
+    'https://gateway.example', 'guide', 'user', 'Guidance', 'timestamp', null, [{ type: 'image' }], operationID);
+  assert.equal(await send('workspace', 'first'), 'unconfirmed');
+  assert.equal(await send('workspace', 'retry'), 'sent');
+  assert.equal(await send('other-workspace', 'other'), 'sent');
+  assert.equal(states[0], states[1]);
+  assert.notEqual(states[0], states[2]);
+  assert.deepEqual(requests.map(request => request.workspaceID), ['workspace', 'workspace', 'other-workspace']);
+  assert(requests.every(request => request.method === 'session/steer' && request.signal.aborted));
+  assert.deepEqual(auth.map(command => [command.workspaceID, command.operationID, command.refresh]), [
+    ['workspace', 'first', true], ['workspace', 'retry', true], ['other-workspace', 'other', true],
+  ]);
+  assert(repos.every(repo => repo.destroyed));
+});
+
+for (const result of ['sent', 'superseded']) {
+  test(`native send releases a steer retry target after ${result}`, async () => {
+    const states = [];
+    const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+      sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+        states.push(steering.state);
+        steering.state.expectedTurnID = 'assistant';
+        return result;
+      },
+    });
+    const send = () => window.kurageSendText('workspace', 'chat', 'https://gateway.example',
+      'guide', 'user', 'Guidance', 'timestamp', null, []);
+    await send();
+    await send();
+    assert.notEqual(states[0], states[1]);
+  });
+}
+
+test('native send retains an ambiguous steer target when the writer throws', async () => {
+  const states = [];
+  const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+      states.push(steering.state);
+      steering.state.expectedTurnID ??= 'original-assistant';
+      if (states.length === 1) throw new Error('sync interrupted');
+      return 'sent';
+    },
+  });
+  const send = () => window.kurageSendText('workspace', 'chat', 'https://gateway.example',
+    'guide', 'user', 'Guidance', 'timestamp', null, []);
+  await assert.rejects(send(), /sync interrupted/);
+  assert.equal(await send(), 'sent');
+  assert.equal(states[0], states[1]);
+  assert.equal(states[1].expectedTurnID, 'original-assistant');
 });

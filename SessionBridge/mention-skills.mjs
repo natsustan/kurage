@@ -1,58 +1,9 @@
-import { StreamsClient } from '@loro-dev/streams-client';
+import { requestMachine } from './machine-rpc.mjs';
 import skillDirs from './skill-dirs.json' with { type: 'json' };
 
-// Lody's machine control requests travel through short-lived JSON Streams.
-// Keep the response stream private to this request, including when a refresh
-// is cancelled, so replies cannot leak into another workspace or account.
-export async function control(repoAccess, workspaceID, machineID, request, signal) {
-  const responseID = `${workspaceID}:rpc:res:${crypto.randomUUID()}`;
-  const requestID = crypto.randomUUID();
-  const stream = id => new StreamsClient({
-    url: `${repoAccess.baseURL.replace(/\/+$/, '')}/ds/lody/${encodeURIComponent(id)}`,
-    auth: repoAccess.auth,
-    fetch: (input, init) => globalThis.fetch(input, {
-      ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal,
-    }),
-  });
-  const response = stream(responseID);
-  const created = await response.create({ contentType: 'application/json', ttlSeconds: 86400 });
-  if (!created.ok) throw new Error('Could not open a machine response stream');
-  signal.throwIfAborted();
-
-  const reply = (async () => {
-    // This stream was just created for this call. Read from the beginning so a
-    // fast machine reply cannot beat the first SSE connection.
-    for await (const event of response.live({ offset: '-1', mode: 'sse', signal })) {
-      if (event.type === 'error') throw new Error('Machine response stream failed');
-      if (event.type !== 'data') continue;
-      const messages = event.payload.json();
-      for (const message of Array.isArray(messages) ? messages : [messages]) {
-        if (message?.id !== requestID) continue;
-        if (message.error) throw new Error(message.error.message ?? 'Skill request failed');
-        return message.result;
-      }
-    }
-    throw new Error('Machine response stream closed');
-  })();
-
-  const now = Date.now();
-  const envelope = {
-    jsonrpc: '2.0', id: requestID, method: 'local-project/control', rpcVersion: '1',
-    machineId: machineID, workspaceId: workspaceID, replyTo: responseID,
-    sentAt: now, expiresAt: now + 120000, params: { request },
-  };
-  try {
-    const appended = await stream(`${workspaceID}:rpc:req:${machineID}`).append({
-      part: { contentType: 'application/json', body: JSON.stringify(envelope) },
-    });
-    if (!appended.ok) throw new Error('Could not request machine skills');
-    return await reply;
-  } catch (error) {
-    // The live read is stopped by the caller's abort signal. Consume its
-    // rejection if appending failed before we began awaiting it.
-    void reply.catch(() => {});
-    throw error;
-  }
+// Local-project controls share the workspace-scoped machine RPC transport.
+export function control(repoAccess, workspaceID, machineID, request, signal) {
+  return requestMachine(repoAccess, workspaceID, machineID, 'local-project/control', { request }, signal);
 }
 
 export function selectMentionSkills(results, agentType) {

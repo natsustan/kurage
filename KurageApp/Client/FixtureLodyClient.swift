@@ -25,13 +25,23 @@ final class FixtureLodyClient: LodyClient {
     private var failingConversationIDsOnce: Set<String>
     private let conversationDelay: Duration?
     private let sendDelay: Duration?
+    private let startDelay: Duration?
     private var failTabStartOnce: Bool
     private let skillRefreshDelay: Duration?
+    private let mentionDelay: Duration?
     private var failSkillRefreshOnce: Bool
     private var initialSkillSource: String?
     private var failSendOnce: Bool
+    private var rejectSendOnce: Bool
     private let authorizationDelay: Duration?
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
+    private let streamsConversationUpdates: Bool
+    private struct ConversationObserver {
+        let sessionID: String
+        let rootSessionID: String
+        let continuation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation
+    }
+    private var conversationObservers: [UUID: ConversationObserver] = [:]
 
     init(
         startsSignedIn: Bool = false,
@@ -41,21 +51,29 @@ final class FixtureLodyClient: LodyClient {
         conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
         sendDelay: Duration? = nil,
+        startDelay: Duration? = nil,
         failSendOnce: Bool = false,
+        rejectSendOnce: Bool = false,
         failTabStartOnce: Bool = false,
         skillRefreshDelay: Duration? = nil,
+        mentionDelay: Duration? = nil,
         failSkillRefreshOnce: Bool = false,
-        authorizationDelay: Duration? = nil
+        authorizationDelay: Duration? = nil,
+        streamsConversationUpdates: Bool = false
     ) {
+        self.streamsConversationUpdates = streamsConversationUpdates
         self.authorizationDelay = authorizationDelay
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
         self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
+        self.startDelay = startDelay
         self.failSendOnce = failSendOnce
+        self.rejectSendOnce = rejectSendOnce
         self.failTabStartOnce = failTabStartOnce
         self.skillRefreshDelay = skillRefreshDelay
+        self.mentionDelay = mentionDelay
         self.failSkillRefreshOnce = failSkillRefreshOnce
         if let archivedIDs {
             self.archivedSessionIDs = archivedIDs
@@ -90,6 +108,8 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func signOut() {
+        for observer in conversationObservers.values { observer.continuation.finish() }
+        conversationObservers.removeAll()
         addedProjects = [:]
         attachmentImages.removeAll()
         pendingStarts = [:]
@@ -107,10 +127,17 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         return records
             .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
-            .map(\.summary)
+            .map { record in
+                var summary = record.summary
+                summary.hasRunningTabs = fixtureTabs(sessionID: summary.id).contains {
+                    $0.id != summary.id && $0.activity == .running
+                }
+                return summary
+            }
     }
 
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] {
+        if let mentionDelay { try await Task.sleep(for: mentionDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
         return records.filter { $0.summary.projectID == projectID && $0.summary.id != sessionID &&
@@ -122,10 +149,13 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
+        if let mentionDelay { try await Task.sleep(for: mentionDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
         let template = try record(templateSessionID)
-        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? "")"
+        // A nil provider means the template's default, including a prefetch
+        // that begins before the new-session options have resolved.
+        let source = "\(projectID ?? template.summary.projectID ?? ""): \(agentConfigID ?? template.summary.agentName)"
         if initialSkillSource == nil { initialSkillSource = source }
         if source != initialSkillSource {
             if let skillRefreshDelay { try await Task.sleep(for: skillRefreshDelay) }
@@ -177,20 +207,42 @@ final class FixtureLodyClient: LodyClient {
                 continuation.finish()
             }
         }
-        return try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        return try await conversationObservation(sessionID: sessionID,
+            rootSessionID: rootSessionID ?? sessionID, workspaceID: workspaceID)
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
-        let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
-        let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
-                                        runConfig: try record(sessionID).runConfig,
-                                        contextWindowUsage: try record(sessionID).contextWindowUsage,
-                                        lastMessageAt: try record(sessionID).summary.lastMessageAt,
-                                        sessionTabs: fixtureTabs(sessionID: sessionID))
+        try await conversationObservation(sessionID: sessionID, rootSessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    private func conversationObservation(sessionID: String, rootSessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        // Keep delayed/failing reads available to fixture tests and UI scenarios.
+        _ = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        try requireAccount()
+        let update = try conversationUpdate(sessionID: sessionID, rootSessionID: rootSessionID)
+        let id = UUID()
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
-            continuation.finish()
+            if streamsConversationUpdates {
+                conversationObservers[id] = ConversationObserver(sessionID: sessionID,
+                    rootSessionID: rootSessionID, continuation: continuation)
+                continuation.onTermination = { @Sendable [weak self] _ in
+                    Task { @MainActor in _ = self?.conversationObservers.removeValue(forKey: id) }
+                }
+            } else {
+                continuation.finish()
+            }
         }
+    }
+
+    private func conversationUpdate(sessionID: String, rootSessionID: String) throws -> ConversationUpdate {
+        let record = try record(sessionID)
+        let snapshot = Conversation(sessionID: sessionID, turns: record.turns, permission: record.permission,
+            fileChanges: record.fileChanges, subtasks: record.subtasks, questions: record.questions)
+        return ConversationUpdate(conversation: snapshot, activity: record.summary.activity, syncState: .live,
+            runConfig: record.runConfig, contextWindowUsage: record.contextWindowUsage,
+            lastMessageAt: record.summary.lastMessageAt, sessionTabs: fixtureTabs(sessionID: rootSessionID))
     }
 
     var supportsSessionTabs: Bool { true }
@@ -219,6 +271,7 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
+        if let startDelay { try await Task.sleep(for: startDelay) }
         try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
@@ -279,6 +332,10 @@ final class FixtureLodyClient: LodyClient {
         if let sendDelay { try await Task.sleep(for: sendDelay) }
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if rejectSendOnce {
+            rejectSendOnce = false
+            throw LodyClientError.sessionBusy
+        }
         if failSendOnce {
             failSendOnce = false
             pendingSends[sessionID] = (PendingTextSend(text: trimmed, turnID: effectiveTurnID, attachments: attachments), effectiveRunConfig)
@@ -286,6 +343,8 @@ final class FixtureLodyClient: LodyClient {
         }
 
         try update(sessionID) { record in
+            // Steer retries retain one user turn, just like ordinary sends.
+            if record.turns.contains(where: { $0.id == effectiveTurnID }) { return }
             if let runConfig = effectiveRunConfig {
                 guard let current = record.runConfig,
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
@@ -307,6 +366,7 @@ final class FixtureLodyClient: LodyClient {
         agentConfigID: String?,
         projectID: String? = nil,
         isTab: Bool = false,
+        refresh: Bool = false,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         try requireAccount()
@@ -374,8 +434,12 @@ final class FixtureLodyClient: LodyClient {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
+        if let startDelay { try await Task.sleep(for: startDelay) }
+        try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
         if let pending = pendingSessionStarts(workspaceID: workspaceID).first(where: { $0.projectID == projectID }) {
@@ -392,7 +456,7 @@ final class FixtureLodyClient: LodyClient {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
         let runConfig = try appliedRunConfig(options, selections: selections, mismatch: LodyClientError.notConnected)
-        let id = "session-new-\(makeTurnID())"
+        let id = sessionID
         let created = SessionRecord(
             summary: SessionSummary(
                 id: id, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: options.agentConfigID,
@@ -400,7 +464,7 @@ final class FixtureLodyClient: LodyClient {
                 projectID: projectID, projectName: addedProjects[projectID]?.name ?? template.summary.projectName,
                 machineName: template.summary.machineName
             ),
-            turns: [ConversationTurn(id: makeTurnID(), author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
+            turns: [ConversationTurn(id: turnID, author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))],
             permission: nil,
             runConfig: SessionRunConfig(
                 model: runConfig.selectedModel.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
@@ -411,7 +475,7 @@ final class FixtureLodyClient: LodyClient {
         if failStartAndArchiveProjectOnce {
             failStartAndArchiveProjectOnce = false
             pendingStarts[id] = (PendingSessionStart(id: id, projectID: projectID,
-                templateSessionID: templateSessionID, text: trimmed, attachments: attachments), created)
+                templateSessionID: templateSessionID, text: trimmed, attachments: attachments, turnID: turnID), created)
             archivedSessionIDs.formUnion(records.filter { $0.summary.projectID == projectID }.map(\.summary.id))
             throw LodyClientError.deliveryUnconfirmed
         }
@@ -425,6 +489,8 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func retrySessionStart(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> SessionSummary.ID {
+        if let startDelay { try await Task.sleep(for: startDelay) }
+        try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
         guard let pending = pendingStarts.removeValue(forKey: sessionID) else { throw LodyClientError.sessionMissing }
@@ -618,6 +684,11 @@ final class FixtureLodyClient: LodyClient {
             throw LodyClientError.sessionMissing
         }
         try body(&records[index])
+        for observer in conversationObservers.values {
+            if let update = try? conversationUpdate(sessionID: observer.sessionID, rootSessionID: observer.rootSessionID) {
+                observer.continuation.yield(update)
+            }
+        }
     }
 
     private func makeTurnID() -> String {
@@ -863,6 +934,12 @@ extension ConversationFileChangeGroup {
 
 
 extension SessionRecord {
+    static var samplesWithRunningTab: [SessionRecord] {
+        samples + [SessionRecord(summary: SessionSummary(id: "fixture-running-tab", title: "Working tab",
+            agentName: "codex", activity: .running, preview: "", parentSessionID: "session-long"),
+            turns: [ConversationTurn(id: "tab-prompt", author: .user, text: "Work in this tab")], permission: nil)]
+    }
+
     static var samplesWithSubtasks: [SessionRecord] {
         var records = samples
         if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {

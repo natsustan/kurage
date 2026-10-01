@@ -14,6 +14,10 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreviewImage: (ConversationImage) -> Void
     let onRefresh: () -> Void
+    var canRetryMessage = false
+    var canEditMessage = false
+    var onRetryMessage: (ConversationTurn.ID) -> Void = { _ in }
+    var onEditMessage: (ConversationTurn.ID) -> Void = { _ in }
     @ViewBuilder let footer: () -> Footer
 
     func makeUIViewController(context: Context) -> ConversationLayoutController<Footer> {
@@ -25,7 +29,10 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
         controller.loadImage = loadImage
         controller.onPreviewImage = onPreviewImage
         controller.onOpenTurnChanges = onOpenTurnChanges
+        controller.onRetryMessage = onRetryMessage
+        controller.onEditMessage = onEditMessage
         controller.update(turns: turns, fileChanges: fileChanges, isLoading: isLoading, isRunning: isRunning, scrollRequestID: scrollRequestID, messageTimestamp: messageTimestamp,
+                          canRetryMessage: canRetryMessage, canEditMessage: canEditMessage,
                           footer: footer(), onRefresh: onRefresh)
     }
 }
@@ -43,6 +50,10 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var turnsByID: [ConversationTurn.ID: ConversationTurn] = [:]
     private var changesByID: [String: ConversationFileChangeGroup] = [:]
     var onOpenTurnChanges: (Int) -> Void = { _ in }
+    var onRetryMessage: (ConversationTurn.ID) -> Void = { _ in }
+    var onEditMessage: (ConversationTurn.ID) -> Void = { _ in }
+    private var canRetryMessage = false
+    private var canEditMessage = false
     private var isRunning = false
     private var turnIDs: [ConversationTurn.ID] = []
     private var scrollRequestID = 0
@@ -118,9 +129,13 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             [weak self] table, indexPath, id in
             let cell = table.dequeueReusableCell(withIdentifier: "turn", for: indexPath) as! ConversationTurnCell
             guard let turn = self?.turnsByID[id] else { return cell }
+            cell.accessibilityIdentifier = "conversation-turn-\(id)"
             cell.backgroundColor = .clear
-            let loadImage = self?.loadImage ?? { @MainActor _, _ async throws -> Data in
-                throw LodyClientError.notConnected
+            let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
+            if let imageLoader = self?.loadImage {
+                loadImage = imageLoader
+            } else {
+                loadImage = { _, _ in throw LodyClientError.notConnected }
             }
             let onPreviewImage = self?.onPreviewImage ?? { _ in }
             let changes = self?.changesByID[id]
@@ -136,7 +151,10 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                         onToggleChanges: { [weak self] in
                             self?.anchorDisclosureResize(turnID: id)
                         },
-                        disclosures: disclosures, isRunning: self?.isRunning == true && id == self?.turnIDs.last)
+                        disclosures: disclosures, isRunning: self?.isRunning == true && id == self?.turnIDs.last,
+                        canRetryMessage: self?.canRetryMessage == true, canEditMessage: self?.canEditMessage == true,
+                        onRetryMessage: { [weak self] in self?.onRetryMessage(id) },
+                        onEditMessage: { [weak self] in self?.onEditMessage(id) })
                     // A reused cell must not carry another turn's disclosure state.
                     .id(turn.id)
                     // Cell sizing must not inject a second geometry animation.
@@ -208,6 +226,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     }
 
     func update(turns: [ConversationTurn], fileChanges: [ConversationFileChangeGroup] = [], isLoading: Bool, isRunning: Bool = false, scrollRequestID: Int, messageTimestamp: Double? = nil,
+                canRetryMessage: Bool = false, canEditMessage: Bool = false,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
         self.messageTimestamp = messageTimestamp
@@ -232,6 +251,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         }
         let runningChanged = self.isRunning != isRunning
         self.isRunning = isRunning
+        let messageActionsChanged = self.canRetryMessage != canRetryMessage || self.canEditMessage != canEditMessage
+        self.canRetryMessage = canRetryMessage
+        self.canEditMessage = canEditMessage
         let updatedChanges = Dictionary(uniqueKeysWithValues: fileChanges.map { ($0.id, $0) })
         let updatedIDs = turns.map(\.id)
         let lastTurnChanged = turnIDs.last != updatedIDs.last
@@ -239,6 +261,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             let runningDisplayChanged = (runningChanged || lastTurnChanged) &&
                 (turn.id == turnIDs.last || turn.id == updatedIDs.last)
             guard let previous = turnsByID[turn.id], previous != turn ||
+                    messageActionsChanged && turn.delivery != nil ||
                     changesByID[turn.id] != updatedChanges[turn.id] || runningDisplayChanged else { return nil }
             return turn.id
         }

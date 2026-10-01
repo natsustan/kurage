@@ -64,6 +64,15 @@ struct ConversationImageGroup: View {
     let loadImage: @MainActor (ConversationImage, SessionImageVariant) async throws -> Data
     let onPreview: (ConversationImage) -> Void
 
+    private var imageItems: [ConversationImageItem] {
+        var occurrences: [String: Int] = [:]
+        return images.map { image in
+            let occurrence = occurrences[image.id, default: 0]
+            occurrences[image.id] = occurrence + 1
+            return ConversationImageItem(id: "\(image.id)-\(occurrence)", image: image)
+        }
+    }
+
     var body: some View {
         if images.count == 1, let image = images.first {
             ConversationImageTile(
@@ -77,9 +86,9 @@ struct ConversationImageGroup: View {
             .frame(maxWidth: .infinity, alignment: alignment == .trailing ? .trailing : .leading)
         } else {
             ConversationImageGrid(trailing: alignment == .trailing) {
-                ForEach(Array(images.enumerated()), id: \.offset) { _, image in
+                ForEach(imageItems) { item in
                     ConversationImageTile(
-                        image: image,
+                        image: item.image,
                         variant: .square,
                         size: nil,
                         fills: true,
@@ -91,6 +100,11 @@ struct ConversationImageGroup: View {
         }
     }
 
+}
+
+private struct ConversationImageItem: Identifiable {
+    let id: String
+    let image: ConversationImage
 }
 
 /// Up to three square thumbnails, sized by the actual chat content width.
@@ -232,6 +246,18 @@ private struct ConversationImageTile: View {
     @State private var loaded: UIImage?
     @State private var failed = false
 
+    init(image: ConversationImage, variant: SessionImageVariant, size: CGSize?, fills: Bool,
+         loadImage: @escaping @MainActor (ConversationImage, SessionImageVariant) async throws -> Data,
+         onPreview: @escaping (ConversationImage) -> Void) {
+        self.image = image
+        self.variant = variant
+        self.size = size
+        self.fills = fills
+        self.loadImage = loadImage
+        self.onPreview = onPreview
+        _loaded = State(initialValue: image.localPreviewData.flatMap { UIImage(data: $0) })
+    }
+
     // Thumbnail dimensions also cover missing or stale message metadata.
     private var resolvedSize: CGSize? {
         guard !fills, let loaded else { return size }
@@ -281,6 +307,10 @@ private struct ConversationImageTile: View {
 
     private func loadThumbnail() async {
         failed = false
+        if let data = image.localPreviewData, let preview = UIImage(data: data) {
+            loaded = preview
+            return
+        }
         loaded = nil
         do {
             let data = try await loadImage(image, variant)

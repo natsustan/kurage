@@ -103,6 +103,12 @@ struct HTTPLodyClientTests {
         let body = try #require(log.bodies.last)
         #expect(body.range(of: Data("name=\"sessionId\"\r\n\r\nchat".utf8)) != nil)
         #expect(body.range(of: FixtureImage.png) != nil)
+        let uploadCount = log.bodies.count
+        for variant in [SessionImageVariant.inline, .square, .original] {
+            #expect(try await client.loadSessionImage(workspaceID: "work", sessionID: "chat",
+                                                      imageID: "image-1", variant: variant) == image.data)
+        }
+        #expect(log.bodies.count == uploadCount)
         client.signOut()
         await #expect(throws: LodyClientError.signedOut) {
             try await client.uploadAttachments([image], sessionID: "chat", workspaceID: "work")
@@ -175,13 +181,16 @@ struct HTTPLodyClientTests {
         var calls = starter.started.makeAsyncIterator()
         let first = Task {
             try await client.startSession("Read", attachments: [image], agentConfigID: nil, selections: [],
-                                          projectID: "p", templateSessionID: "t", workspaceID: "work")
+                                          projectID: "p", templateSessionID: "t", sessionID: "first-session",
+                                          turnID: "first-turn", workspaceID: "work")
         }
         _ = await calls.next()
         starter.finish(0, result: "unconfirmed")
         await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await first.value }
         let pending = try #require(client.pendingSessionStarts(workspaceID: "work").first)
         #expect(pending.attachments == [image])
+        #expect(pending.id == "first-session")
+        #expect(pending.turnID == "first-turn")
         await #expect(throws: LodyClientError.previousSendPending("Read")) {
             try await client.startSession("Read", agentConfigID: nil, selections: [],
                                           projectID: "p", templateSessionID: "t", workspaceID: "work")
@@ -1122,7 +1131,7 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
-    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "catalog", "browse", "select"])
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
@@ -1142,9 +1151,13 @@ struct StreamFetchHandlerTests {
         let bridge = SessionSyncBridge(session: session) { _, _ in access }
         defer { bridge.close() }
         let task = Task {
-            if operation == "options" || operation == "tab-options" {
+            if operation == "options" || operation == "tab-options" || operation == "refresh-options" {
                 _ = try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
-                                                       workspaceID: "workspace", access: access, isTab: operation == "tab-options")
+                                                       workspaceID: "workspace", access: access, isTab: operation == "tab-options",
+                                                       refresh: operation == "refresh-options")
+            } else if operation == "send" {
+                _ = try await bridge.sendText("Guidance", turnID: "user-turn", userID: "user", runConfig: nil,
+                    sessionID: "chat", workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,

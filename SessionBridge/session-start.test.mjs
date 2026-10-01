@@ -3,6 +3,7 @@ import test from 'node:test';
 import { LoroDoc } from 'loro-crdt';
 import { applyNewSessionChoices, projectNewSessionRunConfig } from './run-config.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
+import { createSessionOptionsCache } from './session-options-cache.mjs';
 
 const capability = {
   cliType: 'builtin', agentType: 'codex', models: [],
@@ -90,6 +91,63 @@ test('a new session offers both the model and its reasoning from the template ba
   assert.deepEqual(options.runConfig.model.options.map(option => option.reasoning.map(r => r.value)),
     [['low', 'medium', 'high'], ['low']]);
   assert.equal(options.runConfig.reasoning.value, 'high');
+});
+
+test('repeated options keep compact defaults and machine rows without reading history again', async () => {
+  const { repo, rows, calls } = fixture();
+  rows.get('session-template').lastMessageAt = 1;
+  let time = 0;
+  const cache = createSessionOptionsCache(() => time);
+  const read = refresh => newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, false,
+    cache.reader({ refresh }));
+  const first = await read();
+  calls.length = 0;
+  const second = await read();
+  assert.deepEqual(second, first);
+  assert.equal(calls.length, 0);
+  time = 30_000;
+  assert.equal((await read()).needsRefresh, true);
+  assert.equal(calls.length, 0);
+  const refreshed = await read(true);
+  assert.equal(refreshed.needsRefresh, undefined);
+  assert.deepEqual(calls.map(call => call.flockDocIds ?? call.docIds), ['ws:mf:mac', 'session-template'].map(id => [id]));
+});
+
+test('changed and running source sessions invalidate compact defaults; live sources are always read', async () => {
+  const { repo, rows, docs, calls } = fixture();
+  const meta = rows.get('session-template');
+  meta.lastMessageAt = 1;
+  const cache = createSessionOptionsCache();
+  const read = isObserved => newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, false,
+    cache.reader({ isObserved }));
+  await read();
+  const doc = docs.get('session-template');
+  doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  doc.getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  doc.getMap('acpRuntimeConfig').set('configOptionValues', { reasoning_effort: 'low' });
+  doc.commit();
+  meta.lastMessageAt = 2;
+  calls.length = 0;
+  assert.equal((await read()).runConfig.model.value, 'gpt-5.4-mini');
+  assert.equal(calls.length, 1);
+  calls.length = 0;
+  await read(() => true);
+  assert.equal(calls.length, 1);
+  meta.status = { type: 'running' };
+  calls.length = 0;
+  await read();
+  await read();
+  assert.equal(calls.length, 2);
+});
+
+test('cached display options never bypass write-time project and capability verification', async () => {
+  const { repo, rows, flock } = fixture();
+  rows.get('session-template').lastMessageAt = 1;
+  const cache = createSessionOptionsCache();
+  await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, false, cache.reader());
+  flock.delete('localProject/proj');
+  assert.equal(await start(repo), 'rejected');
+  assert.equal(rows.has('session-new'), false);
 });
 
 test('recent provider use across projects wins over an older project template at display and write time', async () => {

@@ -25,6 +25,7 @@ struct PendingSessionStart: Identifiable, Equatable {
     let templateSessionID: SessionSummary.ID
     let text: String
     var attachments: [ComposerAttachment] = []
+    var turnID: ConversationTurn.ID? = nil
 
     var displayText: String { text.isEmpty ? attachments.map(\.fileName).joined(separator: ", ") : text }
 }
@@ -79,6 +80,8 @@ protocol LodyClient: AnyObject {
     /// Returns the choice used to author the turn, including on retries.
     /// `nil` means the turn inherited its configuration without an explicit choice.
     /// `runConfig` applies only when this call creates the turn.
+    /// A running session uses steer against its active assistant turn. The
+    /// machine owns any fallback to a follow-up when steer cannot be applied.
     @discardableResult
     func send(
         _ text: String, attachments: [ComposerAttachment],
@@ -100,6 +103,7 @@ protocol LodyClient: AnyObject {
         agentConfigID: String?,
         projectID: String?,
         isTab: Bool,
+        refresh: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions
     func pendingSessionStarts(workspaceID: WorkspaceSummary.ID) -> [PendingSessionStart]
@@ -112,6 +116,8 @@ protocol LodyClient: AnyObject {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID
     /// Returns every confirmed archived document session ID, including lifecycle descendants.
@@ -201,6 +207,7 @@ extension LodyClient {
         agentConfigID: String?,
         projectID: String?,
         isTab: Bool,
+        refresh: Bool,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         throw LodyClientError.notConnected
@@ -218,9 +225,22 @@ extension LodyClient {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
         throw LodyClientError.notConnected
+    }
+
+    func startSession(
+        _ text: String, attachments: [ComposerAttachment] = [],
+        agentConfigID: String?, selections: [RunConfigChoice], projectID: String,
+        templateSessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID
+    ) async throws -> SessionSummary.ID {
+        try await startSession(text, attachments: attachments, agentConfigID: agentConfigID, selections: selections,
+                               projectID: projectID, templateSessionID: templateSessionID,
+                               sessionID: UUID().uuidString.lowercased(), turnID: UUID().uuidString.lowercased(),
+                               workspaceID: workspaceID)
     }
 
     @discardableResult

@@ -130,6 +130,8 @@ struct SessionComposer: View {
     private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
     @State private var attachmentError: String?
     let isSending: Bool
+    var allowsEditingWhileSending = false
+    private var blocksEditing: Bool { isSending && !allowsEditingWhileSending }
     let isCancelling: Bool
     let isSessionRunning: Bool
     let supportsTextSending: Bool
@@ -137,7 +139,7 @@ struct SessionComposer: View {
     let supportsSessionCancellation: Bool
     let runConfig: RunConfigMenu?
     var contextWindowUsage: ContextWindowUsage? = nil
-    var placeholder: LocalizedStringKey = "Send a follow-up"
+    var placeholder: LocalizedStringResource = "Send a follow-up"
     var identifiers: Identifiers = .followUp
     /// Blocks sending while prerequisites load, without blocking typing.
     var canSubmit = true
@@ -149,7 +151,8 @@ struct SessionComposer: View {
     let onCancel: () -> Void
     let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
     @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 64
-    @FocusState private var isFocused: Bool
+    @ScaledMetric(relativeTo: .body) private var mentionIconWidth = 24
+    @State private var isFocused = false
     @State private var selection: TextSelection?
     @State private var mentionSessions: [MentionSession] = []
     @State private var mentionSkills: [MentionSkill] = []
@@ -163,13 +166,14 @@ struct SessionComposer: View {
     @State private var gaugeProgress: Double?
     @State private var targetGaugeProgress = 1.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
     private var editableDraft: Binding<String> {
         Binding(
             get: { draft },
             set: { value in
-                guard !isSending else { return }
+                guard !blocksEditing else { return }
                 mentions.reconcile(draft)
                 let edit = mentions.edit(value)
                 draft = edit.text
@@ -180,8 +184,13 @@ struct SessionComposer: View {
         )
     }
 
+    private var hasInput: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !attachments.isEmpty || isLoadingAttachments
+    }
+
     private var showsSend: Bool {
-        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning)
+        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning && (hasInput || isSending))
     }
 
     private var canSend: Bool {
@@ -201,10 +210,13 @@ struct SessionComposer: View {
     private var mentionLoadID: String? {
         // Leaving the foreground cancels pending bridge requests.
         guard scenePhase == .active else { return nil }
-        return "\(mentionSourceID)|\(mentionQuery?.trigger.rawValue.description ?? "")|\(mentions.hasSkillMentions)|\(mentionRetry)"
+        // Prefetch both sources on focus. Typing a trigger or moving between
+        // @ and $ then filters locally without cancelling and restarting reads.
+        return "\(mentionSourceID)|\(isFocused || mentions.hasSkillMentions)|\(mentionRetry)"
     }
 
     var body: some View {
+        let loadID = mentionLoadID
         VStack(spacing: 8) {
             if let query = mentionQuery {
                 mentionMenu(query)
@@ -214,18 +226,24 @@ struct SessionComposer: View {
             }
             VStack(spacing: 0) {
                 if !attachments.isEmpty || isLoadingAttachments {
-                    ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: isSending)
+                    ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: blocksEditing)
                 }
-                TextField(placeholder, text: editableDraft, selection: $selection, axis: .vertical)
-                    .disabled(isSending)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...5)
+                ZStack(alignment: .topLeading) {
+                    MentionEditor(text: editableDraft, selection: $selection,
+                                  isFocused: $isFocused,
+                                  ranges: mentions.ranges, isEnabled: !blocksEditing, identifier: identifiers.field,
+                                  accessibilityLabel: placeholder)
+                    if draft.isEmpty {
+                        Text(placeholder)
+                            .foregroundStyle(.tertiary)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
                     .fixedSize(horizontal: false, vertical: true)
-                    .focused($isFocused)
                     .padding(.horizontal, 12)
                     .padding(.top, 10)
                     .padding(.bottom, 4)
-                    .accessibilityIdentifier(identifiers.field)
                 actionRow
             }
             .padding(8)
@@ -266,7 +284,7 @@ struct SessionComposer: View {
                 if phase != .active { showsRunConfig = false }
             }
             .onChange(of: draft) { _, text in mentions.reconcile(text) }
-            .task(id: mentionLoadID) { await loadMentions() }
+            .task(id: loadID) { await loadMentions(for: loadID) }
             .sheet(isPresented: $showsAdvanced, onDismiss: updateGauge) {
                 RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
                     .presentationDetents([.medium, .large])
@@ -275,8 +293,8 @@ struct SessionComposer: View {
             }
     }
 
-    private func loadMentions() async {
-        guard scenePhase == .active, !Task.isCancelled else { return }
+    private func loadMentions(for loadID: String?) async {
+        guard loadID == mentionLoadID, scenePhase == .active, !Task.isCancelled else { return }
         if loadedMentionSourceID != mentionSourceID {
             mentionSessions = []
             mentionSkills = []
@@ -286,13 +304,20 @@ struct SessionComposer: View {
         }
         // A draft that already carries skill mentions reloads them even with the
         // menu closed: switching projects changes the skills it can point at.
-        let query = mentionQuery
-        guard query != nil || mentions.hasSkillMentions else { return }
+        guard isFocused || mentions.hasSkillMentions else { return }
         mentionLoadFailed = false
-        if query?.trigger == .combined, !sessionsLoaded, let loadMentionSessions {
+        let sourceID = mentionSourceID
+        async let sessions: Void = loadSessions(sourceID: sourceID)
+        async let skills: Void = loadSkills(sourceID: sourceID)
+        _ = await (sessions, skills)
+    }
+
+    private func loadSessions(sourceID: String) async {
+        if !sessionsLoaded, let loadMentionSessions {
             do {
                 let loaded = try await loadMentionSessions()
                 try Task.checkCancellation()
+                guard loadedMentionSourceID == sourceID else { return }
                 mentionSessions = loaded
                 sessionsLoaded = true
             } catch is CancellationError { return }
@@ -301,10 +326,14 @@ struct SessionComposer: View {
                 mentionLoadFailed = true
             }
         }
+    }
+
+    private func loadSkills(sourceID: String) async {
         if !skillsLoaded, let loadMentionSkills {
             do {
                 let loaded = try await loadMentionSkills()
                 try Task.checkCancellation()
+                guard loadedMentionSourceID == sourceID else { return }
                 mentionSkills = loaded
                 skillsLoaded = true
                 if let rewritten = mentions.resolveSkills(loaded, in: draft) { draft = rewritten }
@@ -352,8 +381,12 @@ struct SessionComposer: View {
                             .padding(16)
                             .accessibilityIdentifier("mention-retry")
                     } else if !skillsLoaded || query.trigger == .combined && !sessionsLoaded {
-                        ProgressView("Loading suggestions")
-                            .padding(16)
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading suggestions").foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: mentionRowHeight, alignment: .leading)
+                        .padding(.horizontal, 14)
                     } else {
                         Text("No matches")
                             .foregroundStyle(.secondary)
@@ -361,11 +394,14 @@ struct SessionComposer: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
-        // Three rows at most; the rest remain reachable by scrolling. Keeping
-        // the viewport stable also avoids a loading/results height jump.
-        .frame(height: mentionRowHeight * 3)
+        // Large accessibility text also grows the multiline composer. Reserve
+        // one candidate row so it stays reachable above the keyboard; the rest
+        // remain scrollable. Loading and results use the same viewport.
+        .frame(maxWidth: .infinity)
+        .frame(height: mentionRowHeight * (dynamicTypeSize.isAccessibilitySize ? 1 : 3))
         .clipped()
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .buttonStyle(.plain)
@@ -375,7 +411,7 @@ struct SessionComposer: View {
     private func mentionRow(icon: String, title: String, subtitle: String, detail: String?) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
-                .frame(width: 24)
+                .frame(width: mentionIconWidth)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.body).lineLimit(1)
@@ -418,7 +454,7 @@ struct SessionComposer: View {
     private var actionRow: some View {
         HStack(spacing: 6) {
             ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
-                                error: $attachmentError, disabled: isSending)
+                                error: $attachmentError, disabled: blocksEditing)
             Spacer(minLength: 0)
             if let contextWindowUsage, contextWindowUsage.isValid {
                 ContextWindowButton(usage: contextWindowUsage)
@@ -437,7 +473,7 @@ struct SessionComposer: View {
                 .accessibilityIdentifier("run-config-menu")
 
             }
-            if isSessionRunning && supportsSessionCancellation {
+            if isSessionRunning && supportsSessionCancellation && !showsSend {
                 Button(action: onCancel) {
                     composerIcon("stop.fill", enabled: !isSending && !isCancelling)
                 }
@@ -460,11 +496,12 @@ struct SessionComposer: View {
 
     private func composerIcon(_ name: String, enabled: Bool) -> some View {
         Image(systemName: name)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(enabled ? Color.white : Color.secondary)
-            .frame(width: 36, height: 36)
-            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-            .frame(width: 44, height: 44)
+            .frame(width: 40, height: 30)
+            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Capsule())
+            .frame(width: 48, height: 44)
+            .contentShape(Rectangle())
     }
 }
 
@@ -484,7 +521,7 @@ private struct ContextWindowButton: View {
                     .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: 25, height: 25)
+            .frame(width: 22, height: 22)
             .frame(width: 44, height: 44)
         }
         .buttonStyle(.plain)
@@ -703,10 +740,13 @@ private struct ReasoningGauge: View {
 
     var body: some View {
         Canvas { context, size in
-            let center = CGPoint(x: size.width / 2, y: size.height * 0.63)
-            let radius = size.width * 0.43
+            let radius = min(size.width, size.height) * 0.46
             let start = 145.0
             let sweep = 250.0
+            // Center the visible arc, whose lower ends stop above a full circle's bottom.
+            let lowerExtent = sin(start * .pi / 180) * radius
+            let center = CGPoint(x: size.width / 2,
+                                 y: (size.height + radius - lowerExtent) / 2)
             func point(_ angle: Double, radius: Double) -> CGPoint {
                 CGPoint(x: center.x + cos(angle * .pi / 180) * radius,
                         y: center.y + sin(angle * .pi / 180) * radius)

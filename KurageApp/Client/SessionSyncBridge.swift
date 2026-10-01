@@ -64,7 +64,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 machineName: metadata.machineName,
                 isPinned: metadata.isPinned,
                 lastMessageAt: metadata.lastMessageAt, lastReadAt: metadata.lastReadAt,
-                lastActivityAt: metadata.lastActivityAt
+                lastActivityAt: metadata.lastActivityAt,
+                hasRunningTabs: metadata.hasRunningTabs
             )
         }
     }
@@ -128,14 +129,24 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
     func sendText(_ text: String, attachments: [UploadedAttachment] = [], turnID: String, userID: String, runConfig: RunConfigChoice?,
                   sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
         let choice: Any = runConfig.map { $0.bridgeValue() } ?? NSNull()
-        return try await callBridge(
-            "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig, attachments))",
-            workspaceID: workspaceID,
-            access: access,
-            arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
-                        "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
-                        "runConfig": choice, "attachments": try attachments.map { try $0.bridgeValue() }]
-        )
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let result = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageSendText(workspaceID, sessionID, baseURL, turnID, userID, text, timestamp, runConfig, attachments, operationID))",
+                workspaceID: workspaceID,
+                access: access,
+                arguments: ["sessionID": sessionID, "turnID": turnID, "userID": userID,
+                            "text": text, "timestamp": ISO8601DateFormatter().string(from: Date()),
+                            "runConfig": choice, "attachments": try attachments.map { try $0.bridgeValue() },
+                            "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        return result
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
@@ -158,17 +169,17 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
     }
 
     func newSessionOptions(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: String,
-                           access: StreamsAccess, isTab: Bool = false) async throws -> NewSessionOptions {
+                           access: StreamsAccess, isTab: Bool = false, refresh: Bool = false) async throws -> NewSessionOptions {
         let operationID = UUID().uuidString
         fetchHandler.beginOperation(operationID)
         defer { fetchHandler.endOperation(operationID) }
         let json = try await withTaskCancellationHandler {
             try await callBridge(
-                "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL, operationID, projectID, isTab))",
+                "return await window.kurageBridgeReady.then(() => window.kurageNewSessionOptions(workspaceID, templateSessionID, agentConfigID, baseURL, operationID, projectID, isTab, refresh))",
                 workspaceID: workspaceID,
                 access: access,
                 arguments: ["templateSessionID": templateSessionID, "agentConfigID": agentConfigID ?? NSNull(),
-                            "operationID": operationID, "projectID": projectID ?? NSNull(), "isTab": isTab]
+                            "operationID": operationID, "projectID": projectID ?? NSNull(), "isTab": isTab, "refresh": refresh]
             )
         } onCancel: {
             Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
@@ -500,6 +511,7 @@ private struct SessionMetadata: Decodable {
     let lastMessageAt: Double?
     let lastReadAt: Double?
     let lastActivityAt: Double?
+    let hasRunningTabs: Bool?
 }
 
 private struct SessionSnapshot: Decodable {

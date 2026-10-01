@@ -10,12 +10,15 @@ struct UserMessageText: UIViewRepresentable {
     }
 
     func updateUIView(_ view: UserMessageTextView, context: Context) {
-        if view.text != text {
+        let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection)
+        if view.originalText != text || view.renderedFont != font || view.renderedStyle != view.traitCollection.userInterfaceStyle {
             view.endSelection()
-            view.text = text
+            view.originalText = text
+            view.renderedFont = font
+            view.renderedStyle = view.traitCollection.userInterfaceStyle
+            view.attributedText = MentionText.message(text, font: font, color: view.tintColor)
         }
-        view.font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection)
-        view.accessibilityLabel = text
+        view.accessibilityLabel = view.attributedText.string.replacingOccurrences(of: "\u{FFFC}", with: "")
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UserMessageTextView, context: Context) -> CGSize? {
@@ -36,6 +39,9 @@ struct UserMessageText: UIViewRepresentable {
 }
 
 final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, UITextViewDelegate {
+    var originalText = ""
+    var renderedFont: UIFont?
+    var renderedStyle: UIUserInterfaceStyle = .unspecified
     private var selectsAfterMenu = false
     private var isSelectingAll = false
     private let selectionMenu = UIEditMenuInteraction(delegate: nil)
@@ -50,7 +56,7 @@ final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, U
         textContainerInset = UIEdgeInsets(top: 12, left: 15, bottom: 12, right: 15)
         textContainer.lineFragmentPadding = 0
         textColor = .label
-        backgroundColor = UIColor.label.withAlphaComponent(0.06)
+        backgroundColor = .systemGray5
         layer.cornerRadius = 20
         accessibilityHint = "Your message"
         accessibilityCustomActions = [
@@ -109,7 +115,16 @@ final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, U
     }
 
     private func copyMessage() {
-        UIPasteboard.general.string = text
+        UIPasteboard.general.string = originalText
+    }
+
+    override func copy(_ sender: Any?) {
+        guard selectedRange.length > 0 else { return }
+        if selectedRange == NSRange(location: 0, length: attributedText.length) {
+            copyMessage()
+        } else {
+            UIPasteboard.general.string = MentionText.originalText(attributedText.attributedSubstring(from: selectedRange))
+        }
     }
 
     private func beginSelection() {

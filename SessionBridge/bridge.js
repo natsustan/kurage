@@ -6,13 +6,16 @@ import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
+import { runningSessionTabParents } from './session-tabs.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation, readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
+import { requestMachine } from './machine-rpc.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
+import { createSessionOptionsCache } from './session-options-cache.mjs';
 import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
 const nativeFetch = createNativeFetch(
@@ -33,6 +36,8 @@ const snapshotCodec = {
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
+// Like native pending sends, steer targets live only for this account's bridge.
+const steerTargets = new Map();
 const workspaceTransports = new WeakMap();
 
 // Only a replica that authors a new session may create its document stream.
@@ -73,7 +78,7 @@ window.kurageCancel = (operationID) => {
 };
 
 function createWorkspaceState(rawRepo, workspaceID, gatewayBaseURL) {
-  const state = { workspaceID, gatewayBaseURL, metaReady: false, documents: new Map() };
+  const state = { workspaceID, gatewayBaseURL, metaReady: false, documents: new Map(), optionsCache: createSessionOptionsCache() };
   const methods = {
     openPersistedDoc: async id => {
       const handle = await rawRepo.openPersistedDoc(id);
@@ -119,7 +124,7 @@ function withWorkspaceRepo(workspaceID, gatewayBaseURL, work, refreshMeta = true
       state.metaReady = true;
     }
     signal?.throwIfAborted();
-    return work(state.repo);
+    return work(state.repo, state.optionsCache);
   });
   workspaceOperation = operation.catch(() => {});
   return operation;
@@ -147,6 +152,7 @@ function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, c
     // Other resources sync separately: cancelling a one-shot Streams sync cannot
     // safely cancel a request also owned by a live room on the shared replica.
     const reader = {
+      isObserved: id => shared?.documents.has(id) && isObserved(id.slice('session-'.length)),
       listDoc: async () => (shared?.repo ?? await getIsolatedRepo()).listDoc(),
       getDocMeta: async id => (shared?.repo ?? await getIsolatedRepo()).getDocMeta(id),
       openPersistedDoc: async id => {
@@ -184,14 +190,14 @@ function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, c
         signal.throwIfAborted();
         if (!report.ok) throw new Error('Workspace metadata sync failed');
       }
-      let result = await work(reader);
+      let result = await work(reader, shared?.optionsCache);
       // Recheck after awaits: a live patch may have superseded the borrowed
       // baseline during this read. Retry once entirely on the scoped replica.
       for (const [id, { handle, version }] of borrowed) {
         if (!isObserved(id.slice('session-'.length)) || await confirmedVersion(id, handle) !== version) {
           signal.throwIfAborted();
           reuseLive = false;
-          result = await work(reader);
+          result = await work(reader, shared?.optionsCache);
           break;
         }
       }
@@ -216,11 +222,12 @@ function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, c
 window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
-  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
+  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo, optionsCache) => {
     const rows = await repo.listDoc();
     const visibleSessions = rows.filter((row) => row.docId.startsWith('session-') &&
       !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta.isArchived &&
       !row.meta.parentSessionId);
+    const runningTabParents = runningSessionTabParents(rows);
     const machineNames = new Map(rows
       .filter(row => row.docId.startsWith('machine-') && !row.deleted &&
         typeof row.meta?.name === 'string' && row.meta.name.length > 0)
@@ -239,7 +246,9 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
           requireTransports: ['cloud'],
           signal: controller.signal,
         });
+        controller.signal.throwIfAborted();
         if (!sync.ok) return;
+        optionsCache.rememberMachine(`${workspaceID}:mf:${machineID}`, document.flock);
         for (const row of document.flock.scan({ prefix: ['localProject'] })) {
           if (typeof row.key?.[1] === 'string' && typeof row.value?.name === 'string') {
             localProjectNames.set(`${machineID}:${row.key[1]}`, row.value.name);
@@ -281,6 +290,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
           ? row.meta.title : 'Untitled session',
         agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
         activity: projectSessionActivity(row.meta.status),
+        hasRunningTabs: runningTabParents.has(row.docId.slice('session-'.length)),
         preview: row.meta.repoFullName ?? '',
         projectID,
         projectName,
@@ -300,7 +310,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
 window.kurageMentionSessions = async (workspaceID, gatewayBaseURL, currentSessionID, projectID, operationID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
-  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
+  try { return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo => {
     const rows = await repo.listDoc();
     controller.signal.throwIfAborted();
     const currentProjectKey = projectID.startsWith('github:') ? projectID.toLowerCase() : projectID;
@@ -320,7 +330,7 @@ window.kurageMentionSessions = async (workspaceID, gatewayBaseURL, currentSessio
     }).filter(row => row.projectID === currentProjectKey)
       .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
     return JSON.stringify({ sessions });
-  }, true, controller.signal); }
+  }, operationID, controller); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 
@@ -330,32 +340,43 @@ window.kurageMentionSkills = async (workspaceID, gatewayBaseURL, templateSession
   if (operationID) sessionRefreshes.set(operationID, controller);
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
-    const source = await withWorkspaceRepo(workspaceID, gatewayBaseURL, async repo => {
-      const row = (await repo.listDoc()).find(row => row.docId === `session-${templateSessionID}` &&
-        !row.deleted && !row.meta?.isArchived);
-      if (!row) throw new Error('Session is unavailable in this workspace');
-      const machineID = row.meta.machineId;
-      if (typeof machineID !== 'string' || !machineID) throw new Error('Machine is unavailable');
-      let agentType = row.meta.agentType ?? row.meta.cliType;
-      if (agentConfigID && agentConfigID !== row.meta.agentConfigId) {
-        const flockID = `${workspaceID}:mf:${machineID}`;
-        const document = await repo.openFlockDoc(flockID);
-        const synced = await repo.sync({ scope: 'doc', flockDocIds: [flockID],
-          requireTransports: ['cloud'], signal: controller.signal });
-        if (!synced.ok) throw new Error('Agent configuration sync failed');
-        const config = Array.from(document.flock.scan({ prefix: ['agentConfig'] }))
-          .find(item => item.key?.[1] === agentConfigID)?.value;
-        if (!config?.agentType) throw new Error('Agent configuration is unavailable');
-        agentType = config.agentType;
-      }
-      const prefix = `local:${machineID}:`;
-      if (projectID && (!projectID.startsWith(prefix) || !projectID.slice(prefix.length))) {
-        throw new Error('Skill project belongs to another machine');
-      }
-      const localProjectID = projectID ? projectID.slice(prefix.length) : row.meta.project?.kind === 'local'
-        ? row.meta.project.localProjectId : null;
-      return { machineID, localProjectID, agentType };
-    }, true, controller.signal);
+    // The metadata reader releases its own auth scope at completion. The
+    // machine scan continues under the parent operation's cancellation scope.
+    const sourceController = new AbortController();
+    const abortSource = () => sourceController.abort();
+    controller.signal.addEventListener('abort', abortSource, { once: true });
+    let source;
+    try {
+      controller.signal.throwIfAborted();
+      source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo => {
+        const row = (await repo.listDoc()).find(row => row.docId === `session-${templateSessionID}` &&
+          !row.deleted && !row.meta?.isArchived);
+        if (!row) throw new Error('Session is unavailable in this workspace');
+        const machineID = row.meta.machineId;
+        if (typeof machineID !== 'string' || !machineID) throw new Error('Machine is unavailable');
+        let agentType = row.meta.agentType ?? row.meta.cliType;
+        if (agentConfigID && agentConfigID !== row.meta.agentConfigId) {
+          const flockID = `${workspaceID}:mf:${machineID}`;
+          const document = await repo.openFlockDoc(flockID);
+          const synced = await repo.sync({ scope: 'doc', flockDocIds: [flockID],
+            requireTransports: ['cloud'], signal: controller.signal });
+          if (!synced.ok) throw new Error('Agent configuration sync failed');
+          const config = Array.from(document.flock.scan({ prefix: ['agentConfig'] }))
+            .find(item => item.key?.[1] === agentConfigID)?.value;
+          if (!config?.agentType) throw new Error('Agent configuration is unavailable');
+          agentType = config.agentType;
+        }
+        const prefix = `local:${machineID}:`;
+        if (projectID && (!projectID.startsWith(prefix) || !projectID.slice(prefix.length))) {
+          throw new Error('Skill project belongs to another machine');
+        }
+        const localProjectID = projectID ? projectID.slice(prefix.length) : row.meta.project?.kind === 'local'
+          ? row.meta.project.localProjectId : null;
+        return { machineID, localProjectID, agentType };
+      }, operationID, sourceController);
+    } finally {
+      controller.signal.removeEventListener('abort', abortSource);
+    }
     controller.signal.throwIfAborted();
     const skills = await mentionSkills({
       workspaceID, ...source, userID, gatewayBaseURL,
@@ -402,9 +423,36 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
 
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
-    repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments));
+window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  const key = JSON.stringify([workspaceID, sessionID, turnID]);
+  if (!steerTargets.has(key)) steerTargets.set(key, {});
+  const state = steerTargets.get(key);
+  let result;
+  try {
+    const access = {
+      baseURL: gatewayBaseURL,
+      auth: async context => {
+        const token = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+        });
+        controller.signal.throwIfAborted();
+        return token.token;
+      },
+    };
+    const steering = { state, request: (machineID, params) => requestMachine(access, workspaceID, machineID,
+      'session/steer', params, controller.signal, 5000) };
+    result = await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+      repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering),
+      { operationID, signal: controller.signal }, controller.signal);
+    return result;
+  } finally {
+    controller.abort();
+    if (!state.expectedTurnID || result === 'sent' || result === 'superseded') steerTargets.delete(key);
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
   signal?.throwIfAborted();
@@ -420,12 +468,25 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, s
   }
 }
 
-window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false) => {
+window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false, refresh = false) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo =>
-      JSON.stringify(await newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal, projectID ?? undefined, tab)),
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async (repo, cache) => {
+      const snapshot = cache?.reader({ refresh, isObserved: repo.isObserved });
+      const read = reader => newSessionOptions(repo, workspaceID, templateSessionID, agentConfigID, controller.signal,
+        projectID ?? undefined, tab, reader);
+      try {
+        return JSON.stringify(await read(snapshot));
+      } catch (error) {
+        controller.signal.throwIfAborted();
+        if (!snapshot?.usedCache || refresh) throw error;
+        // Cached deletion commands or agent catalogs may already be obsolete.
+        // Retry once with fresh resources before declaring them unavailable.
+        cache.clear();
+        return JSON.stringify(await read(cache.reader({ refresh: true, isObserved: repo.isObserved })));
+      }
+    },
     operationID, controller);
   } finally {
     controller.abort();
@@ -433,9 +494,19 @@ window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentCon
   }
 };
 
-window.kurageStartSession = (workspaceID, gatewayBaseURL, request) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
-    repo => startSession(repo, workspaceID, request), { createStreams: true });
+window.kurageStartSession = async (workspaceID, gatewayBaseURL, request) => {
+  let result;
+  try {
+    result = await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+      repo => startSession(repo, workspaceID, request), { createStreams: true });
+    return result;
+  } finally {
+    // A rejected creation must be able to reload options after a provider or
+    // project changed. Successful writes invalidate baselines via metadata.
+    if (result !== 'sent' && cachedWorkspace?.workspaceID === workspaceID &&
+        cachedWorkspace.gatewayBaseURL === gatewayBaseURL) cachedWorkspace.optionsCache.clear();
+  }
+};
 
 window.kurageCancelSession = (workspaceID, sessionID, gatewayBaseURL) =>
   withSyncedWriteRepo(workspaceID, gatewayBaseURL, repo => cancelSession(repo, sessionID));
@@ -557,8 +628,12 @@ window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessi
     const run = repo => sessionProjects(repo, workspaceID, templateSessionID, action, path, cursor,
       access, controller.signal);
     if (action === 'select') {
-      return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
-        { operationID, signal: controller.signal }, controller.signal);
+      try {
+        return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+          { operationID, signal: controller.signal }, controller.signal);
+      } finally {
+        if (cachedWorkspace?.workspaceID === workspaceID) cachedWorkspace.optionsCache.clear();
+      }
     }
     // Catalog refreshes independently; browse needs only the cached machine ID.
     return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),

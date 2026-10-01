@@ -191,3 +191,167 @@ test('independent child tab sends and retries its own turn while preserving pare
   meta.status = { type: 'running' };
   assert.equal(await sendText(repo, 'chat', 'next', 'user', 'Hello', 'now'), 'busy');
 });
+
+function runningFixture() {
+  const state = fixture();
+  state.meta.status = { type: 'running' };
+  state.meta.machineId = 'machine';
+  state.meta.latestUserMsgId = 'active-user';
+  state.doc.getList('history').push({ id: 'active-user', role: 'user', status: 'processing',
+    inputConfig: { modelId: 'model', configOptionValues: { effort: 'high' } } });
+  state.doc.getList('history').push({ id: 'active-assistant', role: 'assistant', finished: false });
+  state.doc.commit();
+  state.requests = [];
+  state.steering = { state: {}, request: async (machineID, params) => {
+    state.requests.push({ machineID, params });
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: params.userTurnId,
+      applied: true, disposition: 'applied' };
+  } };
+  state.send = (text = 'Guidance', config, attachments = []) => sendText(state.repo, 'chat', 'guide',
+    'user', text, 'original-time', config, attachments, state.steering);
+  return state;
+}
+
+test('running input syncs a pending_apply turn before steer, without a queue or dispatch pointer', async () => {
+  const state = runningFixture();
+  const attachment = { type: 'image', imageId: 'photo', mimeType: 'image/png' };
+  state.steering.request = async (machineID, params) => {
+    assert.equal(state.doc.getList('history').toJSON().at(-1).status, 'pending_apply');
+    assert.deepEqual(state.calls.map(call => call.scope), ['doc', 'doc', 'meta']);
+    state.requests.push({ machineID, params });
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
+  };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }, [attachment]), 'sent');
+  const { machineID, params } = state.requests[0];
+  assert.equal(machineID, 'machine');
+  assert.equal(params.expectedTurnId, 'active-assistant');
+  assert.equal(params.userTurnId, 'guide');
+  assert.equal(params.userId, 'user');
+  assert.equal(params.timestamp, 'original-time');
+  assert.equal(params.inputConfig.modelId, 'model');
+  assert.equal(params.inputConfig.configOptionValues.effort, 'low');
+  assert.deepEqual(params.inputConfig.inputBlocks, [{ type: 'text', text: 'Guidance' }, attachment]);
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('steer cannot reach the machine before history is durable', async () => {
+  const state = runningFixture();
+  let syncs = 0;
+  state.repo.sync = async () => ({ outcome: ++syncs === 2 ? 'failed' : 'synced' });
+  assert.equal(await state.send(), 'unconfirmed');
+  assert.equal(state.requests.length, 0);
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('a timed-out steer retries the same user turn, target, timestamp, and authored configuration', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => { throw new Error('timeout'); };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }), 'unconfirmed');
+  state.doc.getList('history').insert(2, { id: 'new-assistant', role: 'assistant', finished: false });
+  state.doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'guide');
+  state.doc.getMap('acpRuntimeConfig').set('modelId', 'new-model');
+  state.doc.commit();
+  state.steering.request = async (_machineID, params) => {
+    state.requests.push(params);
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
+  };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'high' }), 'sent');
+  assert.equal(state.requests[0].expectedTurnId, 'active-assistant');
+  assert.equal(state.requests[0].timestamp, 'original-time');
+  assert.equal(state.requests[0].inputConfig.modelId, 'model');
+  assert.equal(state.requests[0].inputConfig.configOptionValues.effort, 'low');
+  assert.equal(state.doc.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('daemon-owned fallback is accepted without overwriting another producer activation', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => {
+    state.meta.steerTurnStatuses = { guide: 'pending' };
+    state.meta.latestUserMsgId = 'other-producer';
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+      applied: false, recoveryOwned: true, disposition: 'no-active-turn' };
+  };
+  assert.equal(await state.send(), 'sent');
+  assert.equal(state.meta.latestUserMsgId, 'other-producer');
+  state.steering.request = async () => { assert.fail('Accepted recovery must not send another RPC'); };
+  assert.equal(await state.send(), 'sent');
+});
+
+test('unknown steer delivery is never replayed as an ordinary send', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => {
+    state.meta.steerTurnStatuses = { guide: 'delivery_unknown' };
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+      applied: false, recoveryOwned: true, disposition: 'delivery-unknown' };
+  };
+  assert.equal(await state.send(), 'unconfirmed');
+  state.meta.status = { type: 'idle' };
+  state.steering.request = async () => { assert.fail('Unknown provider delivery must not be repeated'); };
+  assert.equal(await state.send(), 'unconfirmed');
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('legacy definitive non-delivery can dispatch the same turn once the session is idle', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => {
+    state.meta.status = { type: 'idle' };
+    state.meta.lastHandledUserMsgId = 'active-user';
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+      applied: false, disposition: 'no-active-turn' };
+  };
+  assert.equal(await state.send(), 'sent');
+  assert.equal(state.meta.latestUserMsgId, 'guide');
+  assert.equal(state.doc.getList('history').length, 3);
+  assert.equal(state.doc.getList('history').toJSON().at(-1).status, 'pending');
+});
+
+test('repairing daemon promotion uses the same steer request rather than a client pointer write', async () => {
+  const state = runningFixture();
+  let requests = 0;
+  state.steering.request = async (_machineID, params) => {
+    state.requests.push(params);
+    if (++requests === 2) state.meta.steerTurnStatuses = { guide: 'pending' };
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+      applied: false, recoveryOwned: true, disposition: requests === 1 ? 'promotion-failed' : 'no-active-turn' };
+  };
+  assert.equal(await state.send(), 'sent');
+  assert.deepEqual(state.requests[0], state.requests[1]);
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('mismatched responses and running sessions without an active target stay unconfirmed or busy', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => ({ type: 'session/steer_response', sessionId: 'other',
+    userTurnId: 'guide', applied: true });
+  assert.equal(await state.send(), 'unconfirmed');
+  state.doc.getList('history').clear();
+  state.doc.commit();
+  assert.equal(await state.send(), 'busy');
+  assert.equal(state.doc.getList('history').length, 0);
+});
+
+test('projected steer terminal statuses confirm delivery after daemon metadata is retired', async () => {
+  for (const status of ['handled', 'canceled', 'failed', 'processing']) {
+    const state = runningFixture();
+    state.steering.request = async () => {
+      state.doc.getList('history').get(2).set('status', status);
+      state.doc.commit();
+      return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+        applied: false, recoveryOwned: true, disposition: 'no-active-turn' };
+    };
+    assert.equal(await state.send(), 'sent', status);
+    state.steering.request = async () => { assert.fail('A projected result must not send again'); };
+    assert.equal(await state.send(), 'sent', status);
+  }
+});
+
+test('losing an unconfirmed steer target never guesses from concurrent history', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => { throw new Error('timeout'); };
+  assert.equal(await state.send(), 'unconfirmed');
+  state.steering.state = {};
+  state.steering.request = async () => { assert.fail('No original target, no replay'); };
+  assert.equal(await state.send(), 'unconfirmed');
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});

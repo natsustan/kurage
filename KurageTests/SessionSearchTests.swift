@@ -60,7 +60,7 @@ struct SessionSearchIndexTests {
         await model.adoptExistingAccount()
         await model.indexSessionsForSearch()
 
-        try await model.send("unique-needle", sessionID: "session-pr")
+        try await stageAndDeliverMessage(model, "unique-needle", sessionID: "session-pr")
         await model.indexSessionsForSearch()
 
         let body = model.sessionSearchBody(sessionID: "session-pr")

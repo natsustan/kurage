@@ -6,6 +6,7 @@ import CryptoKit
 final class HTTPLodyClient: LodyClient {
     let supportsConversations = true
     var supportsTextSending: Bool { account?.id?.isEmpty == false }
+    var supportsTextSendingWhileRunning: Bool { supportsTextSending }
     var supportsSessionCreation: Bool { supportsTextSending }
     let supportsSessionCancellation = true
     let supportsSessionArchiving = true
@@ -655,13 +656,14 @@ final class HTTPLodyClient: LodyClient {
         agentConfigID: String?,
         projectID: String? = nil,
         isTab: Bool = false,
+        refresh: Bool = false,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> NewSessionOptions {
         let (bridge, access, generation) = try await authorizedSessionBridge(workspaceID: workspaceID)
         let options = try await bridge.newSessionOptions(
             templateSessionID: templateSessionID, agentConfigID: agentConfigID,
             projectID: isTab ? nil : projectID,
-            workspaceID: workspaceID, access: access, isTab: isTab
+            workspaceID: workspaceID, access: access, isTab: isTab, refresh: refresh
         )
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
@@ -709,7 +711,8 @@ final class HTTPLodyClient: LodyClient {
         pendingStarts.compactMap { key, pending in
             guard key.userID == account?.id, key.workspaceID == workspaceID else { return nil }
             return PendingSessionStart(id: pending.sessionID, projectID: key.projectID,
-                                       templateSessionID: pending.templateSessionID, text: pending.text, attachments: pending.attachments)
+                                       templateSessionID: pending.templateSessionID, text: pending.text,
+                                       attachments: pending.attachments, turnID: pending.turnID)
         }.sorted { $0.id < $1.id }
     }
 
@@ -730,6 +733,8 @@ final class HTTPLodyClient: LodyClient {
         selections: [RunConfigChoice],
         projectID: String,
         templateSessionID: SessionSummary.ID,
+        sessionID: SessionSummary.ID,
+        turnID: ConversationTurn.ID,
         workspaceID: WorkspaceSummary.ID
     ) async throws -> SessionSummary.ID {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -745,8 +750,8 @@ final class HTTPLodyClient: LodyClient {
         try Task.checkCancellation()
         // A retry keeps the agent and configuration it was first authored with.
         let pending = pendingStarts[key] ?? PendingStart(
-            attachments: attachments, templateSessionID: templateSessionID, text: trimmed, sessionID: UUID().uuidString.lowercased(),
-            turnID: UUID().uuidString.lowercased(), agentConfigID: agentConfigID, selections: selections
+            attachments: attachments, templateSessionID: templateSessionID, text: trimmed, sessionID: sessionID,
+            turnID: turnID, agentConfigID: agentConfigID, selections: selections
         )
         pendingStarts[key] = pending
         let waiterID = UUID()
@@ -1040,6 +1045,14 @@ final class HTTPLodyClient: LodyClient {
             // uploads completed before either caller published the turn.
             let stableBlock = uploadedAttachments[key] ?? block
             uploadedAttachments[key] = stableBlock
+            if let imageID = stableBlock.imageId, attachment.isImage {
+                for variant in [SessionImageVariant.inline, .square, .original] {
+                    let cacheKey = SessionImageCacheKey(credentialID: Self.credentialID(token, baseURL: baseURL),
+                        workspaceID: workspaceID, sessionID: sessionID, imageID: imageID, variant: variant)
+                    storeSessionImage(variant == .original ? attachment.data : attachment.thumbnailData ?? attachment.data,
+                                      for: cacheKey)
+                }
+            }
             uploaded.append(stableBlock)
         }
         return uploaded

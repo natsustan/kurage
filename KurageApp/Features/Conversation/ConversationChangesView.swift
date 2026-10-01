@@ -8,19 +8,20 @@ struct ConversationChangesHUD: View {
     var body: some View {
         Button(action: onOpen) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
+                HStack(spacing: 6) {
                     fileCount
                     FileChangeCounts(additions: summary.additions, deletions: summary.deletions)
                 }
                 fileCount
             }
-            .font(.footnote.weight(.medium))
-            .padding(.horizontal, 14)
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .glassEffect(.regular, in: .capsule)
             .frame(minHeight: 44)
-            .contentShape(Capsule())
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular, in: .capsule)
         .accessibilityIdentifier("conversation-changes-hud")
         .accessibilityHint("View file changes recorded in this conversation")
     }
