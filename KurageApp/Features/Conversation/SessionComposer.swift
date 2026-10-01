@@ -455,6 +455,7 @@ struct SessionComposer: View {
         HStack(spacing: 6) {
             ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
                                 error: $attachmentError, disabled: blocksEditing)
+            FullAccessButton()
             Spacer(minLength: 0)
             if let contextWindowUsage, contextWindowUsage.isValid {
                 ContextWindowButton(usage: contextWindowUsage)
@@ -502,6 +503,41 @@ struct SessionComposer: View {
             .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Capsule())
             .frame(width: 48, height: 44)
             .contentShape(Rectangle())
+    }
+}
+
+private struct FullAccessButton: View {
+    @State private var showsDetails = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        Button {
+            showsDetails = true
+        } label: {
+            Image("full-access")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.red)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Permission mode")
+        .accessibilityValue("Full access")
+        .accessibilityHint("Show current permission mode")
+        .accessibilityIdentifier("full-access-mode")
+        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+            Text("Full access")
+                .font(.subheadline.weight(.semibold))
+                .padding(14)
+                .accessibilityIdentifier("full-access-detail")
+                .presentationCompactAdaptation(.popover)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { showsDetails = false }
+        }
     }
 }
 

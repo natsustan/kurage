@@ -825,6 +825,50 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFullAccessIndicatorShowsDetailsAndPreservesDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+
+        func checkIndicator(fieldID: String, name: String) {
+            let field = app.descendants(matching: .any)[fieldID]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            tap(field)
+            field.typeText("Keep this draft")
+            let indicator = app.buttons["full-access-mode"]
+            XCTAssertTrue(indicator.waitForExistence(timeout: 5))
+            XCTAssertTrue(indicator.isHittable)
+            XCTAssertEqual(indicator.frame.width, 44, accuracy: 0.5)
+            XCTAssertEqual(indicator.frame.height, 44, accuracy: 0.5)
+            XCTAssertGreaterThan(indicator.frame.minX, app.buttons["add-attachment"].frame.maxX)
+            XCTAssertEqual(indicator.label, "Permission mode")
+            XCTAssertEqual(indicator.value as? String, "Full access")
+            attachScreen(app, name: "\(name)-full-access-row")
+            tap(indicator)
+            let detail = app.staticTexts["full-access-detail"]
+            XCTAssertTrue(detail.waitForExistence(timeout: 5))
+            XCTAssertEqual(detail.label, "Full access")
+            attachScreen(app, name: "\(name)-full-access-detail")
+            // At accessibility sizes the popover covers the field's center.
+            app.navigationBars.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(detail.wait(for: \.exists, toEqual: false, timeout: 5))
+            XCTAssertEqual(field.value as? String, "Keep this draft")
+            XCTAssertTrue(app.keyboards.firstMatch.exists)
+        }
+
+        checkIndicator(fieldID: "follow-up-field", name: "follow-up")
+        app.navigationBars.buttons.firstMatch.tap()
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        checkIndicator(fieldID: "new-session-field", name: "new-session")
+    }
+
+    @MainActor
     func testFocusedComposerShowsRunConfigAndChangesReasoning() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
