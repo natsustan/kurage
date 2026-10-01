@@ -319,7 +319,8 @@ struct FileChangeCardDetails: View {
             } else {
                 if loadPreview != nil {
                     if let currentPreview {
-                        FilePreviewNotice(message: currentPreview.explanation) { attempt += 1 }
+                        FilePreviewNotice(message: currentPreview.explanation,
+                                          onRetry: currentPreview.canRetry ? { attempt += 1 } : nil)
                     } else if failed && loadedFile == file {
                         FilePreviewNotice(message: "Could not load the code preview. Check the session machine and connection, then retry.") {
                             attempt += 1
@@ -374,15 +375,17 @@ struct FileChangeCardDetails: View {
 }
 
 private struct FilePreviewNotice: View {
-    let message: String
-    let onRetry: () -> Void
+    let message: LocalizedStringResource
+    var onRetry: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message).font(.footnote).foregroundStyle(.secondary)
-            Button("Retry", action: onRetry)
-                .font(.footnote.weight(.medium))
-                .accessibilityIdentifier("retry-file-preview")
+            if let onRetry {
+                Button("Retry", action: onRetry)
+                    .font(.footnote.weight(.medium))
+                    .accessibilityIdentifier("retry-file-preview")
+            }
         }
         .padding(12)
     }
@@ -390,14 +393,14 @@ private struct FilePreviewNotice: View {
 
 private struct RecordedFileDiffView: View {
     let edit: ConversationFileEdit
-    @State private var hunks: [FileDiffHunk]?
-    @State private var loading = true
+    @State private var preview: RecordedFileDiff.Preview?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if loading {
+            switch preview {
+            case nil:
                 ProgressView()
-            } else if let hunks {
+            case .ready(let hunks, let truncated):
                 if hunks.isEmpty {
                     Text("No text differences").font(.footnote).foregroundStyle(.secondary).padding(12)
                 } else {
@@ -405,18 +408,21 @@ private struct RecordedFileDiffView: View {
                         FileDiffHunkView(hunk: hunk)
                     }
                 }
-            } else {
-                Text("This code difference is too large to preview.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                if truncated {
+                    Text("Showing part of the code difference. File totals include all changes.")
+                        .font(.footnote).foregroundStyle(.secondary).padding(12)
+                        .accessibilityIdentifier("file-preview-truncated")
+                }
+            case .unavailable(let reason):
+                FilePreviewNotice(message: ConversationFilePreview(status: .unavailable, reason: reason).explanation)
             }
         }
         .task(id: edit) {
-            loading = true
-            let task = Task.detached(priority: .userInitiated) { RecordedFileDiff.hunks(for: edit) }
+            preview = nil
+            let task = Task.detached(priority: .userInitiated) { RecordedFileDiff.preview(for: edit) }
             let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
             guard !Task.isCancelled else { return }
-            hunks = result
-            loading = false
+            preview = result
         }
     }
 }

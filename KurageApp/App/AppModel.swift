@@ -178,7 +178,14 @@ final class AppModel {
             }
         }
         if preview.status == .ready, file.previewRevision != nil, file.previewFinished == true {
-            if filePreviews.count >= 16 { filePreviews.removeAll() }
+            func bytes(_ preview: ConversationFilePreview) -> Int {
+                guard let edit = preview.edit else { return 0 }
+                return edit.oldText.utf8.count + edit.newText.utf8.count
+            }
+            // Larger snapshots must not turn the item-count cache into an unbounded text cache.
+            if filePreviews.count >= 16 || filePreviews.values.reduce(bytes(preview), { $0 + bytes($1.preview) }) > 32 * 1024 * 1024 {
+                filePreviews.removeAll()
+            }
             filePreviews[key] = FilePreviewCacheEntry(file: file, preview: preview)
         }
         return preview

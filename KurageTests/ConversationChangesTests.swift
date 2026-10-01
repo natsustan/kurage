@@ -192,7 +192,12 @@ struct ConversationChangesTests {
         #expect(lines.last?.text == "")
         #expect(lines.last?.newNumber == 5)
         let oversized = ConversationFileEdit(id: "large", oldText: "", newText: String(repeating: "line\r\n", count: 2_001))
-        #expect(RecordedFileDiff.lines(for: oversized) == nil)
+        guard case .ready(let hunks, let truncated) = RecordedFileDiff.preview(for: oversized) else {
+            Issue.record("Large addition should retain a partial preview")
+            return
+        }
+        #expect(truncated)
+        #expect(hunks.flatMap(\.lines).count == 2_000)
     }
 
     @Test func diffBoundsWorkAndFoldsUnchangedContext() throws {
@@ -202,7 +207,87 @@ struct ConversationChangesTests {
         #expect(lines.filter { $0.kind == .gap }.count == 2)
         #expect(lines.count == 10)
         let oversized = ConversationFileEdit(id: "large", oldText: "", newText: String(repeating: "line\n", count: 2_001))
-        #expect(RecordedFileDiff.lines(for: oversized) == nil)
+        #expect(RecordedFileDiff.lines(for: oversized)?.count == 2_000)
+    }
+
+    @Test func largeFilesWithDistantSmallChangesKeepAbsoluteLineNumbers() throws {
+        let old = (1...12_000).map { "// Context line \($0) with some text" }.joined(separator: "\n")
+        let new = old.replacingOccurrences(of: "line 100 with", with: "changed 100 with")
+            .replacingOccurrences(of: "line 11000 with", with: "changed 11000 with")
+        guard case .ready(let hunks, let truncated) = RecordedFileDiff.preview(for: .init(id: "large", oldText: old, newText: new)) else {
+            Issue.record("Large files with small edits should be previewable")
+            return
+        }
+        #expect(!truncated)
+        #expect(hunks.map(\.firstNumber) == [97, 10_997])
+        #expect(hunks.map(\.lastNumber) == [103, 11_003])
+        #expect(hunks.map(\.additions) == [1, 1])
+        #expect(hunks.map(\.deletions) == [1, 1])
+    }
+
+    @Test func diffBudgetAndSnapshotLimitsHaveSpecificNonRetryableReasons() {
+        let edit = ConversationFileEdit(id: "rewrite", oldText: (0..<5_000).map { "old \($0)" }.joined(separator: "\n"),
+                                       newText: (0..<5_000).map { "new \($0)" }.joined(separator: "\n"))
+        guard case .unavailable(let reason) = RecordedFileDiff.preview(for: edit) else {
+            Issue.record("A complete rewrite should exhaust the comparison budget")
+            return
+        }
+        #expect(reason == "comparison_limit")
+        let oversized = ConversationFileEdit(id: "oversized", oldText: "", newText: String(repeating: "x", count: 10 * 1024 * 1024 + 1))
+        guard case .unavailable(let sizeReason) = RecordedFileDiff.preview(for: oversized) else {
+            Issue.record("Snapshot byte limit must remain bounded")
+            return
+        }
+        #expect(sizeReason == "snapshot_limit")
+        let manyLines = ConversationFileEdit(id: "lines", oldText: "", newText: String(repeating: "\n", count: 200_000))
+        guard case .unavailable(let lineReason) = RecordedFileDiff.preview(for: manyLines) else {
+            Issue.record("Input line allocations must remain bounded")
+            return
+        }
+        #expect(lineReason == "line_limit")
+        for reason in ["too_large", "snapshot_limit", "line_limit", "comparison_limit", "binary", "unsupported", "not_changed"] {
+            #expect(!ConversationFilePreview(status: .unavailable, reason: reason).canRetry)
+        }
+        #expect(ConversationFilePreview(status: .unavailable, reason: "machine_offline").canRetry)
+    }
+
+    @Test func longChangedLinesAreClearlyTruncatedAndCancellationStopsComparison() async throws {
+        let edit = ConversationFileEdit(id: "long-line", oldText: "old", newText: String(repeating: "新", count: 10_000))
+        guard case .ready(let hunks, let truncated) = RecordedFileDiff.preview(for: edit) else {
+            Issue.record("Long lines should retain an excerpt")
+            return
+        }
+        #expect(truncated)
+        #expect(hunks.first?.lines.last?.text.hasSuffix(" …") == true)
+        #expect(hunks.first?.lines.last?.text.count == 1_002)
+        let grapheme = "e" + String(repeating: "\u{301}", count: 10_000)
+        let pathological = ConversationFileEdit(id: "grapheme", oldText: "", newText: grapheme)
+        let excerpt = try #require(RecordedFileDiff.lines(for: pathological)?.first?.text)
+        #expect(excerpt.utf8.count <= 4_004)
+        #expect(excerpt.hasSuffix(" …"))
+        #expect(!excerpt.contains("\u{FFFD}"))
+        let task = Task.detached {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return RecordedFileDiff.lines(for: edit)
+        }
+        #expect(await task.value == nil)
+    }
+
+    @Test func boundedDiffMatchesMinimalEditCountsForDuplicateAndReorderedLines() throws {
+        let samples = ["", "a", "b", "a\na", "a\nb", "b\na", "a\nb\na", "b\na\nb", "a\na\nb\nb"]
+        for oldText in samples {
+            for newText in samples {
+                let edit = ConversationFileEdit(id: "sample", oldText: oldText, newText: newText)
+                let lines = try #require(RecordedFileDiff.lines(for: edit))
+                let old = oldText.isEmpty ? [] : oldText.components(separatedBy: "\n")
+                let new = newText.isEmpty ? [] : newText.components(separatedBy: "\n")
+                #expect(lines.filter { $0.kind == .addition || $0.kind == .deletion }.count == new.difference(from: old).count)
+                // Every emitted context row must pair equal source lines.
+                for row in lines where row.kind == .context {
+                    #expect(old[try #require(row.oldNumber) - 1] == new[try #require(row.newNumber) - 1])
+                }
+            }
+        }
     }
 }
 

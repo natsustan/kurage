@@ -6,10 +6,12 @@
 - 代码使用原生单列预览：真实文件行号、红删绿增、自动换行、三行上下文及可折叠代码段，代码段显示自己的增删数；文件头和 HUD 仍使用历史累计摘要。只有工具片段时继续标注相对行号，不作为完整文件快照。打开抽屉收起输入键盘，关闭后保留草稿。
 - 代码段标题使用固定占位的同一个 chevron，展开／折叠仅旋转 90°，不改变标题行高及 Lines 文字位置；保留动态字号并遵循 Reduce Motion。每段标题和代码共用细边框，补齐左右边线。
 - 标题布局修订验证：本轮 Simulator 构建及文件预览 fixture UI 用例通过，浅色默认字号、深色 accessibility-large 各 1 次；用例比较展开／折叠／再次展开的标题行尺寸和 Lines 文字偏移，两种外观截图均已检查，`git diff --check` 通过。该布局修订未做真机验证。
-- 加载可取消，关闭文件、退出抽屉及离开 active 时停止请求；回到前台恢复未完成加载。结果按账号、工作区 generation 和原始文件记录校验；内存缓存仅复用已完成且有明确 checkpoint 身份的记录，限制 16 项，变更／删除和退出登录会清除对应数据；没有 checkpoint 身份时每次重新展开都读取。结束标记随文件 patches 投影，避免运行轮次结束时相同计数留下旧预览。
-- 接受 plain 和 gzip-base64 UTF-8 快照，检查声明与实际字节数并限制解压增长；old/new 合计最多 128 KiB、2,000 行，加密响应最多 512 KiB。缺失快照、无文本差异、二进制、过大、权限限制、机器离线与旧机器协议显示对应说明；暂时失败可以 Retry，已有工具片段作为备用预览。fixture 单独支持摘要文件读取及首次失败重试，不代表真实服务可用性。
+- 加载可取消，关闭文件、退出抽屉及离开 active 时停止请求；回到前台恢复未完成加载。结果按账号、工作区 generation 和原始文件记录校验；内存缓存仅复用已完成且有明确 checkpoint 身份的记录，限制 16 项及合计 32 MiB 文本，变更／删除和退出登录会清除对应数据；没有 checkpoint 身份时每次重新展开都读取。结束标记随文件 patches 投影，避免运行轮次结束时相同计数留下旧预览。
+- 接受 plain 和 gzip-base64 UTF-8 快照，检查声明与实际字节数并限制解压增长；按 Lody 协议每份快照最多 10 MiB 原始文本、1 MiB 压缩数据，加密响应最多 3 MiB，移除两份完整文件合计 128 KiB／2,000 行的旧拒绝条件。缺失快照、无文本差异、二进制、机器限制、客户端字节／行数／计算限制、权限限制、机器离线与旧机器协议分别说明；网络失败、机器离线及可能恢复的权限／轮次缺失保留 Retry，确定的大小限制不显示 Retry。已有工具片段作为备用预览。fixture 单独支持大文件的小修改、首次失败重试与机器超限，不代表真实服务可用性。
+- 原生比较先跳过相同前后缀，使用可取消且有预算的 Myers 行差异，保留绝对行号、三行上下文及分段。输入合计最多 200,000 行，比较与 frontier 工作最多 1,000,000 次、编辑距离最多 2,000；展示最多 2,000 行及约 512 KiB 文本，超长行截为 1,000 个字符／4,000 字节内的 UTF-8 完整片段。超出展示预算仍展示已有部分并注明文件总计包含全部修改；大范围重写超过计算预算时给出明确说明。
+- 大文件修订验证：本轮 frozen lockfile 安装、283 项 JavaScript 测试、bundle 重建、最终 Simulator 构建及 `git diff --check` 通过，16 项代码预览 Swift 回归及 1 项实际 bundled file:// WebKit 加密／gzip 专项通过。覆盖 12,000 行文件的远距离小修改、重复／重排行的最小编辑数、CRLF／中文、部分展示、超长组合字符、计算预算、输入限制与取消。浅色默认字号 3 项 fixture UI、深色 accessibility-large 2 项 fixture UI 通过，两种外观截图已检查大文件的小修改、暂时失败重试及机器超限不显示 Retry。真实账号的大快照读取及真机仍待验证。
 - 协议参考本机 Lody `ea3d599e` 的 `shared/src/code-collab.ts`、`loro-streams-rpc/src/rpc.ts`／`machine-rpc-server.ts`、`components/src/lib/code-collab-session-file-provider.ts` 和 CLI `code-collab-v2-service.ts`／`code-collab-v2-diff-store.ts`。本轮不包含 All Files、当前 Git 差异、完整文件打开或语法高亮。真实账号快照覆盖率、运行机器版本兼容、断网恢复和真机仍待验证。
-- 本轮验证：frozen lockfile 安装、282 项 JavaScript 测试及 bundle 重建通过，项目已用 XcodeGen 重新生成。最终应用构建、200 项 Swift 测试与浅色默认字号 3 项 fixture UI 回归通过；深色 accessibility-large 的 30 项定向 Swift 测试和 2 项 UI 回归通过。追加的 WebKit 专项套件 5 项测试通过，其中新增用例在实际 bundled file:// 页面验证 SHA-256、AES-GCM、gzip 解压与中文／CRLF。截图已检查真实行号、增删与分段、失败重试、抽屉缩放、软件键盘收起和草稿保留。首次 UI 检查发现容器标识覆盖代码段按钮，以及大字号下键盘占用阅读空间；修正辅助功能分组、焦点关闭和测试滚动目标后复跑通过。`git diff --check` 通过；上述 fixture／WebKit 测试不代表真实账号历史 RPC 已实测。
+- 首版验证：frozen lockfile 安装、282 项 JavaScript 测试及 bundle 重建通过，项目已用 XcodeGen 重新生成。最终应用构建、200 项 Swift 测试与浅色默认字号 3 项 fixture UI 回归通过；深色 accessibility-large 的 30 项定向 Swift 测试和 2 项 UI 回归通过。追加的 WebKit 专项套件 5 项测试通过，其中新增用例在实际 bundled file:// 页面验证 SHA-256、AES-GCM、gzip 解压与中文／CRLF。截图已检查真实行号、增删与分段、失败重试、抽屉缩放、软件键盘收起和草稿保留。首次 UI 检查发现容器标识覆盖代码段按钮，以及大字号下键盘占用阅读空间；修正辅助功能分组、焦点关闭和测试滚动目标后复跑通过。`git diff --check` 通过；上述 fixture／WebKit 测试不代表真实账号历史 RPC 已实测。
 
 ## 输入区 Full access 标记（2026-10-01）
 

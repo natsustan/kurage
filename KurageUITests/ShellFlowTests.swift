@@ -401,7 +401,23 @@ final class ShellFlowTests: XCTestCase {
         let preview = app.descendants(matching: .any)["historical-file-diff-KurageTests/ConversationChangesTests.swift"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["// Historical test line 1"].exists)
-        attachScreen(app, name: "Summary-only file historical preview")
+        XCTAssertFalse(app.buttons["retry-file-preview"].exists)
+        attachScreen(app, name: "Large file with small historical additions")
+    }
+
+    @MainActor
+    func testMachineSnapshotLimitExplainsCauseWithoutRetry() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-file-preview-too-large"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        tap(app.buttons["conversation-changes-hud"])
+        tap(app.buttons["changed-file-KurageTests/ConversationChangesTests.swift"])
+        let notice = app.staticTexts["The session machine could not provide this snapshot because it exceeds its size limit."]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["retry-file-preview"].exists)
+        attachScreen(app, name: "Machine snapshot limit without retry")
     }
 
     @MainActor

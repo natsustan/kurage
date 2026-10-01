@@ -3,8 +3,10 @@ import { requestMachine } from './machine-rpc.mjs';
 // Lody Code Collab v2: shared/code-collab.ts and loro-streams-rpc/rpc.ts.
 // Both the request and response use the owning (parent for a tab) session envelope.
 const encoder = new TextEncoder();
-const maxTextBytes = 128 * 1024;
-const maxEnvelopeBytes = 512 * 1024;
+// Match Lody's per-snapshot text limits; display/comparison budgets belong in Swift.
+const maxTextBytes = 10 * 1024 * 1024;
+const maxCompressedBytes = 1024 * 1024;
+const maxEnvelopeBytes = 3 * 1024 * 1024;
 const salt = 'lody-code-collab-v2-bootstrap-salt-v1';
 const aadLabel = 'lody-code-collab-v2-machine-rpc-payload-v1';
 const unavailable = reason => ({ status: 'unavailable', reason });
@@ -68,13 +70,13 @@ async function snapshotText(snapshot, signal) {
   if (snapshot?.kind !== 'text') throw new Error('Invalid diff snapshot');
   const payload = snapshot.text;
   if (!Number.isSafeInteger(payload?.rawBytes) || payload.rawBytes < 0) throw new Error('Invalid diff text size');
-  if (payload.rawBytes > maxTextBytes) return unavailable('too_large');
+  if (payload.rawBytes > maxTextBytes) return unavailable('snapshot_limit');
   let bytes;
   if (payload.encoding === 'plain' && typeof payload.text === 'string') {
     bytes = encoder.encode(payload.text);
   } else if (payload.encoding === 'gzip-base64') {
     const compressed = decodeBase64(payload.data);
-    if (compressed.length !== payload.compressedBytes || compressed.length > maxTextBytes) {
+    if (compressed.length !== payload.compressedBytes || compressed.length > maxCompressedBytes) {
       throw new Error('Invalid compressed diff size');
     }
     // Bound decompressed growth, not just the declared size in the response.
@@ -151,8 +153,6 @@ export async function loadTurnDiff(source, access, workspaceID, sessionID, turnI
   const newText = await snapshotText(response.newSnapshot, signal);
   if (typeof oldText !== 'string') return oldText;
   if (typeof newText !== 'string') return newText;
-  if (encoder.encode(oldText).length + encoder.encode(newText).length > maxTextBytes ||
-      oldText.split(/\r\n|\n/).length + newText.split(/\r\n|\n/).length > 2000) return unavailable('too_large');
   return { status: 'ready', edit: { id: `${turnID}:${path}`, oldText, newText } };
 }
 

@@ -82,14 +82,31 @@ test('decodes compressed UTF-8 and missing sides for additions and deletions', a
   assert.equal(deleted.edit.newText, '');
 });
 
-test('bounds size, lines and decompression growth, and rejects malformed sizes', async () => {
-  assert.equal((await load(response({ oldSnapshot: text('a'.repeat(66000)), newSnapshot: text('b'.repeat(66000)) }))).reason, 'too_large');
-  assert.equal((await load(response({ newSnapshot: text('x\n'.repeat(2001)) }))).reason, 'too_large');
+test('loads large snapshots with small edits without a combined byte or line rejection', async () => {
+  const oldText = Array.from({ length: 12000 }, (_, index) => `// Context line ${index}`).join('\n');
+  const newText = oldText.replace('line 6000\n', 'line 6000 changed\n');
+  const preview = await load(response({ oldSnapshot: text(oldText), newSnapshot: text(newText) }));
+  assert.equal(preview.status, 'ready');
+  assert.equal(preview.edit.oldText, oldText);
+  assert.equal(preview.edit.newText, newText);
+  const value = 'long historical line\n'.repeat(150000);
+  const compressed = gzipSync(value);
+  const snapshot = { kind: 'text', text: { encoding: 'gzip-base64', data: compressed.toString('base64'),
+    compressedBytes: compressed.length, rawBytes: Buffer.byteLength(value) } };
+  assert.equal((await load(response({ oldSnapshot: snapshot, newSnapshot: snapshot }))).edit.newText, value);
+});
+
+test('bounds each snapshot and decompression growth, and rejects malformed sizes', async () => {
+  assert.equal((await load(response({ newSnapshot: { kind: 'text', text: {
+    encoding: 'plain', text: '', rawBytes: 10 * 1024 * 1024 + 1 } } }))).reason, 'snapshot_limit');
   assert.equal((await load(response({ newSnapshot: { kind: 'too_large' } }))).reason, 'too_large');
   const compressed = gzipSync('x'.repeat(256 * 1024));
   await assert.rejects(load(response({ newSnapshot: { kind: 'text', text: { encoding: 'gzip-base64',
     data: compressed.toString('base64'), compressedBytes: compressed.length, rawBytes: 10 } } })), /exceeds/);
   await assert.rejects(load(response({ oldSnapshot: { kind: 'text', text: { encoding: 'plain', text: '你好', rawBytes: 2 } } })), /size mismatch/);
+  const oversized = Buffer.alloc(1024 * 1024 + 1);
+  await assert.rejects(load(response({ newSnapshot: { kind: 'text', text: { encoding: 'gzip-base64',
+    data: oversized.toString('base64'), compressedBytes: oversized.length, rawBytes: oversized.length } } })), /compressed diff size/);
 });
 
 test('reports explicit unavailable states and leaves transient errors retryable', async () => {

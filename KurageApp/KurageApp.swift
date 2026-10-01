@@ -29,7 +29,9 @@ struct KurageApp: App {
                     ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)
                     : nil,
                 streamsConversationUpdates: true,
-                failFilePreviewOnce: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-failure"))
+                failFilePreviewOnce: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-failure"),
+                filePreviewUnavailableReason: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-too-large")
+                    ? "too_large" : nil)
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

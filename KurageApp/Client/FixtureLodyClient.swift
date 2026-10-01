@@ -44,6 +44,7 @@ final class FixtureLodyClient: LodyClient {
     }
     private var conversationObservers: [UUID: ConversationObserver] = [:]
     private var failFilePreviewOnce: Bool
+    private let filePreviewUnavailableReason: String?
 
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
         let conversation = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
@@ -59,8 +60,13 @@ final class FixtureLodyClient: LodyClient {
             throw URLError(.timedOut)
         }
         if path == "KurageTests/ConversationChangesTests.swift" {
+            if let filePreviewUnavailableReason {
+                return ConversationFilePreview(status: .unavailable, reason: filePreviewUnavailableReason)
+            }
+            let context = (1...6_000).map { "// Unchanged historical context line \($0)\n" }.joined()
+            let added = (1...12).map { "// Historical test line \($0)\n" }.joined()
             return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
-                id: "\(turnID):\(path)", oldText: "", newText: (1...12).map { "// Historical test line \($0)" }.joined(separator: "\n")))
+                id: "\(turnID):\(path)", oldText: context, newText: added + context))
         }
         guard let edit = file.edits.first else {
             return ConversationFilePreview(status: .unavailable, reason: "turn_unavailable")
@@ -87,9 +93,11 @@ final class FixtureLodyClient: LodyClient {
         failSkillRefreshOnce: Bool = false,
         authorizationDelay: Duration? = nil,
         streamsConversationUpdates: Bool = false,
-        failFilePreviewOnce: Bool = false
+        failFilePreviewOnce: Bool = false,
+        filePreviewUnavailableReason: String? = nil
     ) {
         self.failFilePreviewOnce = failFilePreviewOnce
+        self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.streamsConversationUpdates = streamsConversationUpdates
         self.authorizationDelay = authorizationDelay
         self.records = records
