@@ -1,5 +1,14 @@
 # Kurage 会话功能
 
+## 本地项目当前分支只读（2026-10-01）
+
+- New Session 的 Project 行下显示项目目录的当前分支，点击该行刷新，返回前台自动刷新。读取失败显示具体原因并可点击重试；非 Git、detached HEAD、无权限及旧机器不支持有明确状态。保留英文文案、动态字号与草稿，读取状态不阻止发送或选择项目。New Tab 继承原会话目录，不展示项目分支行。
+- 读取经 `AppModel` → `LodyClient` → `SessionSyncBridge` 调用 `local-project/git-state`。按工作区／机器／项目验证目录登记、待删除状态及响应归属；机器请求在 metadata 读取锁外进行，沿用独立鉴权、令牌刷新与取消作用域。页面只保留当前分支，不缓存到磁盘或会话 metadata。
+- 审查确认 Lody `ea3d599e` 的本地 daemon control 支持 checkout，但 Streams RPC 的 `dispatchLocalProjectControlViaRpc`／`precheckLocalProjectHistoryRequest` 不接受 `local-project/checkout-branch`。客户端已移除切换入口、checkout RPC、busy／dirty 检查、切换未确认状态及对应 fixture；当前功能仅为读取，不支持创建或切换分支。新会话仍直接使用项目目录，不创建 worktree 或固定分支。
+- 协议参考：Lody `packages/loro-streams-rpc/src/rpc.ts` 的 Git-state 请求／响应，`packages/shared/src/node/local-project.cjs` 的分支 selector，`apps/cli/src/lib/message-handler.ts` 的 Git-state 访问校验及远端 control 路由，`apps/cli/src/lib/local-project-history-precheck.ts` 的远端请求白名单。selector 仅在显示名称时解码。
+- 本轮 `pnpm install --frozen-lockfile`、289 项桥接测试、bundle 重建、XcodeGen、iOS Simulator 编译、6 项 ProjectGit Swift 测试及 `git diff --check` 通过。原生桥接的取消与代理 4 项测试通过（含 project-git 取消）；扩大运行套件时，现有压缩 Unicode／加密预览用例因模拟器 file 页面缺少 `crypto.subtle` 失败，未修改该用例或相关实现。
+- 本轮 fixture UI 在浅色默认字号下 3 项、深色 accessibility-extra-large 下 2 项通过，覆盖刷新、前后台恢复、失败重试、草稿保持、发送及项目／目录选择；截图确认分支行与错误原因未重叠或裁切。深色大字号切换项目后，输入框截图偶尔仅显示草稿末尾，测试确认完整草稿仍保留，输入框滚动位置待后续排查。截图未绘出软件键盘，键盘存在与输入框避让的自动断言通过。真实账号与真机读取尚未验证。
+
 ## PR #23 后台代码比较审查修复（2026-10-01）
 
 - 代码差异计算任务同时以文件内容和场景活跃状态为标识；离开 active 时通过现有取消处理器停止 detached 比较，返回前台只恢复未完成计算。已完成结果按原始 edit 保留，后台期间内容变化时不显示旧结果，回到前台重新计算；完整历史预览和备用工具片段共用此行为。

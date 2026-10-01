@@ -1083,6 +1083,68 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testNewSessionReadsBranchPreservesDraftAndRefreshesOnForeground() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Build in this project")
+        let branch = app.buttons["new-session-branch"]
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        let machine = app.descendants(matching: .any)["new-session-machine"]
+        let project = app.buttons["new-session-project"]
+        XCTAssertEqual(project.frame.midY - machine.frame.midY, branch.frame.midY - project.frame.midY, accuracy: 1)
+        attachScreen(app, name: "Read-only current branch with draft")
+        tap(branch)
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertFalse(app.buttons["feature/client"].exists)
+        XCTAssertFalse(app.buttons["create-project-branch"].exists)
+        XCTAssertEqual(field.value as? String, "Build in this project")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertEqual(field.value as? String, "Build in this project")
+        attachScreen(app, name: "Read-only branch after returning from background")
+        XCTAssertTrue(app.buttons["new-session-send"].wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        tap(app.buttons["new-session-send"])
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Build in this project"].exists)
+    }
+
+    @MainActor
+    func testNewSessionShowsBranchReadFailureAndRetriesWithoutBlockingSend() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-project-git-failure"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Keep this draft")
+        let branch = app.buttons["new-session-branch"]
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, No access to this project's Git state.", timeout: 5))
+        XCTAssertTrue(app.buttons["new-session-send"].wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        attachScreen(app, name: "Branch read failure leaves composer usable")
+        tap(branch)
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertEqual(field.value as? String, "Keep this draft")
+        tap(app.buttons["new-session-project"])
+        tap(app.buttons["kurage"])
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertEqual(field.value as? String, "Keep this draft")
+        attachScreen(app, name: "Branch readable for a running project")
+    }
+
+    @MainActor
     func testNewChatChoosesProjectAndMachineFolder() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

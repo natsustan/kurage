@@ -34,7 +34,8 @@ struct KurageApp: App {
                     ? "too_large" : nil,
                 filePreviewDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-file-preview")
                     ? .seconds(3) : .milliseconds(200),
-                filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"))
+                filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"),
+                projectGitFailureOnce: ProcessInfo.processInfo.arguments.contains("--fixture-project-git-failure") ? .accessDenied : nil)
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

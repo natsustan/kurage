@@ -43,12 +43,14 @@
 		9C7475A61636EE410F2D2EEA /* SessionImageTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */; };
 		A623FD39CBAE3F01F7779351 /* SignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E02D0CEF5411E13D83E3B8D /* SignInTests.swift */; };
 		A6D2FF46CA8CC8FAE03BF8CB /* ConversationChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D3BD86C616EDFBCCF15230 /* ConversationChangesView.swift */; };
+		AA4AD44A95E3C8D96EAF4811 /* ProjectGit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64722609B71532885A1302E5 /* ProjectGit.swift */; };
 		AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C39757158A6D291B6DF642 /* AuthTokenStore.swift */; };
 		AC5ED9D79BFC3193F858618E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6998C6DDA1554E4E716FF9AF /* Assets.xcassets */; };
 		AEB3BBDF3678B7A48630E01D /* SessionProjectPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBCDF436626D73BEB441EB3 /* SessionProjectPicker.swift */; };
 		B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */; };
 		B458BDCF9D6B337E6913B7CA /* ConversationQuestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A318FB6C86AA0B5E9D6FBD42 /* ConversationQuestionCard.swift */; };
 		B6F2FE2DDB58D20C08631D68 /* LodyEndpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */; };
+		B82AEEFC5C19DCFBDCEF6B38 /* ProjectBranchRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE8A6A1BC9B69F735FEC452E /* ProjectBranchRow.swift */; };
 		C03092CC8B3720F717546291 /* SessionTabsFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */; };
 		C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */; };
 		C260EC8C0275502F582D4FE4 /* ConversationImageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */; };
@@ -57,6 +59,7 @@
 		CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */; };
 		D2DB957DFB03AB6265203514 /* ComposerAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DC7D0AA7296E6CF4BBC2D0 /* ComposerAttachment.swift */; };
 		D846FE6BE213A32414FCFCAE /* SessionSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F74E4465617B7E007D2D8DC /* SessionSearch.swift */; };
+		DD1B41F3673C97F1791C0435 /* ProjectGitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */; };
 		DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */ = {isa = PBXBuildFile; fileRef = AF6B057A72F618ECD2D1FA99 /* session-bridge.html */; };
 		E2FAA4C9BB027013F9DEE334 /* SessionComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD450BD8575DF0264928B18 /* SessionComposer.swift */; };
 		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
@@ -114,6 +117,7 @@
 		52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInFlowTests.swift; sourceTree = "<group>"; };
 		5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClientTests.swift; sourceTree = "<group>"; };
 		627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		64722609B71532885A1302E5 /* ProjectGit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectGit.swift; sourceTree = "<group>"; };
 		689573159C8EC11124B112A6 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		6998C6DDA1554E4E716FF9AF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6A79AACE724D367AC3C05B6B /* session-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-bridge.js"; sourceTree = "<group>"; };
@@ -123,6 +127,7 @@
 		7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSyncBridge.swift; sourceTree = "<group>"; };
 		7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClient.swift; sourceTree = "<group>"; };
 		7BC7B1E59C8561D871225236 /* AuthorizationBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthorizationBrowser.swift; sourceTree = "<group>"; };
+		800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectGitTests.swift; sourceTree = "<group>"; };
 		84497201224F3906A5EACF8A /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		850C0523A7D97A506897E2A8 /* MentionText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionText.swift; sourceTree = "<group>"; };
 		8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyEndpoints.swift; sourceTree = "<group>"; };
@@ -137,6 +142,7 @@
 		B366CEB77792BB4C07117803 /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
 		B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsTests.swift; sourceTree = "<group>"; };
 		B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedSessionsView.swift; sourceTree = "<group>"; };
+		BE8A6A1BC9B69F735FEC452E /* ProjectBranchRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectBranchRow.swift; sourceTree = "<group>"; };
 		C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWorkView.swift; sourceTree = "<group>"; };
 		CA46E2844598B0A50F9A983F /* UserMessageText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageText.swift; sourceTree = "<group>"; };
 		CD5B6A1D4A107B17DF5D6024 /* ComposerMentionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerMentionsTests.swift; sourceTree = "<group>"; };
@@ -207,6 +213,7 @@
 			children = (
 				B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */,
 				DD05638D968AB68EF4E23886 /* NewSessionView.swift */,
+				BE8A6A1BC9B69F735FEC452E /* ProjectBranchRow.swift */,
 				2FCB49C75A6EF2BD30A3266F /* SessionActions.swift */,
 				8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */,
 				DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */,
@@ -272,6 +279,7 @@
 				72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */,
 				8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */,
 				12912BB0B079CC40470DF3DC /* LodyModels.swift */,
+				64722609B71532885A1302E5 /* ProjectGit.swift */,
 				1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */,
 				7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */,
 			);
@@ -289,6 +297,7 @@
 				2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */,
 				5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */,
 				03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */,
+				800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */,
 				E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */,
 				A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */,
 				0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */,
@@ -477,6 +486,8 @@
 				7C3ED78FA7C1113A1D387EEA /* MentionText.swift in Sources */,
 				4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */,
 				59162197B3F96A8D054670C6 /* OutgoingMessage.swift in Sources */,
+				B82AEEFC5C19DCFBDCEF6B38 /* ProjectBranchRow.swift in Sources */,
+				AA4AD44A95E3C8D96EAF4811 /* ProjectGit.swift in Sources */,
 				E610F04E9116BF949CD86F67 /* RootView.swift in Sources */,
 				631BD465A3EDA0F542CB06CC /* SessionActions.swift in Sources */,
 				E2FAA4C9BB027013F9DEE334 /* SessionComposer.swift in Sources */,
@@ -503,6 +514,7 @@
 				B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */,
 				E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */,
 				3BF139DE4510CCC4A72F4E9F /* OutgoingMessageTests.swift in Sources */,
+				DD1B41F3673C97F1791C0435 /* ProjectGitTests.swift in Sources */,
 				617C98A6547E19F77D7D0F2B /* SessionMetadataTests.swift in Sources */,
 				835FC85AEDA614A2E7D93F9D /* SessionProjectGroupTests.swift in Sources */,
 				CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */,

@@ -1,4 +1,5 @@
 import { sessionProjects } from './session-projects.mjs';
+import { projectGitSource, readProjectGit } from './project-git.mjs';
 import { respondQuestion } from './conversation-questions.mjs';
 import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
@@ -104,6 +105,37 @@ window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, p
     } };
     return JSON.stringify(await loadTurnDiff(source, access, workspaceID, sessionID, turnID, path,
       controller.signal));
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
+
+window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID, projectID, userID, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    const sourceController = new AbortController();
+    const cancelSource = () => sourceController.abort();
+    controller.signal.addEventListener('abort', cancelSource, { once: true });
+    let source;
+    try {
+      controller.signal.throwIfAborted();
+      // Validate the registered project, then release the lock before machine IO.
+      source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
+        repo => projectGitSource(repo, workspaceID, templateSessionID, projectID, controller.signal),
+        operationID, sourceController, true);
+    } finally { controller.signal.removeEventListener('abort', cancelSource); }
+    controller.signal.throwIfAborted();
+    const access = { baseURL: gatewayBaseURL, auth: async context => {
+      const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+        command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+      });
+      controller.signal.throwIfAborted();
+      nativeFetch.bindSignal(access.token, controller.signal);
+      return access.token;
+    } };
+    return JSON.stringify(await readProjectGit(source, access, workspaceID, userID, controller.signal));
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);

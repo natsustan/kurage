@@ -144,7 +144,7 @@ struct NewSessionView: View {
                     placeholder: "Build anything",
                     identifiers: .init(container: "new-session-composer", field: "new-session-field",
                                        send: "new-session-send"),
-                    canSubmit: isCurrentWorkspace && pendingStart == nil && options != nil && !isLoading && !loadFailed,
+                    canSubmit: isCurrentWorkspace && scenePhase == .active && pendingStart == nil && options != nil && !isLoading && !loadFailed,
                     focusesOnAppear: true,
                     mentionSourceID: "\(route.workspaceGeneration):\(projectID):\(templateSessionID):\(options?.agentConfigID ?? "")",
                     loadMentionSessions: { try await model.mentionSessions(projectID: projectID) },
@@ -189,6 +189,12 @@ struct NewSessionView: View {
                     onChoose: selectProject
                 )
                 .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
+                if model.supportsProjectGitReading {
+                    ProjectBranchRow(model: model, projectID: projectID, templateSessionID: templateSessionID,
+                                     workspaceGeneration: route.workspaceGeneration,
+                                     isDisabled: isStarting || pendingStart != nil)
+                        .id(projectID)
+                }
             } else {
                 Label {
                     Text(projectName).lineLimit(1)
@@ -228,6 +234,7 @@ struct NewSessionView: View {
             NewSessionIcon(imageName: imageName)
         }
         .font(.body)
+        .frame(minHeight: 44)
     }
 
     private func selectProject(_ project: SessionProject) {
@@ -274,7 +281,7 @@ struct NewSessionView: View {
     }
 
     private func start() {
-        guard isCurrentWorkspace, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
+        guard isCurrentWorkspace, scenePhase == .active, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
         do {
             let id = try model.stageSessionStart(mentions.expanded(draft), composerText: draft, mentions: mentions,

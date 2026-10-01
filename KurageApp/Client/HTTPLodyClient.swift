@@ -669,6 +669,18 @@ final class HTTPLodyClient: LodyClient {
         return result
     }
 
+    var supportsProjectGitReading: Bool { account?.id != nil }
+
+    func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult {
+        guard let userID = account?.id else { throw LodyClientError.signedOut }
+        let (bridge, access, generation) = try await authorizedSessionBridge(workspaceID: workspaceID)
+        let result = try await bridge.projectGit(templateSessionID: templateSessionID, projectID: projectID,
+            userID: userID, workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return result
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,

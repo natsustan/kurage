@@ -104,8 +104,10 @@ final class FixtureLodyClient: LodyClient {
         failFilePreviewOnce: Bool = false,
         filePreviewUnavailableReason: String? = nil,
         filePreviewDelay: Duration = .milliseconds(200),
-        filePreviewLargeRewrite: Bool = false
+        filePreviewLargeRewrite: Bool = false,
+        projectGitFailureOnce: ProjectGitFailure? = nil
     ) {
+        self.projectGitFailureOnce = projectGitFailureOnce
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.filePreviewDelay = filePreviewDelay
@@ -160,6 +162,7 @@ final class FixtureLodyClient: LodyClient {
         for observer in conversationObservers.values { observer.continuation.finish() }
         conversationObservers.removeAll()
         addedProjects = [:]
+        projectGitStates = [:]
         attachmentImages.removeAll()
         pendingStarts = [:]
         pendingSends = [:]
@@ -442,6 +445,31 @@ final class FixtureLodyClient: LodyClient {
     }
 
     private var addedProjects: [String: SessionProject] = [:]
+    var supportsProjectGitReading: Bool { true }
+    var projectGitStates: [String: ProjectGitState] = [:]
+    var projectGitDelay: Duration? = nil
+    private var projectGitFailureOnce: ProjectGitFailure?
+
+    func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult {
+        if let projectGitDelay { try await Task.sleep(for: projectGitDelay) }
+        try Task.checkCancellation()
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        let template = try record(templateSessionID)
+        guard let templateProject = template.summary.projectID,
+              templateProject.hasPrefix("local:"),
+              let machineEnd = templateProject.dropFirst("local:".count).firstIndex(of: ":"),
+              projectID.hasPrefix(String(templateProject[...machineEnd])),
+              addedProjects[projectID] != nil || records.contains(where: { $0.summary.projectID == projectID }) else {
+            throw LodyClientError.notConnected
+        }
+        if let failure = projectGitFailureOnce {
+            projectGitFailureOnce = nil
+            return ProjectGitResult(failure: failure)
+        }
+        return ProjectGitResult(state: projectGitStates[projectID] ?? ProjectGitState(
+            git: true, currentBranch: "lody:branch:local:main"))
+    }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
                          workspaceID: String) async throws -> SessionProjectResult {

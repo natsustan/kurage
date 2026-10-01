@@ -970,6 +970,21 @@ final class AppModel {
         return result
     }
 
+    var supportsProjectGitReading: Bool { client.supportsProjectGitReading }
+
+    func projectGit(templateSessionID: String, projectID: String) async throws -> ProjectGitResult {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = workspaceGeneration
+        let auth = authenticationGeneration
+        let result = try await client.projectGit(templateSessionID: templateSessionID, projectID: projectID,
+                                                 workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == workspaceGeneration, isCurrentAuthentication(auth), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        return result
+    }
+
     /// A new session starts from the project's most recent local session.
     func newSessionTemplate(projectID: String) -> SessionSummary? {
         guard projectID.hasPrefix("local:") else { return nil }
