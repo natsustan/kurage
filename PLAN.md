@@ -1,5 +1,16 @@
 # Kurage 会话功能
 
+## 本地项目分支读取与切换（2026-10-01）
+
+- New Session 的 Project 行下新增原生分支菜单，显示项目根目录的当前分支，可选择本地分支及机器已有的远端跟踪引用，返回前台刷新，读取失败或切换结果未确认时提供重试。已核查现有机器协议仅支持已有分支 checkout，因此不提供创建分支入口。保留 Lody 的精确分支 selector，显示名称时才解码；远端切换交由机器端建立／复用本地跟踪分支。非 Git、detached HEAD、无权限、旧机器不支持及读取失败均有明确状态。New Tab 继承原会话目录，不提供项目分支切换。
+- 读取经 `AppModel` → `LodyClient` → `SessionSyncBridge` 调用 `local-project/git-state`；切换调用 `local-project/control` 的 `local-project/checkout-branch`。按工作区／机器／项目验证目录登记、待删除状态及响应归属；机器请求在 metadata 读取锁外进行，沿用独立鉴权、刷新与取消作用域，不阻塞实时正文。分支状态只保留在页面，不写磁盘或会话 metadata。
+- 机器、项目、分支详情行统一最小高度与间距，移除分支行下常驻说明；dirty／running 时菜单选项保持可点击，点选后弹出原生 Error，实际切换失败也使用弹窗，保留当前分支及草稿。
+- 切换前重新读取 Git 状态并再次同步 metadata，阻止运行中、待派发或待 steer 的项目会话、尚未确认的新会话／Tab，以及有本地修改的工作区；机器端再次检查修改状态。切换期间禁用发送及项目选择，保留草稿；结束或取消后重新解析技能提及。切换回复丢失时不自动重发命令，重新读取实际分支；尚未读到状态时阻止发送，用户可刷新。创建仍直接使用项目目录，不创建 worktree，不为会话固定分支。
+- 协议参考本机 Lody `ea3d599e`：`packages/loro-streams-rpc/src/rpc.ts` 的 Git-state 请求／响应与 control，`packages/shared/src/message.ts` 的 checkout schema，`packages/shared/src/node/local-project.cjs` 的分支 selector／checkout，以及 `apps/cli/src/lib/message-handler.ts` 的机器访问校验。运行会话保护是客户端 metadata 检查，现有机器接口不提供与其它端派发或切换共用的原子锁；跨端竞争仍可能发生。
+- 初次接入时的验证记录：frozen lockfile 安装、293 项 JavaScript 测试及 bundle 重建通过；最终代码的 39 项 Swift 定向测试通过，包括账号／工作区过期结果隔离、未确认 Tab 的切换保护和 WebKit→原生网络取消。浅色默认字号 3 项 fixture UI 测试通过，覆盖项目／目录选择、失败重试、远端分支、后台返回、草稿保留与 dirty／running 保护；深色 accessibility-extra-large 两项分支 UI 回归通过。大字号初测发现长失败提示使分支行部分滚入导航栏，缩短提示后复测通过，截图确认分支／项目入口、失败提示、草稿与键盘区域可用，已恢复模拟器显示设置。真实账号的读取／切换、跨端竞争、断网后结果确认与真机尚未实测。
+
+- 本次交互调整：最终代码的深色 accessibility-extra-large 两项 fixture UI 回归通过，覆盖点击后报错、错误关闭后重试、详情行间距、远端切换、后台返回、草稿保留与不展示创建入口；浅色默认字号截图也已检查。`git diff --check` 通过。首轮测试因原生 alert 不暴露旧行内文本标识而失败，已改用 alert／消息内容断言后通过；真实账号与真机本次未验证。
+
 ## PR #23 后台代码比较审查修复（2026-10-01）
 
 - 代码差异计算任务同时以文件内容和场景活跃状态为标识；离开 active 时通过现有取消处理器停止 detached 比较，返回前台只恢复未完成计算。已完成结果按原始 edit 保留，后台期间内容变化时不显示旧结果，回到前台重新计算；完整历史预览和备用工具片段共用此行为。

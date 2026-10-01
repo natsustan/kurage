@@ -1083,6 +1083,94 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testNewSessionSwitchesBranchesPreservesDraftAndRecoversFromFailure() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-branch-switch-failure"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        let field = app.descendants(matching: .any)["new-session-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("Build on this branch")
+        let branch = app.buttons["new-session-branch"]
+        XCTAssertTrue(branch.waitForExistence(timeout: 5))
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        attachScreen(app, name: "New session current branch with draft")
+        let machine = app.descendants(matching: .any)["new-session-machine"]
+        let project = app.buttons["new-session-project"]
+        XCTAssertEqual(project.frame.midY - machine.frame.midY, branch.frame.midY - project.frame.midY, accuracy: 1)
+        tap(branch)
+        tap(app.buttons["feature/client"])
+        let error = app.alerts["Error"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(error.staticTexts["Could not switch branches. Refresh and try again."].exists)
+        XCTAssertTrue(branch.label.contains("main"))
+        XCTAssertEqual(field.value as? String, "Build on this branch")
+        attachScreen(app, name: "Branch switch failed without losing draft")
+        tap(app.alerts["Error"].buttons["OK"])
+        tap(branch)
+        tap(app.buttons["feature/client"])
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, feature/client", timeout: 5))
+        XCTAssertFalse(error.exists)
+        XCTAssertEqual(field.value as? String, "Build on this branch")
+        tap(branch)
+        XCTAssertTrue(app.buttons["origin/develop (remote)"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["create-project-branch"].exists)
+        XCTAssertFalse(app.buttons["refresh-project-branches"].exists)
+        attachScreen(app, name: "Local and remote branches")
+        tap(app.buttons["origin/develop (remote)"])
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, develop", timeout: 5))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, develop", timeout: 5))
+        XCTAssertEqual(field.value as? String, "Build on this branch")
+        attachScreen(app, name: "Branch refreshed after returning from background")
+        XCTAssertTrue(app.buttons["new-session-send"].wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        tap(app.buttons["new-session-send"])
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Build on this branch"].exists)
+    }
+
+    @MainActor
+    func testNewSessionShowsErrorsForDirtyAndRunningProjectBranchSwitches() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-dirty-project"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let newSession = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
+        tap(newSession)
+        let branch = app.buttons["new-session-branch"]
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertFalse(app.staticTexts["project-branch-local-changes"].exists)
+        tap(branch)
+        XCTAssertTrue(app.buttons["feature/client"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["feature/client"].isEnabled)
+        tap(app.buttons["feature/client"])
+        XCTAssertTrue(app.alerts["Error"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts["Commit or stash local changes on the machine first."].exists)
+        attachScreen(app, name: "Dirty project branch error")
+        tap(app.alerts["Error"].buttons["OK"])
+        XCTAssertEqual(branch.label, "Branch, main")
+        tap(app.buttons["new-session-project"])
+        tap(app.buttons["kurage"])
+        XCTAssertTrue(branch.wait(for: \.label, toEqual: "Branch, main", timeout: 5))
+        XCTAssertFalse(app.staticTexts["Finish this project's sessions before switching."].exists)
+        tap(branch)
+        XCTAssertTrue(app.buttons["feature/client"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["feature/client"].isEnabled)
+        tap(app.buttons["feature/client"])
+        XCTAssertTrue(app.alerts["Error"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts["Finish this project's sessions before switching."].exists)
+        attachScreen(app, name: "Running project branch error")
+        tap(app.alerts["Error"].buttons["OK"])
+        XCTAssertEqual(branch.label, "Branch, main")
+    }
+
+    @MainActor
     func testNewChatChoosesProjectAndMachineFolder() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

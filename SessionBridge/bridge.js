@@ -1,4 +1,5 @@
 import { sessionProjects } from './session-projects.mjs';
+import { projectGitSource, readProjectGit, switchProjectBranch } from './project-git.mjs';
 import { respondQuestion } from './conversation-questions.mjs';
 import { updateSessionMetadata } from './session-metadata.mjs';
 import { LoroRepo } from 'loro-repo';
@@ -104,6 +105,51 @@ window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, p
     } };
     return JSON.stringify(await loadTurnDiff(source, access, workspaceID, sessionID, turnID, path,
       controller.signal));
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
+
+window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID, projectID, userID, branch, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    const sourceController = new AbortController();
+    const cancelSource = () => sourceController.abort();
+    controller.signal.addEventListener('abort', cancelSource, { once: true });
+    let source;
+    try {
+      controller.signal.throwIfAborted();
+      // Refresh metadata for the busy check; release its lock before machine IO.
+      source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
+        repo => projectGitSource(repo, workspaceID, templateSessionID, projectID, controller.signal),
+        operationID, sourceController, true);
+    } finally { controller.signal.removeEventListener('abort', cancelSource); }
+    controller.signal.throwIfAborted();
+    const access = { baseURL: gatewayBaseURL, auth: async context => {
+      const access = await window.webkit.messageHandlers.streamFetch.postMessage({
+        command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+      });
+      controller.signal.throwIfAborted();
+      nativeFetch.bindSignal(access.token, controller.signal);
+      return access.token;
+    } };
+    const result = branch == null
+      ? await readProjectGit(source, access, workspaceID, userID, controller.signal)
+      : await switchProjectBranch(source, access, workspaceID, userID, branch, controller.signal, requestMachine,
+        async () => {
+          const recheckController = new AbortController();
+          const cancel = () => recheckController.abort();
+          controller.signal.addEventListener('abort', cancel, { once: true });
+          try {
+            controller.signal.throwIfAborted();
+            return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
+              repo => projectGitSource(repo, workspaceID, templateSessionID, projectID, controller.signal),
+              operationID, recheckController, true);
+          } finally { controller.signal.removeEventListener('abort', cancel); }
+        });
+    return JSON.stringify(result);
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);

@@ -970,6 +970,27 @@ final class AppModel {
         return result
     }
 
+    var supportsProjectBranches: Bool { client.supportsProjectBranches }
+
+    func projectGit(templateSessionID: String, projectID: String, branch: String? = nil) async throws -> ProjectGitResult {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = workspaceGeneration
+        let auth = authenticationGeneration
+        if branch != nil && (pendingSessionStarts.contains { $0.projectID == projectID } ||
+            (outgoingStartsByWorkspace[workspaceID] ?? [:]).values.contains { $0.summary.projectID == projectID && !$0.isConfirmed } ||
+            (pendingTabs[workspaceID] ?? [:]).keys.contains { sessionSummary($0)?.projectID == projectID } ||
+            sessions.contains { $0.projectID == projectID && $0.isRunningInList }) {
+            return ProjectGitResult(failure: .busy)
+        }
+        let result = try await client.projectGit(templateSessionID: templateSessionID, projectID: projectID,
+                                                 branch: branch, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == workspaceGeneration, isCurrentAuthentication(auth), selectedWorkspaceID == workspaceID else {
+            throw CancellationError()
+        }
+        return result
+    }
+
     /// A new session starts from the project's most recent local session.
     func newSessionTemplate(projectID: String) -> SessionSummary? {
         guard projectID.hasPrefix("local:") else { return nil }

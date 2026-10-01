@@ -1166,7 +1166,7 @@ struct StreamFetchHandlerTests {
         #expect(result as? Bool == true)
     }
 
-    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview"])
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview", "project-git", "branch-switch"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
@@ -1196,6 +1196,10 @@ struct StreamFetchHandlerTests {
             } else if operation == "file-preview" {
                 _ = try await bridge.filePreview(sessionID: "chat", turnID: "turn", path: "file.swift",
                                                   workspaceID: "workspace", access: access)
+            } else if operation == "project-git" || operation == "branch-switch" {
+                _ = try await bridge.projectGit(templateSessionID: "template", projectID: "local:machine:project",
+                    userID: "user", branch: operation == "branch-switch" ? "lody:branch:local:feature" : nil,
+                    workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,

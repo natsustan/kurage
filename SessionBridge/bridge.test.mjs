@@ -12,6 +12,7 @@ import { newSessionOptions } from './session-start.mjs';
 import { runningSessionTabParents } from './session-tabs.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { turnDiffSource } from './turn-diff.mjs';
+import { projectGitSource } from './project-git.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -87,6 +88,9 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     requestMachine: extras.requestMachine,
     turnDiffSource,
     loadTurnDiff: extras.loadTurnDiff,
+    projectGitSource: extras.projectGitSource ?? projectGitSource,
+    readProjectGit: extras.readProjectGit,
+    switchProjectBranch: extras.switchProjectBranch,
     fetch: async () => {},
     AbortController,
     setTimeout,
@@ -120,6 +124,39 @@ test('turn diff releases the metadata read lock and keeps RPC cancellation alive
   bridge.window.kurageCancel('diff-request');
   await assert.rejects(request, { name: 'AbortError' });
   assert.equal(rpcSignal.aborted, true);
+});
+
+test('project Git releases metadata lock, scopes token refresh and cancels only its own machine read', async () => {
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  let rpcSignal;
+  let bound;
+  const bridge = makeBridge(undefined, [], undefined, undefined, {
+    projectGitSource: async (_repo, workspace, template, project) => {
+      assert.equal(workspace, 'workspace'); assert.equal(template, 'template'); assert.equal(project, 'local:mac:p');
+      return { machineID: 'mac', localProjectID: 'p', busy: false };
+    },
+    createNativeFetch: () => ({ fetch: async () => {}, receive() {}, bindSignal: (token, signal) => { bound = { token, signal }; } }),
+    postMessage: async message => {
+      assert.equal(message.workspaceID, 'workspace'); assert.equal(message.operationID, 'git-read');
+      assert.equal(message.refresh, true);
+      return { token: 'scoped-token' };
+    },
+    readProjectGit: async (source, access, workspace, user, signal) => {
+      assert.equal(source.machineID, 'mac'); assert.equal(user, 'user');
+      assert.equal(await access.auth({ reason: 'unauthorized' }), 'scoped-token');
+      assert.equal(bound.signal, signal);
+      rpcSignal = signal; started();
+      return await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  const pending = bridge.window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user', null, 'git-read');
+  void pending.catch(() => {});
+  await ready;
+  await bridge.window.kurageSessions('workspace', 'https://streams.test', 'list');
+  assert.equal(rpcSignal.aborted, false);
+  bridge.window.kurageCancel('git-read');
+  await assert.rejects(pending, { name: 'AbortError' });
 });
 
 test('reopening an unloaded ephemeral transcript restores history instead of resuming past it', async () => {
