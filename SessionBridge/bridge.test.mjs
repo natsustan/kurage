@@ -1253,3 +1253,65 @@ test('native send retains an ambiguous steer target when the writer throws', asy
   assert.equal(states[0], states[1]);
   assert.equal(states[1].expectedTurnID, 'original-assistant');
 });
+
+test('native completion retires only its exact workspace, session and turn retry state', async () => {
+  const states = [];
+  const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+      states.push(steering.state);
+      steering.state.expectedTurnID = 'assistant';
+      steering.state.authoredUpdate = new Uint8Array([1, 2, 3]);
+      return 'unconfirmed';
+    },
+  });
+  const keys = [['workspace', 'chat', 'guide'], ['other-workspace', 'chat', 'guide'],
+    ['workspace', 'other-chat', 'guide'], ['workspace', 'chat', 'other-turn']];
+  const send = ([workspace, session, turn]) => window.kurageSendText(workspace, session,
+    'https://gateway.example', turn, 'user', 'Guidance', 'timestamp', null, []);
+  const originals = [];
+  for (const key of keys) {
+    await send(key);
+    originals.push(states.at(-1));
+  }
+  window.kurageFinishTextSend(...keys[0]);
+  for (const [index, key] of keys.entries()) {
+    await send(key);
+    const current = states.at(-1);
+    if (index === 0) assert.notEqual(current, originals[index]);
+    else assert.equal(current, originals[index]);
+  }
+});
+
+test('native completion keeps an active upload alive and its late completion cannot retire a newer retry state', async () => {
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  let finish;
+  const uploaded = new Promise(resolve => { finish = resolve; });
+  const states = [];
+  const { window, repos } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+      states.push(steering.state);
+      steering.state.expectedTurnID = 'assistant';
+      if (states.length === 1) {
+        started();
+        await uploaded;
+        assert.equal(steering.signal.aborted, false);
+        return 'sent';
+      }
+      return 'unconfirmed';
+    },
+  });
+  const send = () => window.kurageSendText('workspace', 'chat', 'https://gateway.example',
+    'guide', 'user', 'Guidance', 'timestamp', null, []);
+  const active = send();
+  await ready;
+  window.kurageFinishTextSend('workspace', 'chat', 'guide');
+  assert.equal(repos[0].destroyed, false);
+  assert.equal(await send(), 'unconfirmed');
+  assert.notEqual(states[0], states[1]);
+  finish();
+  assert.equal(await active, 'sent');
+  assert.equal(await send(), 'unconfirmed');
+  assert.equal(states[1], states[2]);
+  assert(repos.every(repo => repo.destroyed));
+});

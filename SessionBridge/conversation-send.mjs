@@ -95,12 +95,16 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
   if (existing) {
     assertSameTurn(existing, userID, text, attachments);
     const outcome = deliveryOutcome(existing, row.meta);
-    if (outcome && !steering?.state.authoredUpdate) return outcome;
-    if (outcome === 'rejected' || outcome === 'unconfirmed') return outcome;
-    if (outcome === 'sent') {
-      if (!await uploadHistory(repo, docID, steering.signal)) return 'unconfirmed';
-      delete steering.state.authoredUpdate;
-      return 'sent';
+    if (outcome) {
+      // Even an unknown RPC verdict needs its original history to reach the
+      // machine. Upload the same insertion without offering the input again.
+      if (outcome !== 'rejected' && steering?.state.authoredUpdate) {
+        const uploaded = await uploadHistory(repo, docID, steering.signal);
+        steering.signal?.throwIfAborted();
+        if (!uploaded) return 'unconfirmed';
+        delete steering.state.authoredUpdate;
+      }
+      return outcome;
     }
     if (existing.status === 'pending_apply') {
       // Keep the original target in process memory. CRDT merges can insert

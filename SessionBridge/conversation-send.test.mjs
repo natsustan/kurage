@@ -351,6 +351,51 @@ test('a failed steer upload retries its original CRDT insertion on a fresh repli
   assert.equal(state.steering.state.authoredUpdate, undefined);
 });
 
+test('unknown steer delivery still uploads its original insertion on a fresh replica', async () => {
+  const state = runningFixture();
+  const baseline = state.doc.export({ mode: 'snapshot' });
+  let uploads = 0;
+  state.repo.sync = async options => ({ outcome: options.scope === 'doc' && ++uploads === 2 ? 'failed' : 'synced' });
+  state.steering.request = async () => {
+    state.meta.steerTurnStatuses = { guide: 'delivery_unknown' };
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+      applied: false, disposition: 'delivery-unknown' };
+  };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }), 'unconfirmed');
+  const update = state.steering.state.authoredUpdate;
+  assert(update instanceof Uint8Array);
+  state.steering.request = async () => { assert.fail('Unknown delivery cannot submit another offer'); };
+  state.repo.upsertDocMeta = async () => { assert.fail('Unknown delivery cannot activate ordinary dispatch'); };
+  let durable = baseline;
+  for (const outcome of ['failed', 'synced']) {
+    const replica = new LoroDoc();
+    replica.import(durable);
+    state.repo.openPersistedDoc = async () => ({ doc: replica });
+    const calls = [];
+    state.repo.sync = async options => {
+      calls.push(options.scope);
+      if (calls.length === 1) {
+        assert.equal(replica.getList('history').toJSON().some(turn => turn.id === 'guide'), false);
+        return { outcome: 'synced' };
+      }
+      if (outcome === 'synced') durable = replica.export({ mode: 'snapshot' });
+      return { outcome };
+    };
+    assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'high' }), 'unconfirmed');
+    assert.deepEqual(calls, ['doc', 'doc']);
+    assert.equal(state.steering.state.authoredUpdate, outcome === 'failed' ? update : undefined);
+    replica.import(update);
+    const guides = replica.getList('history').toJSON().filter(turn => turn.id === 'guide');
+    assert.equal(guides.length, 1);
+    assert.equal(guides[0].timestamp, 'original-time');
+    assert.equal(guides[0].inputConfig.configOptionValues.effort, 'low');
+    assert.equal(guides[0].status, 'pending_apply');
+  }
+  const persisted = new LoroDoc();
+  persisted.import(durable);
+  assert.equal(persisted.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+});
+
 test('a timeout and failed upload restore the original offer on a fresh replica even after concurrent history grows', async () => {
   const state = runningFixture();
   const baseline = state.doc.export({ mode: 'snapshot' });

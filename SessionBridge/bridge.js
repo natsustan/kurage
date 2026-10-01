@@ -486,6 +486,11 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 
+window.kurageFinishTextSend = (workspaceID, sessionID, turnID) => {
+  // An active writer retains its own state until its upload settles.
+  steerTargets.delete(JSON.stringify([workspaceID, sessionID, turnID]));
+};
+
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
 window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments, operationID) => {
@@ -514,7 +519,8 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
     return result;
   } finally {
     controller.abort();
-    if (!state.expectedTurnID || ['sent', 'superseded', 'rejected'].includes(result)) steerTargets.delete(key);
+    if (steerTargets.get(key) === state &&
+        (!state.expectedTurnID || ['sent', 'superseded', 'rejected'].includes(result))) steerTargets.delete(key);
     if (operationID) sessionRefreshes.delete(operationID);
   }
 };

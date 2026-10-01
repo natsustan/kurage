@@ -576,6 +576,7 @@ final class HTTPLodyClient: LodyClient {
         guard let userID = account?.id else { return }
         let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
         if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+        sessionBridge?.finishTextSend(turnID: turnID, sessionID: sessionID, workspaceID: workspaceID)
     }
 
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? {

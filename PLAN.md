@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## 消息投递恢复审查修复（2026-10-02）
+
+- steer 明确返回 `delivery-unknown` 且首次正文上传失败后，重试仍补传原始 authored CRDT 增量，成功后才清除增量。保持原 turn ID、时间戳与配置，不重复发起 RPC 或写普通派发指针；补传失败仍保留增量供下次恢复。
+- 原生收到同步确认或永久拒绝并结束待发送记录时，通过 `SessionSyncBridge` 精确清理对应工作区／会话／turn 的桥接重试状态。清理不取消仍在上传的副本；旧写入的迟到完成也不会删除后来创建的重试状态。
+- 新增回归覆盖未知投递后的跨副本补传、补传再次失败、原配置与 CRDT 身份保留、清理键隔离以及活动上传与迟到完成。
+- 本轮 3 项新增回归确认修复前失败、修复后通过；frozen lockfile 安装、304 项 JavaScript 测试、bundle 重建、49 项发送状态／HTTP Swift 测试及 2 项原生桥接取消测试（11 个参数场景）通过，`git diff --check` 通过。未重跑 fixture UI；真实账号的未知投递补传、延迟确认、弱网及真机尚未验证。
+
 ## steer 协议继续对齐（2026-10-02）
 
 - 以 Lody 官方 main `c687e45a` 的 `session-send-delivery.ts`、`session-submission.ts`、`session-execution-service.ts` 和 `session-dispatch-logic.ts` 为参考。运行中输入在本地提交 `pending_apply` 后立即发起 `session/steer`，与正文上传并行；临时写入副本等上传结束才释放，RPC 保留 5 秒时限。明确 applied 时标记 `processing`、已读及 `_lodyDeliveryKind: steer`。

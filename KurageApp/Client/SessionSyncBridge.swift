@@ -169,6 +169,15 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return result
     }
 
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String) {
+        guard isLoaded else { return }
+        webView.callAsyncJavaScript(
+            "await window.kurageBridgeReady; window.kurageFinishTextSend(workspaceID, sessionID, turnID)",
+            arguments: ["workspaceID": workspaceID, "sessionID": sessionID, "turnID": turnID],
+            in: nil, in: .page, completionHandler: nil
+        )
+    }
+
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
                          workspaceID: String, access: StreamsAccess) async throws -> SessionProjectResult {
         let operationID = UUID().uuidString
