@@ -6,6 +6,7 @@ import CryptoKit
 final class HTTPLodyClient: LodyClient {
     let supportsConversations = true
     var supportsTextSending: Bool { account?.id?.isEmpty == false }
+    var supportsTextSendingWhileRunning: Bool { supportsTextSending }
     var supportsSessionCreation: Bool { supportsTextSending }
     let supportsSessionCancellation = true
     let supportsSessionArchiving = true

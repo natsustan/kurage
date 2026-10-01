@@ -2,6 +2,28 @@ import XCTest
 
 final class SessionTabsFlowTests: XCTestCase {
     @MainActor
+    func testRunningChildMarksRootListAndStoppingClearsIt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-running-tab"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let root = app.descendants(matching: .any)["session-session-long"].firstMatch
+        XCTAssertTrue(root.waitForExistence(timeout: 5))
+        XCTAssertTrue((root.value as? String)?.hasPrefix("Running,") == true)
+        tap(root)
+        let main = app.buttons["session-tab-session-long"]
+        XCTAssertTrue(main.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(main.value as? String, "Running")
+        XCTAssertFalse(app.buttons["pause-session"].exists)
+        tap(app.buttons["session-tab-fixture-running-tab"])
+        tap(app.buttons["pause-session"])
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(root.waitForExistence(timeout: 5))
+        let stopped = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value BEGINSWITH %@", "Idle,"), object: root)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 5), .completed)
+    }
+
+    @MainActor
     func testFirstSessionShowsBubbleBeforeCreationAndKeepsTheNextDraftThroughSync() {
         verifyFirstTurn(isTab: false)
     }

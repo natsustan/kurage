@@ -80,6 +80,8 @@ protocol LodyClient: AnyObject {
     /// Returns the choice used to author the turn, including on retries.
     /// `nil` means the turn inherited its configuration without an explicit choice.
     /// `runConfig` applies only when this call creates the turn.
+    /// A running session uses steer against its active assistant turn. The
+    /// machine owns any fallback to a follow-up when steer cannot be applied.
     @discardableResult
     func send(
         _ text: String, attachments: [ComposerAttachment],

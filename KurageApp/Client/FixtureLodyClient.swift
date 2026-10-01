@@ -35,6 +35,13 @@ final class FixtureLodyClient: LodyClient {
     private var rejectSendOnce: Bool
     private let authorizationDelay: Duration?
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
+    private let streamsConversationUpdates: Bool
+    private struct ConversationObserver {
+        let sessionID: String
+        let rootSessionID: String
+        let continuation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation
+    }
+    private var conversationObservers: [UUID: ConversationObserver] = [:]
 
     init(
         startsSignedIn: Bool = false,
@@ -51,8 +58,10 @@ final class FixtureLodyClient: LodyClient {
         skillRefreshDelay: Duration? = nil,
         mentionDelay: Duration? = nil,
         failSkillRefreshOnce: Bool = false,
-        authorizationDelay: Duration? = nil
+        authorizationDelay: Duration? = nil,
+        streamsConversationUpdates: Bool = false
     ) {
+        self.streamsConversationUpdates = streamsConversationUpdates
         self.authorizationDelay = authorizationDelay
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
@@ -99,6 +108,8 @@ final class FixtureLodyClient: LodyClient {
     }
 
     func signOut() {
+        for observer in conversationObservers.values { observer.continuation.finish() }
+        conversationObservers.removeAll()
         addedProjects = [:]
         attachmentImages.removeAll()
         pendingStarts = [:]
@@ -116,7 +127,13 @@ final class FixtureLodyClient: LodyClient {
         try requireWorkspace(workspaceID)
         return records
             .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
-            .map(\.summary)
+            .map { record in
+                var summary = record.summary
+                summary.hasRunningTabs = fixtureTabs(sessionID: summary.id).contains {
+                    $0.id != summary.id && $0.activity == .running
+                }
+                return summary
+            }
     }
 
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] {
@@ -190,20 +207,42 @@ final class FixtureLodyClient: LodyClient {
                 continuation.finish()
             }
         }
-        return try await observeConversation(sessionID: sessionID, workspaceID: workspaceID)
+        return try await conversationObservation(sessionID: sessionID,
+            rootSessionID: rootSessionID ?? sessionID, workspaceID: workspaceID)
     }
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
-        let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
-        let update = ConversationUpdate(conversation: snapshot, activity: try record(sessionID).summary.activity, syncState: .live,
-                                        runConfig: try record(sessionID).runConfig,
-                                        contextWindowUsage: try record(sessionID).contextWindowUsage,
-                                        lastMessageAt: try record(sessionID).summary.lastMessageAt,
-                                        sessionTabs: fixtureTabs(sessionID: sessionID))
+        try await conversationObservation(sessionID: sessionID, rootSessionID: sessionID, workspaceID: workspaceID)
+    }
+
+    private func conversationObservation(sessionID: String, rootSessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        // Keep delayed/failing reads available to fixture tests and UI scenarios.
+        _ = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        try requireAccount()
+        let update = try conversationUpdate(sessionID: sessionID, rootSessionID: rootSessionID)
+        let id = UUID()
         return AsyncThrowingStream { continuation in
             continuation.yield(update)
-            continuation.finish()
+            if streamsConversationUpdates {
+                conversationObservers[id] = ConversationObserver(sessionID: sessionID,
+                    rootSessionID: rootSessionID, continuation: continuation)
+                continuation.onTermination = { @Sendable [weak self] _ in
+                    Task { @MainActor in _ = self?.conversationObservers.removeValue(forKey: id) }
+                }
+            } else {
+                continuation.finish()
+            }
         }
+    }
+
+    private func conversationUpdate(sessionID: String, rootSessionID: String) throws -> ConversationUpdate {
+        let record = try record(sessionID)
+        let snapshot = Conversation(sessionID: sessionID, turns: record.turns, permission: record.permission,
+            fileChanges: record.fileChanges, subtasks: record.subtasks, questions: record.questions)
+        return ConversationUpdate(conversation: snapshot, activity: record.summary.activity, syncState: .live,
+            runConfig: record.runConfig, contextWindowUsage: record.contextWindowUsage,
+            lastMessageAt: record.summary.lastMessageAt, sessionTabs: fixtureTabs(sessionID: rootSessionID))
     }
 
     var supportsSessionTabs: Bool { true }
@@ -304,6 +343,8 @@ final class FixtureLodyClient: LodyClient {
         }
 
         try update(sessionID) { record in
+            // Steer retries retain one user turn, just like ordinary sends.
+            if record.turns.contains(where: { $0.id == effectiveTurnID }) { return }
             if let runConfig = effectiveRunConfig {
                 guard let current = record.runConfig,
                       current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
@@ -643,6 +684,11 @@ final class FixtureLodyClient: LodyClient {
             throw LodyClientError.sessionMissing
         }
         try body(&records[index])
+        for observer in conversationObservers.values {
+            if let update = try? conversationUpdate(sessionID: observer.sessionID, rootSessionID: observer.rootSessionID) {
+                observer.continuation.yield(update)
+            }
+        }
     }
 
     private func makeTurnID() -> String {
@@ -888,6 +934,12 @@ extension ConversationFileChangeGroup {
 
 
 extension SessionRecord {
+    static var samplesWithRunningTab: [SessionRecord] {
+        samples + [SessionRecord(summary: SessionSummary(id: "fixture-running-tab", title: "Working tab",
+            agentName: "codex", activity: .running, preview: "", parentSessionID: "session-long"),
+            turns: [ConversationTurn(id: "tab-prompt", author: .user, text: "Work in this tab")], permission: nil)]
+    }
+
     static var samplesWithSubtasks: [SessionRecord] {
         var records = samples
         if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {

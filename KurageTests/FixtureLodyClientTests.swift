@@ -86,6 +86,37 @@ struct FixtureLodyClientTests {
         #expect(sessions.first { $0.id == "session-pr" }?.preview == "look again")
     }
 
+    @Test func runningSessionSendKeepsTheReplyActiveAndDeduplicatesRetries() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let before = try await client.conversation(sessionID: "session-tests", workspaceID: "ws-demo")
+        #expect(try await client.sessions(workspaceID: "ws-demo").first { $0.id == "session-tests" }?.activity == .running)
+        #expect(client.supportsTextSendingWhileRunning)
+        for _ in 0..<2 {
+            try await client.send("Steer the reply", runConfig: nil, turnID: "steer-turn",
+                sessionID: "session-tests", workspaceID: "ws-demo")
+        }
+        let after = try await client.conversation(sessionID: "session-tests", workspaceID: "ws-demo")
+        #expect(after.turns.count == before.turns.count + 1)
+        #expect(after.turns.filter { $0.id == "steer-turn" }.count == 1)
+        #expect(try await client.sessions(workspaceID: "ws-demo").first { $0.id == "session-tests" }?.activity == .running)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func fixtureSubscriptionPublishesSteerAndStopAndEndsAtSignOut() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, streamsConversationUpdates: true)
+        let stream = try await client.observeConversation(sessionID: "session-tests", workspaceID: "ws-demo")
+        var updates = stream.makeAsyncIterator()
+        #expect(try await updates.next()?.activity == .running)
+        try await client.send("Guidance", runConfig: nil, turnID: "steer-turn",
+            sessionID: "session-tests", workspaceID: "ws-demo")
+        let steered = try #require(try await updates.next())
+        #expect(steered.activity == .running)
+        #expect(steered.conversation.turns.last?.id == "steer-turn")
+        try await client.cancelSession(sessionID: "session-tests", workspaceID: "ws-demo")
+        #expect(try await updates.next()?.activity == .idle)
+        client.signOut()
+        #expect(try await updates.next() == nil)
+    }
+
     @Test func sendingMovesSessionAndProjectToRecentPosition() async throws {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()

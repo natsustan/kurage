@@ -6,11 +6,13 @@ import { StreamsTransportAdapter } from 'loro-repo/transport/streams';
 import { decompress as decompressZstd } from '@loro-dev/streams-crdt/zstd';
 import { projectConversation } from './conversation-projection.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
+import { runningSessionTabParents } from './session-tabs.mjs';
 
 import { createNativeFetch } from './native-fetch.mjs';
 import { observeConversation, readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
+import { requestMachine } from './machine-rpc.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
@@ -34,6 +36,8 @@ const snapshotCodec = {
 let cachedWorkspace;
 let workspaceOperation = Promise.resolve();
 const sessionRefreshes = new Map();
+// Like native pending sends, steer targets live only for this account's bridge.
+const steerTargets = new Map();
 const workspaceTransports = new WeakMap();
 
 // Only a replica that authors a new session may create its document stream.
@@ -223,6 +227,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
     const visibleSessions = rows.filter((row) => row.docId.startsWith('session-') &&
       !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta.isArchived &&
       !row.meta.parentSessionId);
+    const runningTabParents = runningSessionTabParents(rows);
     const machineNames = new Map(rows
       .filter(row => row.docId.startsWith('machine-') && !row.deleted &&
         typeof row.meta?.name === 'string' && row.meta.name.length > 0)
@@ -285,6 +290,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
           ? row.meta.title : 'Untitled session',
         agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
         activity: projectSessionActivity(row.meta.status),
+        hasRunningTabs: runningTabParents.has(row.docId.slice('session-'.length)),
         preview: row.meta.repoFullName ?? '',
         projectID,
         projectName,
@@ -417,9 +423,34 @@ window.kurageArchivedSessions = async (workspaceID, gatewayBaseURL, operationID)
 
 // Use a short-lived replica for writes so reader subscriptions and workspace
 // switching cannot change the document being authored mid-send.
-window.kurageSendText = (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
-    repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments));
+window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, userID, text, timestamp, runConfig, attachments, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  const key = JSON.stringify([workspaceID, sessionID, turnID]);
+  if (!steerTargets.has(key)) steerTargets.set(key, {});
+  const state = steerTargets.get(key);
+  try {
+    const access = {
+      baseURL: gatewayBaseURL,
+      auth: async context => {
+        const token = await window.webkit.messageHandlers.streamFetch.postMessage({
+          command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
+        });
+        controller.signal.throwIfAborted();
+        return token.token;
+      },
+    };
+    const steering = { state, request: (machineID, params) => requestMachine(access, workspaceID, machineID,
+      'session/steer', params, controller.signal, 5000) };
+    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+      repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering),
+      { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    controller.abort();
+    if (!state.expectedTurnID) steerTargets.delete(key);
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
   signal?.throwIfAborted();

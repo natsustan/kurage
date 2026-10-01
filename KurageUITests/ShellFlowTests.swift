@@ -550,7 +550,7 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     func testSendShowsBubbleBeforeDeliveryAndKeepsOneTurn() {
         let app = XCUIApplication()
-        app.launchArguments = ["--fixture", "--fixture-slow-send"]
+        app.launchArguments = ["--fixture", "--fixture-tab-send"]
         app.launch()
         tap(app.buttons["sign-in-button"])
         tap(app.descendants(matching: .any)["session-session-tests"])
@@ -558,24 +558,35 @@ final class ShellFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["follow-up-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         tap(field)
-        field.typeText("Instant bubble")
+        let text = "This long message should keep the same bubble width and line wrapping while sending and after delivery."
+        field.typeText(text)
         let send = app.buttons["send-follow-up"]
         tap(send)
 
         XCTAssertTrue(send.wait(for: \.label, toEqual: "Sending", timeout: 2))
-        let message = app.staticTexts["Instant bubble"]
+        let message = app.textViews[text]
         XCTAssertTrue(message.waitForExistence(timeout: 2))
+        let progress = app.activityIndicators["Sending"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 2))
+        let sendingFrame = message.frame
+        let progressGap = sendingFrame.minX - progress.frame.maxX
+        XCTAssertGreaterThanOrEqual(progressGap, 0)
+        XCTAssertLessThanOrEqual(progressGap, 8)
         XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
         XCTAssertTrue(field.isEnabled)
         field.typeText("Next draft")
         XCTAssertFalse(send.isEnabled)
         attachScreen(app, name: "optimistic-send")
-        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 10))
+        XCTAssertTrue(send.wait(for: \.label, toEqual: "Send", timeout: 20))
+        XCTAssertTrue(progress.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(message.frame.width, sendingFrame.width, accuracy: 1)
+        XCTAssertEqual(message.frame.height, sendingFrame.height, accuracy: 1)
+        attachScreen(app, name: "delivered-bubble-same-width")
         XCTAssertEqual(field.value as? String, "Next draft")
         app.navigationBars.buttons.firstMatch.tap()
         tap(app.descendants(matching: .any)["session-session-tests"])
         XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts.matching(identifier: "Instant bubble").count, 1)
+        XCTAssertEqual(app.textViews.matching(identifier: text).count, 1)
     }
 
     @MainActor
@@ -646,6 +657,60 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testRunningComposerSteersWithoutQueueConfirmation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-tests"])
+        tap(app.buttons["permission-review"])
+        tap(app.buttons["permission-allow"].firstMatch)
+
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        let pause = app.buttons["pause-session"]
+        let send = app.buttons["send-follow-up"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertFalse(send.exists)
+        attachScreen(app, name: "running-empty-stop")
+
+        tap(field)
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 3) {
+            attachScreen(app, name: "running-focus-retry")
+            field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.typeText("Steer this reply")
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertTrue(send.isEnabled)
+        XCTAssertFalse(pause.exists)
+        XCTAssertEqual(field.value as? String, "Steer this reply")
+        attachScreen(app, name: "running-input-send")
+
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Steer this reply".count))
+        if let remainder = field.value as? String, !remainder.isEmpty, remainder != "Send a follow-up" {
+            attachScreen(app, name: "running-delete-remainder")
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: remainder.count))
+        }
+        XCTAssertTrue(field.value as? String == "" || field.value as? String == "Send a follow-up")
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertFalse(send.exists)
+
+        field.typeText("Steer this reply")
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        tap(send)
+        XCTAssertTrue(app.staticTexts["Steer this reply"].waitForExistence(timeout: 5))
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertFalse(send.exists)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+        attachScreen(app, name: "steer-sent-stop")
+
+        tap(pause)
+        XCTAssertTrue(send.waitForExistence(timeout: 5))
+        XCTAssertFalse(pause.exists)
+    }
+
+    @MainActor
     func testSignInOpenSessionAllowAndSend() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -688,25 +753,32 @@ final class ShellFlowTests: XCTestCase {
 
         let field = app.descendants(matching: .any)["follow-up-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        tap(field)
-        field.typeText("look again")
-
         let pause = app.buttons["pause-session"]
         XCTAssertTrue(pause.waitForExistence(timeout: 5))
         XCTAssertEqual(pause.label, "Stop reply")
-        // Fixture supports sending while running; stopping remains independently available.
+        XCTAssertFalse(app.buttons["send-follow-up"].exists)
+        tap(field)
+        field.typeText("look again")
+
+        XCTAssertTrue(pause.waitForNonExistence(timeout: 5))
         let runningSend = app.buttons["send-follow-up"]
         XCTAssertTrue(runningSend.waitForExistence(timeout: 5))
         XCTAssertTrue(runningSend.isEnabled)
-        attachScreen(app, name: "running-send-and-stop")
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "look again".count))
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertFalse(runningSend.exists)
+        field.typeText("look again")
+        XCTAssertTrue(runningSend.waitForExistence(timeout: 5))
+        attachScreen(app, name: "running-steer-send")
         tap(runningSend)
         XCTAssertTrue(app.staticTexts["look again"].waitForExistence(timeout: 5))
-        XCTAssertTrue(pause.exists)
-        XCTAssertEqual(field.value as? String, "Send a follow-up")
-        tap(field)
-        field.typeText("continue after stopping")
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        XCTAssertFalse(runningSend.exists)
+        XCTAssertFalse(app.sheets.firstMatch.exists)
         tap(pause)
         XCTAssertTrue(app.buttons["send-follow-up"].waitForExistence(timeout: 5))
+        tap(field)
+        field.typeText("continue after stopping")
         XCTAssertEqual(field.value as? String, "continue after stopping")
 
         tap(app.buttons["send-follow-up"])

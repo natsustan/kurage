@@ -9,7 +9,9 @@ struct KurageApp: App {
             ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-subtasks")
                 ? SessionRecord.samplesWithSubtasks
                 : ProcessInfo.processInfo.arguments.contains("--fixture-questions")
-                    ? [SessionRecord.questionSample] + SessionRecord.samples : SessionRecord.samples,
+                    ? [SessionRecord.questionSample] + SessionRecord.samples
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-running-tab")
+                        ? SessionRecord.samplesWithRunningTab : SessionRecord.samples,
                 failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
@@ -25,7 +27,8 @@ struct KurageApp: App {
                 failSkillRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh"),
                 authorizationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-browser")
                     ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)
-                    : nil)
+                    : nil,
+                streamsConversationUpdates: true)
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

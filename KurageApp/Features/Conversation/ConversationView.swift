@@ -569,10 +569,7 @@ struct TurnRow: View {
             } else if turn.author == .user {
                 HStack(alignment: .bottom, spacing: 8) {
                     Spacer(minLength: 44)
-                    MessageDeliveryView(turnID: turn.id, delivery: turn.delivery,
-                        canRetry: canRetryMessage, canEdit: canEditMessage,
-                        onRetry: onRetryMessage, onEdit: onEditMessage)
-                        .fixedSize()
+                    messageDelivery(turn.delivery == .sending ? nil : turn.delivery)
                     VStack(alignment: .trailing, spacing: 8) {
                         blocks(turn.content, alignment: alignment)
                     }
@@ -590,29 +587,51 @@ struct TurnRow: View {
         .frame(maxWidth: .infinity, alignment: turn.author == .user ? .trailing : .leading)
     }
 
+    private func messageDelivery(_ delivery: MessageDelivery?) -> some View {
+        MessageDeliveryView(turnID: turn.id, delivery: delivery,
+            canRetry: canRetryMessage, canEdit: canEditMessage,
+            onRetry: onRetryMessage, onEdit: onEditMessage)
+            .fixedSize()
+    }
+
     private func blocks(_ content: [ConversationPart], alignment: HorizontalAlignment) -> some View {
-        ForEach(conversationBlocks(author: turn.author, content: content)) { block in
-            switch block {
-            case .file(_, let file):
-                Label {
-                    VStack(alignment: .leading) {
-                        Text(file.fileName).lineLimit(2)
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+        let contentBlocks = conversationBlocks(author: turn.author, content: content)
+        return ForEach(contentBlocks) { block in
+            blockContent(block, alignment: alignment)
+                .overlay(alignment: .bottomLeading) {
+                    if turn.author == .user, turn.delivery == .sending, block.id == contentBlocks.last?.id {
+                        // Anchor to the last bubble, even when a wider image sits above it.
+                        // Use the leading gutter without changing the bubble's proposal.
+                        messageDelivery(.sending)
+                            .padding(.trailing, 4)
+                            .frame(width: 0, alignment: .trailing)
                     }
-                } icon: { Image(systemName: "doc") }
-                .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
-            case .text(_, let text):
-                messageText(text)
-            case .images(_, let images):
-                ConversationImageGroup(
-                    images: images,
-                    alignment: alignment,
-                    loadImage: loadImage,
-                    onPreview: onPreviewImage
-                )
-            case .activity(let activity):
-                ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
-            }
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func blockContent(_ block: ConversationBlock, alignment: HorizontalAlignment) -> some View {
+        switch block {
+        case .file(_, let file):
+            Label {
+                VStack(alignment: .leading) {
+                    Text(file.fileName).lineLimit(2)
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(file.sizeBytes), countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                }
+            } icon: { Image(systemName: "doc") }
+            .padding(12).background(.quaternary, in: .rect(cornerRadius: 12))
+        case .text(_, let text):
+            messageText(text)
+        case .images(_, let images):
+            ConversationImageGroup(
+                images: images,
+                alignment: alignment,
+                loadImage: loadImage,
+                onPreview: onPreviewImage
+            )
+        case .activity(let activity):
+            ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
         }
     }
 
@@ -648,7 +667,7 @@ private struct MessageDeliveryView: View {
                     case .sending:
                         if showsProgress {
                             ProgressView().controlSize(.mini)
-                                .frame(width: 44, height: 44)
+                                .frame(height: 44)
                                 .accessibilityLabel("Sending")
                         }
                     case .unconfirmed:

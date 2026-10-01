@@ -156,6 +156,54 @@ struct SessionTabsTests {
         #expect(model.sessionTabs(rootID: rootID).filter { $0.isTabClosed != true }.map(\.id) == [rootID])
     }
 
+    @Test func listAggregatesTabActivityWithoutMakingMainBusyAndClearsAfterStop() async throws {
+        let root = SessionRecord(summary: SessionSummary(id: "root", title: "Main", agentName: "codex",
+            activity: .idle, preview: ""), turns: [], permission: nil)
+        let child = SessionRecord(summary: SessionSummary(id: "child", title: "Tab", agentName: "codex",
+            activity: .running, preview: "", parentSessionID: "root", isTabClosed: true), turns: [], permission: nil)
+        let client = FixtureLodyClient(startsSignedIn: true, records: [root, child])
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        #expect(model.sessions.map(\.id) == ["root"])
+        #expect(model.sessionSummary("root")?.isRunningInList == true)
+        #expect(model.sessionSummary("root")?.activity == .idle)
+        // Stop at the service, then observe Main: the tab projection must clear
+        // the list marker without waiting for a separate session-list refresh.
+        try await client.cancelSession(sessionID: "child", workspaceID: "ws-demo")
+        try await model.observeConversation(sessionID: "root") { _ in }
+        #expect(model.sessionSummary("root")?.isRunningInList == false)
+        #expect(model.sessionSummary("root")?.activity == .idle)
+        await model.refreshSessions()
+        #expect(model.sessionSummary("root")?.isRunningInList == false)
+    }
+
+    @Test func childObservationAlsoRefreshesMainActivity() async throws {
+        let root = SessionRecord(summary: SessionSummary(id: "root", title: "Main", agentName: "codex",
+            activity: .running, preview: ""), turns: [], permission: nil)
+        let child = SessionRecord(summary: SessionSummary(id: "child", title: "Tab", agentName: "codex",
+            activity: .idle, preview: "", parentSessionID: "root"), turns: [], permission: nil)
+        let client = FixtureLodyClient(startsSignedIn: true, records: [root, child])
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        #expect(model.sessionSummary("root")?.isRunningInList == true)
+        try await client.cancelSession(sessionID: "root", workspaceID: "ws-demo")
+        try await model.observeConversation(sessionID: "child", rootSessionID: "root") { _ in }
+        #expect(model.sessionSummary("root")?.activity == .idle)
+        #expect(model.sessionSummary("root")?.isRunningInList == false)
+        #expect(model.sessionSummary("child")?.activity == .idle)
+    }
+
+    @Test func oldSessionCacheWithoutTabActivityStillDecodes() throws {
+        let json = #"{"id":"root","title":"Main","agentName":"codex","activity":"idle","preview":""}"#
+        var summary = try JSONDecoder().decode(SessionSummary.self, from: Data(json.utf8))
+        #expect(summary.hasRunningTabs == nil)
+        #expect(!summary.isRunningInList)
+        summary.hasRunningTabs = true
+        let restored = try JSONDecoder().decode(SessionSummary.self, from: JSONEncoder().encode(summary))
+        #expect(restored.isRunningInList)
+        #expect(restored.activity == .idle)
+    }
+
     @Test func tabMetadataSurvivesNativePatchReconstruction() throws {
         let json = #"{"sessionID":"child","order":[],"changed":[],"activity":"idle","syncState":"live","sessionTabs":[{"id":"root","title":"Main","agentName":"codex","activity":"idle","preview":""},{"id":"child","title":"Tab","agentName":"codex","activity":"running","preview":"","parentSessionID":"root","isTabClosed":true,"lastMessageAt":10}]}"#
         let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))

@@ -1131,7 +1131,7 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
-    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select"])
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
@@ -1155,6 +1155,9 @@ struct StreamFetchHandlerTests {
                 _ = try await bridge.newSessionOptions(templateSessionID: "template", agentConfigID: nil,
                                                        workspaceID: "workspace", access: access, isTab: operation == "tab-options",
                                                        refresh: operation == "refresh-options")
+            } else if operation == "send" {
+                _ = try await bridge.sendText("Guidance", turnID: "user-turn", userID: "user", runConfig: nil,
+                    sessionID: "chat", workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,

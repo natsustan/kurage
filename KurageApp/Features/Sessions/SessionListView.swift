@@ -756,14 +756,14 @@ private final class SessionBrowserCell: UITableViewCell {
                 snippetLabel.isHidden = false
             }
             leadingSlot.isHidden = false
-            unreadDot.isHidden = !session.isUnread || session.activity == .running
-            if session.activity == .running {
+            unreadDot.isHidden = !session.isUnread || session.isRunningInList
+            if session.isRunningInList {
                 spinner.startAnimating()
             }
             accessibilityIdentifier = "session-\(session.id)"
             contentView.alpha = dimmed ? 0.45 : 1
             accessibilityLabel = snippet.map { "\(session.title). \($0)" } ?? session.title
-            accessibilityValue = "\(session.activity == .running ? "Running" : "Idle"), \(session.isUnread ? "Unread" : "Read")"
+            accessibilityValue = "\(session.isRunningInList ? "Running" : "Idle"), \(session.isUnread ? "Unread" : "Read")"
         }
     }
 }

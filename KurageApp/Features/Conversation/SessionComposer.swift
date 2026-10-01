@@ -184,8 +184,13 @@ struct SessionComposer: View {
         )
     }
 
+    private var hasInput: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !attachments.isEmpty || isLoadingAttachments
+    }
+
     private var showsSend: Bool {
-        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning)
+        supportsTextSending && (!isSessionRunning || supportsTextSendingWhileRunning && (hasInput || isSending))
     }
 
     private var canSend: Bool {
@@ -467,7 +472,7 @@ struct SessionComposer: View {
                 .accessibilityIdentifier("run-config-menu")
 
             }
-            if isSessionRunning && supportsSessionCancellation {
+            if isSessionRunning && supportsSessionCancellation && !showsSend {
                 Button(action: onCancel) {
                     composerIcon("stop.fill", enabled: !isSending && !isCancelling)
                 }
@@ -490,11 +495,12 @@ struct SessionComposer: View {
 
     private func composerIcon(_ name: String, enabled: Bool) -> some View {
         Image(systemName: name)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(enabled ? Color.white : Color.secondary)
-            .frame(width: 36, height: 36)
-            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-            .frame(width: 44, height: 44)
+            .frame(width: 40, height: 30)
+            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Capsule())
+            .frame(width: 48, height: 44)
+            .contentShape(Rectangle())
     }
 }
 

@@ -26,6 +26,10 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var lastReadAt: Double? = nil
     /// List sorting fallback from the bridge, including creation time when no message exists.
     var lastActivityAt: Double? = nil
+    /// List-only aggregation; `activity` remains the state of this exact tab.
+    var hasRunningTabs: Bool? = nil
+
+    var isRunningInList: Bool { activity == .running || hasRunningTabs == true }
 
     var isUnread: Bool {
         guard let lastMessageAt, lastMessageAt.isFinite else { return false }

@@ -583,6 +583,15 @@ final class AppModel {
                 if !projectedTabs.isEmpty, tabsByWorkspace[workspaceID]?[rootID] != projectedTabs {
                     tabsByWorkspace[workspaceID, default: [:]][rootID] = projectedTabs
                 }
+                if let main = projectedTabs.first, let index = sessions.firstIndex(where: { $0.id == rootID }) {
+                    let hasRunningTabs = projectedTabs.contains { $0.id != rootID && $0.activity == .running }
+                    if sessions[index].activity != main.activity || sessions[index].hasRunningTabs != hasRunningTabs {
+                        sessions[index].activity = main.activity
+                        sessions[index].hasRunningTabs = hasRunningTabs
+                        sessionsByWorkspace[workspaceID] = sessions
+                        persistSession()
+                    }
+                }
                 for tab in projectedTabs where outgoingStartsByWorkspace[workspaceID]?[tab.id]?.isConfirmed == true &&
                     outgoingByWorkspace[workspaceID]?[tab.id] == nil {
                     outgoingStartsByWorkspace[workspaceID]?[tab.id] = nil

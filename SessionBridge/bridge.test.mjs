@@ -9,6 +9,8 @@ import { readSyncedConversation, syncedConversationVersion } from './conversatio
 import { selectMentionSkills } from './mention-skills.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 import { newSessionOptions } from './session-start.mjs';
+import { runningSessionTabParents } from './session-tabs.mjs';
+import { projectSessionActivity } from './session-activity.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -62,7 +64,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     createNativeFetch: extras.createNativeFetch ?? (() => ({ fetch: async () => {}, receive: async () => {} })),
     createSessionOptionsCache: () => createSessionOptionsCache(extras.now),
     projectConversation: () => ({}),
-    projectSessionActivity: () => 'idle',
+    projectSessionActivity,
+    runningSessionTabParents,
     observeConversation: extras.observeConversation ?? (async () => {}),
     readSyncedConversation,
     syncedConversationVersion: extras.syncedConversationVersion ?? syncedConversationVersion,
@@ -79,6 +82,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     restoreArchivedSession: extras.restoreArchivedSession ?? restoreArchivedSession,
     deleteArchivedSession: extras.deleteArchivedSession ?? deleteArchivedSession,
     mentionSkills: extras.mentionSkills,
+    sendText: extras.sendText,
+    requestMachine: extras.requestMachine,
     fetch: async () => {},
     AbortController,
     setTimeout,
@@ -1091,4 +1096,59 @@ test('cancelling while scoped auth is pending prevents native requests from star
   await result;
   assert.equal(requests, 0);
   assert.equal(repos[0].destroyed, true);
+});
+
+test('session list refresh rolls up tab activity while preserving the main activity', async () => {
+  const rows = [
+    { docId: 'session-root', meta: { status: { type: 'idle' } } },
+    { docId: 'session-child', meta: { parentSessionId: 'root', status: { type: 'running' } } },
+    { docId: 'session-other', meta: { status: { type: 'idle' } } },
+  ];
+  const { window } = makeBridge(undefined, rows);
+  const first = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai'));
+  assert.equal(first.sessions.length, 2);
+  assert.equal(first.sessions.find(session => session.id === 'root').activity, 'idle');
+  assert.equal(first.sessions.find(session => session.id === 'root').hasRunningTabs, true);
+  assert.equal(first.sessions.find(session => session.id === 'other').hasRunningTabs, false);
+  rows[1].meta.status = { type: 'idle' };
+  const next = JSON.parse(await window.kurageSessions('workspace', 'https://gateway.lody.ai'));
+  assert.equal(next.sessions.find(session => session.id === 'root').hasRunningTabs, false);
+});
+
+test('native send routes steer RPC with workspace auth and retains its target across replicas', async () => {
+  const states = [];
+  const requests = [];
+  const auth = [];
+  const { window, repos } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    postMessage: async command => { auth.push(command); return { token: 'test-token' }; },
+    requestMachine: async (access, workspaceID, machineID, method, params, signal) => {
+      assert.equal(await access.auth({ reason: 'unauthorized' }), 'test-token');
+      requests.push({ workspaceID, machineID, method, params, signal });
+      return { applied: true };
+    },
+    sendText: async (_repo, sessionID, turnID, userID, text, timestamp, config, attachments, steering) => {
+      assert.equal(sessionID, 'chat');
+      assert.equal(turnID, 'guide');
+      assert.equal(text, 'Guidance');
+      assert.equal(attachments.length, 1);
+      states.push(steering.state);
+      steering.state.expectedTurnID ??= 'original-assistant';
+      await steering.request('machine', { sessionId: sessionID, userTurnId: turnID,
+        expectedTurnId: steering.state.expectedTurnID });
+      return 'sent';
+    },
+  });
+  const send = (workspaceID, operationID) => window.kurageSendText(workspaceID, 'chat',
+    'https://gateway.example', 'guide', 'user', 'Guidance', 'timestamp', null, [{ type: 'image' }], operationID);
+  assert.equal(await send('workspace', 'first'), 'sent');
+  assert.equal(await send('workspace', 'retry'), 'sent');
+  assert.equal(await send('other-workspace', 'other'), 'sent');
+  assert.equal(states[0], states[1]);
+  assert.notEqual(states[0], states[2]);
+  assert.deepEqual(requests.map(request => request.workspaceID), ['workspace', 'workspace', 'other-workspace']);
+  assert(requests.every(request => request.method === 'session/steer' && request.signal.aborted));
+  assert.deepEqual(auth.map(command => [command.workspaceID, command.operationID, command.refresh]), [
+    ['workspace', 'first', true], ['workspace', 'retry', true], ['other-workspace', 'other', true],
+  ]);
+  assert(repos.every(repo => repo.destroyed));
 });

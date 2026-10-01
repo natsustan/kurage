@@ -31,3 +31,15 @@ export function projectSessionTabs(rows, sessionID) {
       lastReadAt: Number.isFinite(row.meta.lastReadAt) ? row.meta.lastReadAt : null,
     }));
 }
+
+// Closed tabs can still be working. Only live direct tabs contribute to the
+// root row; side panels, nested children and removed documents do not.
+export function runningSessionTabParents(rows) {
+  const sessions = rows.filter(row => row.docId?.startsWith('session-') &&
+    !row.docId.startsWith('session-comment-') && !row.deleted && !row.meta?.isArchived);
+  const rootIDs = new Set(sessions.filter(row => !row.meta?.parentSessionId)
+    .map(row => row.docId.slice('session-'.length)));
+  return new Set(sessions.filter(row => rootIDs.has(row.meta?.parentSessionId) &&
+    row.meta.childSessionPlacement !== 'side-panel' &&
+    projectSessionActivity(row.meta.status) === 'running').map(row => row.meta.parentSessionId));
+}

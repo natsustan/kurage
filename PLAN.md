@@ -1,5 +1,39 @@
 # Kurage 会话功能
 
+## 运行中输入直接 steer（2026-10-01）
+
+- 运行中的空草稿显示暂停按钮；输入有效文字、添加附件或正在导入附件时切为 Send，清空后恢复暂停。发送期间保留禁用的 Sending 按钮，发送确认且草稿为空后回到暂停。直接提交 steer，不显示 queue 选择或确认。
+- Live 发送先同步状态为 `pending_apply` 的用户 turn，再通过工作区／机器隔离的 `session/steer` RPC 提交给原 assistant turn；空闲会话继续使用既有派发路径。机器不支持 steer 或目标结束时，按 Lody 的已确认恢复协议处理为后续消息，无需用户确认；投递结果不明时保留原用户 ID、目标 ID、时间戳和配置，避免重投或覆盖另一发送者的派发指针。目标 ID 与既有重试 ID 一样仅保存在进程内。
+- RPC 使用独立响应流并匹配请求 ID，支持令牌刷新、5 秒超时和原生取消；响应读取结束后释放网络请求。Fixture App 开启持续状态推送，使发送后与暂停后的按钮依据最新会话状态更新；模型测试默认仍可使用单次快照。
+- 本轮 frozen lockfile 安装、268 项 JS 测试与 bundle 重建通过；72 项定向 Swift 测试通过，fixture 取消检查调整后又通过 27 项 fixture 测试。Simulator 构建、浅色完整交互用例和深色最大辅助字号专用用例均通过（UI 各 1 项），已检查输入、发送后与停止后的截图。深色综合用例未通过，其首条消息断言依赖可见区域；专用用例在 XCTest 点击未聚焦时改点输入框中心，并按实际残留文字完成清空。真实账号的 steer 应用、机器自动恢复、弱网／后台取消及真机尚未实测。
+- 协议参考：本机 Lody `packages/shared/src/message.ts`、`schema.ts`、`packages/loro-streams-rpc/src/rpc.ts`、`packages/components/src/hooks/use-session-actions.ts` 的 `requestSessionSteer`、`apps/cli/src/session/session-execution-service.ts` 的 `steerSession`／`requeueUndeliveredSteer`。
+
+
+## 子 tab 运行状态在列表中汇总（2026-10-01）
+
+- 会话列表保留 Main 自身的 `activity`，新增只供列表显示的 `hasRunningTabs`；任意直接 tab 运行时显示 spinner，VoiceOver 也读出 Running。已关闭但未归档的运行 tab 仍计入；侧边面板、嵌套子会话、归档、删除及评论文档不计入。
+- 列表刷新直接从同工作区 metadata 汇总，首次进入列表无需先打开详情。详情收到权威 tab 投影时更新根会话自身状态与汇总，并同步列表缓存；运行结束后恢复空闲／未读标记。每个 tab 的发送、停止与配置继续使用自身状态。旧缓存缺少新字段时仍可读取。
+- 协议／表现参考：本机 Lody `components/src/components/sessions/session-list-rows.ts` 的 `buildChildSessionsByParent` / `getEffectiveSessionActivitySummary`；Kurage 仍沿用已有 metadata 状态投影，未增加 Lody 新版 presence 订阅协议。
+- 本轮 frozen lockfile 安装、253 项 JS 测试与 bundle 重建通过；Simulator 构建、16 项定向 Swift 测试及 1 项 fixture UI 回归通过，覆盖子 tab 运行时根行标记、Main 保持空闲、停止后根行恢复 Idle、观察子 tab 时刷新 Main 状态及旧缓存兼容。UI 首轮额外要求停止按钮消失，但 fixture 观察仅返回一次快照；移除该不属于列表行为的断言后复跑通过。原有完整 tab 创建／切换／关闭／重开用例因多次等待动画结束而主动中止，不计通过。真实账号跨端 tab 的连续状态更新、真机、弱网和后台恢复尚未实测。
+
+## 发送中气泡宽度与指示器间距（2026-10-01）
+
+- 发送中的 loading 指示器改为覆盖在消息左侧留白，不再参与气泡横向尺寸计算，避免 loading 出现或结束时改变气泡宽度与文字换行。
+- 指示器保留随字号变化的固有宽度，与气泡间距为 4 pt；失败／待确认消息继续使用原有 Retry／Edit 操作布局。
+- 现有即时发送 UI 用例改用长消息，检查发送中与确认后气泡宽高一致，以及 loading 与气泡间距。
+- 本轮最终布局 Simulator 构建成功；长消息发送用例在浅色、深色和深色最大辅助字号均通过，发送前后宽高一致且 loading 位于气泡外侧。默认字号截图已检查；最大辅助字号时 fixture 权限卡片占满可见区域，气泡位置由 UI 层级几何断言验证。拒绝消息编辑和待确认重试两项 fixture 用例也通过。未验证真机、真实账号或图片加文字的发送场景。
+- 默认字号的最终补跑复用本轮成功构建（`test-without-building`）；后续整体重建曾被同时进行的其他改动阻断，`FixtureLodyClientTests` 引用了不存在的 `Conversation.isRunning`，未改动这些测试。
+
+## 深色模式消息气泡对比度（2026-10-01）
+
+- 我方文字气泡背景由 6% 透明度的 label 色改为不透明的系统 `systemGray5`，随浅色／深色外观自动切换，提升黑色会话背景上的可辨识度。
+- 本轮 Simulator 构建通过；现有多行 Unicode 消息复制 UI 用例在浅色／深色模式各通过一次，截图确认气泡与页面背景清楚区分。使用 fixture，未验证真机或真实账号。
+
+## 发送与暂停按钮胶囊形试用（2026-10-01）
+
+- 已有会话与 New Session／New Tab 共用的发送按钮改为胶囊形，按试用反馈从 46×36 pt 缩至 40×30 pt，箭头由 17 pt 缩至 15 pt；暂停按钮同步使用同一尺寸与形状。保持现有启用／禁用颜色，点击区域为 48×44 pt。
+- 缩小并统一后的本轮 Simulator 构建通过；浅色默认字号截图确认发送／暂停按钮尺寸一致，完整显示在键盘上方。fixture 场景实际完成发送、暂停与再次发送；整项 UI 测试未通过，唯一失败为空草稿的无障碍 value 与预期占位文案不一致。未重跑深色／大字号场景，未验证真机。
+
 ## 首条消息即时创建与连续会话（2026-10-01）
 
 - New Session／New Tab 点击发送时先预留 session ID 和 turn ID，立即显示文字、图片和文件气泡并清空首条草稿，后台执行上传和创建。首条消息沿用现有发送状态和原地 Retry／Edit，下一条草稿可继续编辑，确认与同步回传不会覆盖它。
@@ -133,7 +167,7 @@
 - JS 合并 80ms 内的变化并按 turn ID 发送正文补丁；Swift 在桥内先还原完整快照，再通过仅保留最新值的异步流交给界面，避免丢弃中间补丁导致正文缺失。
 - 页面离开或进入后台释放订阅，回到前台重新同步；工作区和账号切换丢弃迟到更新。底部阅读时跟随同一条回复增长，上翻阅读时停止自动跟随。
 - 真实客户端现可向空闲会话发送普通文本：独立的短生命周期 Streams 副本先确认正文同步，再写入 `latestUserMsgId` 并确认 metadata 同步。写前重新同步并检查派发指针，写后确认指针仍指向本次 turn；现有 LoroRepo metadata 写入没有 CAS，跨客户端同时写入时仍不能保证绝对互斥。未确认的发送保留 turn ID；改发文本前须先重试旧消息，防止留下未派发的历史记录。旧 turn 已被较新的派发取代时会废弃旧重试 ID。发送成功后会话列表立即更新最近排序，并从服务端刷新。普通工具权限响应仍只在 fixture 中可用；问答请求已单独接入真实写入链路（见问答支持）。
-- 运行中的会话在输入区显示停止按钮，保留未发送草稿；具备 `supportsTextSendingWhileRunning` 的客户端（目前仅 fixture）同时保留发送按钮，真实客户端仍只显示停止操作；点按后从已同步的原始 history 找出最新未完成的 assistant turn，将其 ID 写入 `lastCanceledTurn` 并确认 metadata 同步。若 turn 尚未出现或已经结束，会提示重试。真实机器的停止响应仍待实测。
+- 运行中的会话在输入区以空草稿显示停止按钮，有有效文字或附件时切为 Send，清空后恢复停止；live 与 fixture 均支持，live 默认按 `session/steer` 发送，不弹出 queue 确认。停止仍从已同步的原始 history 找出最新未完成的 assistant turn，将其 ID 写入 `lastCanceledTurn` 并确认 metadata 同步；若 turn 尚未出现或已经结束，会提示重试。真实机器的 steer 与停止响应仍待实测。
 - 会话内 model/reasoning：输入区第一行输入文字，第二行放置操作按钮；带刻度的仪表盘图标随 reasoning 档位变化。点击后打开无箭头浮层，model/reasoning 标签位于玻璃刻度胶囊外；离散 reasoning 刻度支持点选、拖动及 VoiceOver 调整，点击模型进入 Advanced 表单。浮层打开时使用仅内存中的页面快照做渐变模糊，关闭即释放，系统键盘保留清晰显示。新建会话的 provider/model/reasoning 共用此入口，选项仍遵循代理能力；Fast 暂不可用，尚未接入真实协议。观察器从机器 Flock 文档 `${workspace}:mf:${machineId}` 的 `['acpCapability', agentConfigId]` 读取能力（cliType/agentType 须与会话一致），当前值依次取与最新用户 turn 对应的 `acpRuntimeConfig`、该 turn 的 `inputConfig`、能力的 `currentValue`。能力含 reasoning 选项（`reasoning_effort` 或 `thought_level` 类别）时只允许改 reasoning（若有 `modelReasoningEfforts` 则按当前模型过滤），以免中途换模型破坏上下文缓存；否则允许改 model（builtin 写 `modelId`，registry/custom 写对应 config option）。无能力记录时只读显示。界面和新 turn 发送共用与最新用户 turn 匹配的运行时配置基线，运行时 configOptionValues 作为完整快照替换旧值。选择仅作用于下一条新 turn，页面离开即丢弃；未确认发送的重试沿用首次发送时的选择；发送层返回实际沿用的选择，界面仅清除已发送的选择，重试时新选的配置保留给下一轮，包括明确选回原基线的值；普通发送与“Retry earlier message”入口均更新实际配置基线。运行中可预选。尚未用真实账号验证 CLI 对切换值的实际应用。
 - 新建会话：列表底部搜索框右侧提供 New chat，本地项目行右侧也保留新建按钮（未分组与 GitHub 项目不显示），进入独立页面后以第一条消息创建会话。机器与默认 Agent 取自本地根会话模板；项目可切换为同机器的已登记项目，或浏览机器目录并选择其它本地文件夹，项目引用只保留 `localProjectId` / `githubRepoFullName`，不带 worktree 和分支，即直接在项目目录工作。第一条 turn 继承同工作区、同机器和同 Agent 配置最近活动的未归档根会话（跨项目）最新用户 turn 的有效配置中的 `modeId`、`modelId`、`configOptionValues`、`mcpServerIds`（不继承 Agent Role 与 `resume`），model 与 reasoning 都可在页面上选择：选项来自机器 Flock 的 `acpCapability`，reasoning 按所选模型的 `modelReasoningEfforts` 过滤，切到不支持当前 reasoning 的模型时不写 reasoning，由 Agent 默认值决定；桥在写入时重新投影并拒绝未提供的选项。写入使用独立短生命周期副本，只有它开启 `createStreamIfMissing` 以创建新 Session 文档流（对应 Lody 的 `ensureDocStream`）：先同步第一条 turn，再一次写入 metadata（`status: idle`、`title` 取前 50 字且 `titleSource: 'draft'`、`latestUserMsgId`）并确认同步，因此机器看到会话时正文已就绪。未确认时按项目在进程内保留会话 ID 与 turn ID，重试沿用首次的选择；改了文本须先重发原文。成功后替换为会话详情页，列表乐观插入后在后台刷新。Lody 桌面端创建会话前会在客户端检查免费会话额度，Kurage 没有这一步，需在 issue 中跟进。真实账号的新建、机器派发与首轮 model/reasoning 生效尚未验证。
 - 新建会话配置在页面内预取并缓存各 provider 的选项，共享同一 provider 的在途请求；已缓存 provider 切换及 model/reasoning 选择立即更新本地状态，往返切换保留各自选择。尚未加载的 provider 立即显示新名称和加载状态，不展示旧模型，不允许发送；迟到结果不会覆盖新选择，页面离开或进入后台取消请求。缓存随页面释放，写入时仍由桥重新校验能力。真实账号首次加载耗时尚未测量。
@@ -183,7 +217,7 @@
 
 1. 发送功能阶段已记录通过 19 项 JS 测试与 36 项 iOS 模拟器 Swift 测试（参数化共 38 次运行），包括正文同步后派发、同 ID 重试、写请求体代理、分块 UTF-8 和原生 WebKit POST。会话发送与长会话 UI 用例已在 iOS 27 模拟器通过；截图确认第二次打开键盘时最新消息仍贴近输入区，测试也确认上滑后打开键盘不会跳回底部。
 2. 真实账号的只读会话已由用户实测，反馈可用；持续输出、断网恢复和后台返回各场景的结果尚未逐项记录。当前 JS 在正文变化时仍按节流周期投影完整 history；超长会话的窗口化读取是后续性能工作。
-3. 文本发送已按 Lody 桌面端的用户 turn 与 `latestUserMsgId` 协议接入。用户已用真机上的 Kurage 向真实会话发送消息，且消息抵达当前会话，验证了一次正常网络下的发送与派发；网络中断时的确认、重启后的重试仍未验证。运行中 steer、排队消息和权限响应有各自协议，本阶段只允许空闲会话直接派发。问答请求现已按匹配 turn ID 和 `requestId` 写入对应 `tool_call`；普通工具权限审批仍待接入。
+3. 文本发送已按 Lody 桌面端的用户 turn 与 `latestUserMsgId` 协议接入。用户已用真机上的 Kurage 向真实会话发送消息，且消息抵达当前会话，验证了一次正常网络下的空闲发送与派发；网络中断时的确认、重启后的重试仍未验证。运行中输入现按独立 `session/steer` 协议提交，真实账号尚未实测；未接入客户端 queue 管理。问答请求已按匹配 turn ID 和 `requestId` 写入对应 `tool_call`；普通工具权限审批仍待接入。
 
 4. 本轮 UIKit 键盘布局改动通过 iOS 27 模拟器的 2 项布局回归测试与 3 项聊天 UI 测试，覆盖正文增长/删除、阅读消息锚点保持、发送恢复贴底、键盘反复开合和五行输入区完整避让。同一多行 UI 用例也在深色模式与系统 XXXL 字号下通过；截图已确认输入区整体随多行文字增高，发送后恢复单行，文字和发送按钮未被键盘遮挡。真机动画手感与真实账号持续输出尚未在本轮验证。
 
