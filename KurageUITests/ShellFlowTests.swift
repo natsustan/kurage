@@ -521,6 +521,35 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingHistoryRejectionRequiresEditingAndPreservesTheRejectedBubble() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-send-not-delivered"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Recover this guidance")
+        tap(app.buttons["send-follow-up"])
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "edit-message-")).firstMatch
+        let retry = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "retry-message-")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        XCTAssertTrue(edit.isEnabled)
+        XCTAssertTrue(retry.exists)
+        XCTAssertFalse(retry.isEnabled)
+        let rejectedEditID = edit.identifier
+        attachScreen(app, name: "Missing-history rejection requires a new message")
+        tap(edit)
+        XCTAssertEqual(field.value as? String, "Recover this guidance")
+        XCTAssertTrue(app.buttons[rejectedEditID].waitForNonExistence(timeout: 5))
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Recover this guidance"))
+            .firstMatch.waitForExistence(timeout: 5))
+        attachScreen(app, name: "Rejected guidance remains visible after redelivery")
+    }
+
+    @MainActor
     func testRejectedMessageCanRestoreItsOriginalMentionDraftForEditing() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-send-rejected"]
@@ -710,7 +739,8 @@ final class ShellFlowTests: XCTestCase {
         tap(byProject)
         XCTAssertTrue(projectHeading.exists)
 
-        tap(more)
+        let account = app.buttons["account-menu"]
+        tap(account)
         XCTAssertTrue(app.buttons["Sign out"].waitForExistence(timeout: 2))
     }
 

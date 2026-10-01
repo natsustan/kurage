@@ -12,9 +12,9 @@ final class SignInFlowTests: XCTestCase {
         attachScreen(app, name: "welcome")
         getStarted.tap()
 
-        let more = app.buttons["more-options"]
-        XCTAssertTrue(more.waitForExistence(timeout: 8))
-        more.tap()
+        let account = app.buttons["account-menu"]
+        XCTAssertTrue(account.waitForExistence(timeout: 8))
+        account.tap()
         app.buttons["Sign out"].tap()
         XCTAssertTrue(getStarted.waitForExistence(timeout: 8))
         XCTAssertEqual(getStarted.label, "Get Started")
@@ -22,7 +22,7 @@ final class SignInFlowTests: XCTestCase {
         attachScreen(app, name: "welcome-after-sign-out")
 
         getStarted.tap()
-        XCTAssertTrue(more.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 8))
     }
 
     @MainActor

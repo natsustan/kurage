@@ -6,6 +6,7 @@ enum MessageDelivery: Equatable, Sendable {
     case unconfirmed
     case failed(String)
     case superseded
+    case notDelivered
     case sent
 }
 
@@ -34,6 +35,7 @@ struct OutgoingMessage: Identifiable, Equatable {
     var previewScopeID: UUID? = nil
     var delivery: MessageDelivery = .sending
     var canRetry = true
+    var isDeliveryRejected = false
 
     var turn: ConversationTurn {
         var parts = attachments.map { attachment -> ConversationPart in

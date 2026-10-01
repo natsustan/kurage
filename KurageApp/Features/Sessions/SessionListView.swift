@@ -115,25 +115,37 @@ struct SessionListView: View {
                         .accessibilityIdentifier("pending-session-starts")
                     }
                 }
-                if model.workspaces.count > 1 {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Menu {
-                            ForEach(model.workspaces) { workspace in
-                                Button {
-                                    Task { await model.selectWorkspace(workspace.id) }
-                                } label: {
-                                    if workspace.id == model.selectedWorkspaceID {
-                                        Label(workspace.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(workspace.name)
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        if let email = model.account?.email {
+                            Label(email, systemImage: "person.crop.circle")
+                            Divider()
+                        }
+                        if model.workspaces.count > 1 {
+                            Menu {
+                                ForEach(model.workspaces) { workspace in
+                                    Button {
+                                        Task { await model.selectWorkspace(workspace.id) }
+                                    } label: {
+                                        if workspace.id == model.selectedWorkspaceID {
+                                            Label(workspace.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(workspace.name)
+                                        }
                                     }
                                 }
+                            } label: {
+                                Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
                             }
-                        } label: {
-                            Label("Workspace", systemImage: "square.stack")
                         }
-                        .accessibilityIdentifier("workspace-picker")
+                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                            model.signOut()
+                        }
+                        .accessibilityIdentifier("sign-out-button")
+                    } label: {
+                        AccountAvatar(account: model.account)
                     }
+                    .accessibilityIdentifier("account-menu")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
@@ -147,11 +159,6 @@ struct SessionListView: View {
                             showArchivedSessions = true
                         }
                         .accessibilityIdentifier("archived-sessions")
-                        Divider()
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                            model.signOut()
-                        }
-                        .accessibilityIdentifier("sign-out-button")
                     } label: {
                         Image(systemName: "ellipsis")
                             .accessibilityLabel("More options")
@@ -181,6 +188,45 @@ struct SessionListView: View {
             templateSessionID: template.id,
             workspaceGeneration: model.workspaceGeneration
         )))
+    }
+}
+
+private struct AccountAvatar: View {
+    let account: Account?
+
+    private var initial: String {
+        let name = account?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = account?.email.split(separator: "@", maxSplits: 1).first.map(String.init)
+        return String((name?.isEmpty == false ? name : fallback)?.prefix(1) ?? "?").uppercased()
+    }
+
+    var body: some View {
+        Group {
+            if let image = account?.image, let url = URL(string: image) {
+                AsyncImage(url: url) { phase in
+                    if let loadedImage = phase.image {
+                        loadedImage
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        fallback
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(width: 34, height: 34)
+        .background(.quaternary, in: Circle())
+        .clipShape(Circle())
+        .accessibilityLabel("Account")
+    }
+
+    private var fallback: some View {
+        Text(initial)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

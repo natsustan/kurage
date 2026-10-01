@@ -1218,7 +1218,7 @@ test('native send routes steer RPC with workspace auth and retains its target ac
   assert(repos.every(repo => repo.destroyed));
 });
 
-for (const result of ['sent', 'superseded']) {
+for (const result of ['sent', 'superseded', 'rejected']) {
   test(`native send releases a steer retry target after ${result}`, async () => {
     const states = [];
     const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {

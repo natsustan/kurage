@@ -57,7 +57,7 @@ export async function readSyncedConversation({ repo, workspaceID, sessionID, doc
   signal.throwIfAborted();
   const syncedMetadata = await syncStableHistory(repo, `session-${sessionID}`, metadata, signal);
   const timestamp = messageTimestamp(syncedMetadata);
-  const next = projectConversation(sessionID, doc.getList('history').toJSON());
+  const next = projectConversation(sessionID, doc.getList('history').toJSON(), syncedMetadata?.meta);
   if (Number.isFinite(timestamp)) {
     rememberMarker(repo, workspaceID, sessionID, documentVersion(doc), timestamp);
   }
@@ -72,6 +72,8 @@ export function conversationPatch(previous, next) {
     changed: next.turns.filter(turn => {
       const before = old.get(turn.id);
       return !before || before.text !== turn.text || before.author !== turn.author ||
+        before.isDeliveryConfirmed !== turn.isDeliveryConfirmed ||
+        before.isDeliveryRejected !== turn.isDeliveryRejected ||
         JSON.stringify(before.parts ?? []) !== JSON.stringify(turn.parts ?? []) ||
         JSON.stringify(before.work ?? null) !== JSON.stringify(turn.work ?? null) ||
         JSON.stringify(before.timing ?? null) !== JSON.stringify(turn.timing ?? null);
@@ -176,7 +178,7 @@ export async function observeConversation({ repo, workspaceID, sessionID, rootSe
         let next = previous;
         if (historyChanged || !previous) {
           const entries = handle.doc.getList('history').toJSON();
-          next = projectConversation(sessionID, entries);
+          next = projectConversation(sessionID, entries, meta.meta);
           latestTurn = latestUserTurn(entries);
         }
         const projectedVersion = documentVersion(handle.doc);
@@ -249,6 +251,10 @@ export async function observeConversation({ repo, workspaceID, sessionID, rootSe
     const watch = repo.watch(event => {
       if (event.kind === 'doc-metadata') {
         const fields = Object.keys(event.patch ?? {});
+        if (event.docId === docID && (fields.length === 0 || fields.some(field =>
+          ['lastHandledUserMsgId', 'lastMissingHistoryUserMsgId', 'steerTurnStatuses'].includes(field)))) {
+          historyChanged = true;
+        }
         if (!tabScope.has(event.docId)) {
           if (!MEMBERSHIP_FIELDS.some(field => fields.includes(field))) return;
         } else if (fields.length > 0 && !fields.some(field => TAB_FIELDS.includes(field))) {

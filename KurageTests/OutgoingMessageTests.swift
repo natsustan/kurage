@@ -4,6 +4,118 @@ import Testing
 
 @MainActor
 struct OutgoingMessageTests {
+    @Test func missingHistoryRejectionDisablesOldIDRetryAndEditingCreatesANewTurn() async throws {
+        let client = ControlledMessageClient()
+        client.unconfirmed = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        let id = try #require(model.outgoingMessage(sessionID: "chat")?.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.deliverOutgoingMessage(sessionID: "chat")
+        }
+        client.rejectHistory(workspaceID: "b")
+        _ = try await model.conversation(sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat")?.delivery == .unconfirmed)
+        client.rejectHistory(workspaceID: "a")
+        let rejected = try await model.conversation(sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat")?.isDeliveryRejected == true)
+        #expect(!model.retryOutgoingMessage(sessionID: "chat"))
+        #expect(model.pendingTextSend(sessionID: "chat") == nil)
+        #expect(rejected.turns.first?.delivery == .notDelivered)
+        let decoded = try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(rejected))
+        #expect(decoded.turns.first?.isDeliveryRejected == true)
+        let draft = try #require(model.takeFailedOutgoingMessage(sessionID: "chat"))
+        #expect(draft.composerText == "Guide")
+        client.unconfirmed = false
+        try model.stageOutgoingMessage(draft.text, composerText: draft.composerText, mentions: draft.mentions,
+            attachments: draft.attachments, runConfig: nil, sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat")?.id != id)
+        try await model.deliverOutgoingMessage(sessionID: "chat")
+        let history = try await model.conversation(sessionID: "chat")
+        #expect(history.turns.count == 2)
+        #expect(history.turns.first?.delivery == .notDelivered)
+    }
+
+    @Test(arguments: [false, true])
+    func synchronizedRejectionWinsOverAnInFlightRPCResult(timesOut: Bool) async throws {
+        let client = ControlledMessageClient()
+        client.unconfirmed = timesOut
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        client.afterAuthored = {
+            client.rejectHistory(workspaceID: "a")
+            _ = try? await model.conversation(sessionID: "chat")
+        }
+        await #expect(throws: LodyClientError.sendNotDelivered) {
+            try await model.deliverOutgoingMessage(sessionID: "chat")
+        }
+        #expect(model.outgoingMessage(sessionID: "chat")?.isDeliveryRejected == true)
+        #expect(model.pendingTextSend(sessionID: "chat") == nil)
+        #expect(!model.retryOutgoingMessage(sessionID: "chat"))
+    }
+
+    @Test func machineConfirmationBeforeRPCUnwindsWinsOverTheTimeout() async throws {
+        let client = ControlledMessageClient()
+        client.unconfirmed = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        client.afterAuthored = {
+            client.confirmHistory(workspaceID: "a")
+            _ = try? await model.conversation(sessionID: "chat")
+            #expect(model.outgoingMessage(sessionID: "chat")?.delivery == .sending)
+        }
+        try await model.deliverOutgoingMessage(sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat") == nil)
+        #expect(model.pendingTextSend(sessionID: "chat") == nil)
+    }
+
+    @Test func synchronizedConfirmationSurvivesNativePatchReconstruction() throws {
+        let original = Conversation(sessionID: "chat", turns: [ConversationTurn(id: "guide", author: .user, text: "Guide")])
+        let json = #"{"sessionID":"chat","order":["guide"],"changed":[{"id":"guide","author":"user","text":"Guide","isDeliveryConfirmed":true}],"activity":"running","syncState":"live"}"#
+        let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))
+        let confirmed = try patch.applying(to: original).conversation
+        #expect(confirmed.turns.first?.isDeliveryConfirmed == true)
+        let unchangedJSON = #"{"sessionID":"chat","order":["guide"],"changed":[],"activity":"running","syncState":"live"}"#
+        let unchanged = try JSONDecoder().decode(ConversationPatch.self, from: Data(unchangedJSON.utf8))
+        #expect(try unchanged.applying(to: confirmed).conversation == confirmed)
+    }
+
+    @Test func lateMachineConfirmationRetiresRetryWithoutResendingOrAcceptingHistoryAlone() async throws {
+        let client = ControlledMessageClient()
+        client.unconfirmed = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        let id = try #require(model.outgoingMessage(sessionID: "chat")?.id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.deliverOutgoingMessage(sessionID: "chat")
+        }
+        let echo = try await model.conversation(sessionID: "chat")
+        #expect(echo.turns.first?.id == id)
+        #expect(model.outgoingMessage(sessionID: "chat")?.delivery == .unconfirmed)
+        client.confirmHistory(workspaceID: "b")
+        _ = try await model.conversation(sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat")?.delivery == .unconfirmed)
+        client.confirmHistory(workspaceID: "a")
+        let received = try await model.conversation(sessionID: "chat")
+        #expect(received.turns.map(\.id) == [id])
+        #expect(model.outgoingMessage(sessionID: "chat") == nil)
+        #expect(model.pendingTextSend(sessionID: "chat") == nil)
+        #expect(model.displayedTurns(received.turns, sessionID: "chat").first?.delivery == nil)
+        let decoded = try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(received))
+        #expect(decoded.turns.first?.isDeliveryConfirmed == true)
+        try model.stageOutgoingMessage("Next", composerText: "Next", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        #expect(model.outgoingMessage(sessionID: "chat")?.id != id)
+    }
+
     @Test func confirmedPreviewsEvictBytesAcrossConversationsAndCannotReappearFromOldSnapshots() async throws {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()
@@ -413,6 +525,7 @@ private final class ControlledMessageClient: LodyClient {
     var unconfirmed = false
     var rejection: LodyClientError?
     var suspends = false
+    var afterAuthored: (() async -> Void)?
     private var gate: CheckedContinuation<Void, Never>?
     private var pending: PendingTextSend?
     private var turns: [String: [ConversationTurn]] = [:]
@@ -433,12 +546,26 @@ private final class ControlledMessageClient: LodyClient {
         Conversation(sessionID: sessionID, turns: turns[workspaceID] ?? [], permission: nil)
     }
     func pendingTextSend(sessionID: String, workspaceID: String) -> PendingTextSend? { pending }
+    func confirmHistory(workspaceID: String) {
+        for index in (turns[workspaceID] ?? []).indices {
+            turns[workspaceID]?[index].isDeliveryConfirmed = true
+        }
+    }
+    func rejectHistory(workspaceID: String) {
+        for index in (turns[workspaceID] ?? []).indices {
+            turns[workspaceID]?[index].isDeliveryRejected = true
+        }
+    }
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String) {
+        if pending?.turnID == turnID { pending = nil }
+    }
     func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?,
               turnID: String, sessionID: String, workspaceID: String) async throws -> RunConfigChoice? {
         if suspends { await withCheckedContinuation { gate = $0; signal.yield(()) } }
         if !(turns[workspaceID] ?? []).contains(where: { $0.id == turnID }) {
             turns[workspaceID, default: []].append(ConversationTurn(id: turnID, author: .user, text: text))
         }
+        await afterAuthored?()
         if let rejection { throw rejection }
         if unconfirmed {
             pending = PendingTextSend(text: text, turnID: turnID, attachments: attachments)

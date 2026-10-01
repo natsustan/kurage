@@ -212,12 +212,12 @@ function runningFixture() {
   return state;
 }
 
-test('running input syncs a pending_apply turn before steer, without a queue or dispatch pointer', async () => {
+test('running input commits a pending_apply turn before steer, without a queue or dispatch pointer', async () => {
   const state = runningFixture();
   const attachment = { type: 'image', imageId: 'photo', mimeType: 'image/png' };
   state.steering.request = async (machineID, params) => {
     assert.equal(state.doc.getList('history').toJSON().at(-1).status, 'pending_apply');
-    assert.deepEqual(state.calls.map(call => call.scope), ['doc', 'doc', 'meta']);
+    assert.deepEqual(state.calls.map(call => call.scope), ['doc', 'doc']);
     state.requests.push({ machineID, params });
     return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
   };
@@ -234,13 +234,75 @@ test('running input syncs a pending_apply turn before steer, without a queue or 
   assert.equal(state.meta.latestUserMsgId, 'active-user');
 });
 
-test('steer cannot reach the machine before history is durable', async () => {
+test('steer reaches the machine while history upload is still pending', async () => {
   const state = runningFixture();
+  let finishUpload;
+  let started;
+  const offered = new Promise(resolve => { started = resolve; });
   let syncs = 0;
-  state.repo.sync = async () => ({ outcome: ++syncs === 2 ? 'failed' : 'synced' });
-  assert.equal(await state.send(), 'unconfirmed');
-  assert.equal(state.requests.length, 0);
+  state.repo.sync = async options => {
+    if (options.scope === 'doc' && ++syncs === 2) {
+      return await new Promise(resolve => { finishUpload = resolve; });
+    }
+    return { outcome: 'synced' };
+  };
+  state.steering.request = async (_machine, params) => {
+    started();
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: params.userTurnId, applied: true };
+  };
+  let completed = false;
+  const send = state.send().then(result => { completed = true; return result; });
+  await Promise.race([offered, new Promise((_resolve, reject) => setTimeout(() => reject(Error('Steer waited for upload')), 100))]);
+  assert.equal(completed, false, 'The ephemeral writer must survive until its history upload finishes');
+  finishUpload({ outcome: 'synced' });
+  assert.equal(await send, 'sent');
   assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('a permanent missing-history rejection wins over every positive acknowledgement', async () => {
+  for (const status of ['pending_apply', 'pending', 'seen', 'processing', 'handled', 'canceled']) {
+    const state = runningFixture();
+    state.steering.request = async () => { throw Error('timeout'); };
+    assert.equal(await state.send(), 'unconfirmed');
+    state.doc.getList('history').get(2).set('status', status);
+    state.doc.commit();
+    Object.assign(state.meta, { lastMissingHistoryUserMsgId: 'guide', latestUserMsgId: 'guide',
+      lastHandledUserMsgId: 'guide', steerTurnStatuses: { guide: 'pending' } });
+    state.steering.request = async () => { assert.fail('A rejected ID cannot be offered again'); };
+    assert.equal(await state.send(), 'rejected', status);
+  }
+});
+
+test('a missing-history rejection arriving during activation or an applied RPC is never reported as sent', async () => {
+  const ordinary = fixture();
+  ordinary.repo.upsertDocMeta = async (_id, patch) => {
+    Object.assign(ordinary.meta, patch, { lastMissingHistoryUserMsgId: 'guide' });
+  };
+  assert.equal(await sendText(ordinary.repo, 'chat', 'guide', 'user', 'Guidance', 'time'), 'rejected');
+  const steer = runningFixture();
+  steer.steering.request = async () => {
+    steer.meta.lastMissingHistoryUserMsgId = 'guide';
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
+  };
+  assert.equal(await steer.send(), 'rejected');
+});
+
+test('legacy non-delivery repairs already-promoted pending and seen turns', async () => {
+  for (const status of ['pending', 'seen']) {
+    const state = runningFixture();
+    state.steering.request = async () => {
+      state.doc.getList('history').get(2).set('status', status);
+      state.doc.commit();
+      state.meta.status = { type: 'idle' };
+      state.meta.lastHandledUserMsgId = 'active-user';
+      return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+        applied: false, disposition: 'promotion-failed' };
+    };
+    assert.equal(await state.send(), 'sent', status);
+    assert.equal(state.meta.latestUserMsgId, 'guide');
+    assert.equal(state.doc.getList('history').length, 3);
+    assert.equal(state.doc.getList('history').toJSON().at(-1).status, status);
+  }
 });
 
 test('a timed-out steer retries the same user turn, target, timestamp, and authored configuration', async () => {
@@ -261,6 +323,85 @@ test('a timed-out steer retries the same user turn, target, timestamp, and autho
   assert.equal(state.requests[0].inputConfig.modelId, 'model');
   assert.equal(state.requests[0].inputConfig.configOptionValues.effort, 'low');
   assert.equal(state.doc.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+  assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('a failed steer upload retries its original CRDT insertion on a fresh replica without resubmitting accepted input', async () => {
+  const state = runningFixture();
+  const baseline = state.doc.export({ mode: 'snapshot' });
+  let uploads = 0;
+  state.repo.sync = async options => ({ outcome: options.scope === 'doc' && ++uploads === 2 ? 'failed' : 'synced' });
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }), 'unconfirmed');
+  assert.equal(state.steering.state.applied, true);
+  const update = state.steering.state.authoredUpdate;
+  assert(update instanceof Uint8Array);
+  const replica = new LoroDoc();
+  replica.import(baseline);
+  state.repo.openPersistedDoc = async () => ({ doc: replica });
+  state.repo.sync = async () => ({ outcome: 'synced' });
+  state.steering.request = async () => { assert.fail('An applied RPC must not be repeated after a failed upload'); };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'high' }), 'sent');
+  replica.import(update);
+  const guides = replica.getList('history').toJSON().filter(turn => turn.id === 'guide');
+  assert.equal(guides.length, 1);
+  assert.equal(guides[0].timestamp, 'original-time');
+  assert.equal(guides[0].inputConfig.configOptionValues.effort, 'low');
+  assert.equal(guides[0].status, 'processing');
+  assert.equal(guides[0].inputConfig._lodyDeliveryKind, 'steer');
+  assert.equal(state.steering.state.authoredUpdate, undefined);
+});
+
+test('a timeout and failed upload restore the original offer on a fresh replica even after concurrent history grows', async () => {
+  const state = runningFixture();
+  const baseline = state.doc.export({ mode: 'snapshot' });
+  let uploads = 0;
+  state.repo.sync = async options => ({ outcome: options.scope === 'doc' && ++uploads === 2 ? 'failed' : 'synced' });
+  state.steering.request = async () => { throw Error('timeout'); };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }), 'unconfirmed');
+  const replica = new LoroDoc();
+  replica.import(baseline);
+  replica.getList('history').push({ id: 'concurrent-assistant', role: 'assistant', finished: false });
+  replica.commit();
+  state.repo.openPersistedDoc = async () => ({ doc: replica });
+  state.repo.sync = async () => ({ outcome: 'synced' });
+  state.steering.request = async (_machine, params) => {
+    assert.equal(params.expectedTurnId, 'active-assistant');
+    assert.equal(params.timestamp, 'original-time');
+    assert.equal(params.inputConfig.configOptionValues.effort, 'low');
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
+  };
+  assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'high' }), 'sent');
+  assert.equal(replica.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+});
+
+test('legacy proven non-delivery can activate a follow-up behind the active input without overwriting a newer producer', async () => {
+  for (const competing of [false, true]) {
+    const state = runningFixture();
+    state.steering.request = async () => {
+      if (competing) {
+        state.doc.getList('history').push({ id: 'newer', role: 'user', status: 'pending' });
+        state.doc.commit();
+        state.meta.latestUserMsgId = 'newer';
+      }
+      return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+        applied: false, disposition: 'no-active-turn' };
+    };
+    assert.equal(await state.send(), competing ? 'superseded' : 'sent');
+    assert.equal(state.meta.latestUserMsgId, competing ? 'newer' : 'guide');
+  }
+});
+
+test('cancellation keeps the authored identity but does not promote or mutate a late steer reply', async () => {
+  const state = runningFixture();
+  const controller = new AbortController();
+  state.steering.signal = controller.signal;
+  state.steering.request = async () => {
+    controller.abort();
+    return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide', applied: true };
+  };
+  await assert.rejects(state.send(), { name: 'AbortError' });
+  assert.equal(state.doc.getList('history').toJSON().at(-1).status, 'pending_apply');
+  assert.equal(state.steering.state.applied, true);
   assert.equal(state.meta.latestUserMsgId, 'active-user');
 });
 
@@ -290,6 +431,17 @@ test('unknown steer delivery is never replayed as an ordinary send', async () =>
   state.steering.request = async () => { assert.fail('Unknown provider delivery must not be repeated'); };
   assert.equal(await state.send(), 'unconfirmed');
   assert.equal(state.meta.latestUserMsgId, 'active-user');
+});
+
+test('an explicit unknown RPC verdict prevents replay even before its metadata arrives', async () => {
+  const state = runningFixture();
+  state.steering.request = async () => ({ type: 'session/steer_response', sessionId: 'chat',
+    userTurnId: 'guide', applied: false, disposition: 'delivery-unknown' });
+  assert.equal(await state.send(), 'unconfirmed');
+  state.steering.request = async () => { assert.fail('Unknown delivery cannot submit a second offer'); };
+  assert.equal(await state.send(), 'unconfirmed');
+  state.meta.steerTurnStatuses = { guide: 'handled' };
+  assert.equal(await state.send(), 'sent');
 });
 
 test('legacy definitive non-delivery can dispatch the same turn once the session is idle', async () => {

@@ -34,6 +34,7 @@ final class FixtureLodyClient: LodyClient {
     private var initialSkillSource: String?
     private var failSendOnce: Bool
     private var rejectSendOnce: Bool
+    private var rejectMissingHistoryOnce: Bool
     private let authorizationDelay: Duration?
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
     private let streamsConversationUpdates: Bool
@@ -95,6 +96,7 @@ final class FixtureLodyClient: LodyClient {
         startDelay: Duration? = nil,
         failSendOnce: Bool = false,
         rejectSendOnce: Bool = false,
+        rejectMissingHistoryOnce: Bool = false,
         failTabStartOnce: Bool = false,
         skillRefreshDelay: Duration? = nil,
         mentionDelay: Duration? = nil,
@@ -122,6 +124,7 @@ final class FixtureLodyClient: LodyClient {
         self.startDelay = startDelay
         self.failSendOnce = failSendOnce
         self.rejectSendOnce = rejectSendOnce
+        self.rejectMissingHistoryOnce = rejectMissingHistoryOnce
         self.failTabStartOnce = failTabStartOnce
         self.skillRefreshDelay = skillRefreshDelay
         self.mentionDelay = mentionDelay
@@ -363,6 +366,12 @@ final class FixtureLodyClient: LodyClient {
         return pendingSends[sessionID]?.message
     }
 
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String) {
+        guard account != nil, workspaceID == "ws-demo",
+              pendingSends[sessionID]?.message.turnID == turnID else { return }
+        pendingSends.removeValue(forKey: sessionID)
+    }
+
     @discardableResult
     func send(
         _ text: String, attachments: [ComposerAttachment] = [],
@@ -387,6 +396,17 @@ final class FixtureLodyClient: LodyClient {
         if rejectSendOnce {
             rejectSendOnce = false
             throw LodyClientError.sessionBusy
+        }
+        if rejectMissingHistoryOnce {
+            rejectMissingHistoryOnce = false
+            try update(sessionID) { record in
+                var turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed,
+                    parts: attachmentParts(attachments, text: trimmed))
+                turn.isDeliveryRejected = true
+                record.turns.append(turn)
+            }
+            pendingSends.removeValue(forKey: sessionID)
+            throw LodyClientError.sendNotDelivered
         }
         if failSendOnce {
             failSendOnce = false

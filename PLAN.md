@@ -1,5 +1,20 @@
 # Kurage 会话功能
 
+## steer 协议继续对齐（2026-10-02）
+
+- 以 Lody 官方 main `c687e45a` 的 `session-send-delivery.ts`、`session-submission.ts`、`session-execution-service.ts` 和 `session-dispatch-logic.ts` 为参考。运行中输入在本地提交 `pending_apply` 后立即发起 `session/steer`，与正文上传并行；临时写入副本等上传结束才释放，RPC 保留 5 秒时限。明确 applied 时标记 `processing`、已读及 `_lodyDeliveryKind: steer`。
+- 失败／取消后的重试在进程内保留首次 authored CRDT 增量、用户 turn ID、assistant 目标、时间戳与配置；新副本导入同一增量，避免同一领域 ID 被重复插入。已 applied 的请求不再次发 RPC；明确 `delivery-unknown` 仅等待同步确认，不重新投递。取消后的迟到响应不再修改正文或激活后续消息。
+- `lastMissingHistoryUserMsgId` 是对应 ID 的永久拒绝，优先于 history 状态、处理确认和派发指针。桥接明确返回／投影拒绝，原生按账号／工作区／会话／turn 清理待发送记录，显示 “Not delivered”，禁用原 ID 的 Retry，允许 Edit 恢复草稿并用新 ID 发送；旧气泡继续保留拒绝标记。metadata 单独变化也会投影拒绝补丁。
+- `recoveryOwned` 仍由机器负责恢复，客户端不写普通派发指针；兼容旧机器明确 `no-active-turn`／`promotion-failed` 时，已有 `pending_apply`、`pending` 或 `seen` 的同一 turn 可以立即作为后续消息修复，同时检查并保留更新发送者的指针。
+- 本轮 frozen lockfile 安装、301 项 JavaScript 测试、bundle 重建、76 项定向 Swift 测试及浅色默认字号 2 项 fixture UI 回归通过，覆盖拒绝优先级、RPC 与上传并行、跨副本重试去重、旧机器恢复、取消、工作区隔离、编辑重发及下一条草稿保留。拒绝／编辑重发用例在深色 accessibility-extra-large 下另通过 1 次，两种外观截图确认旧 Retry 禁用、Edit 可用，重发后旧气泡保留拒绝图标，新气泡正常显示，大字号无重叠或异常裁切。专用设备交互工具不可用，本轮设备检查使用 XCTest、simctl 和截图；`git diff --check` 通过。真实账号的 steer 应用、机器恢复、弱网、后台取消与真机尚未实测。
+
+## steer 超时后的投递确认（2026-10-01）
+
+- 气泡左侧圆形箭头是未确认消息的 Retry。此前 steer RPC 超时后，即使机器稍后接收消息，正文订阅也不会更新本地 outbox，按钮会一直保留。
+- 保留与 Lody 一致的 5 秒 RPC 时限；桥接从同一用户 turn 的 history 状态、`lastHandledUserMsgId` 或 `steerTurnStatuses` 投影明确接收确认，metadata 单独变化也产生正文补丁。`pending_apply`／普通 history 回显不算确认，`delivery_unknown` 保留未确认状态，不自动重发；missing-history 拒绝已在 2026-10-02 对齐为原 ID 永久失败，编辑后使用新 ID。
+- 原生重建补丁后按工作区／会话／turn ID 清理已确认的 outbox 与 live client 待发送记录，避免 Retry 残留或阻止下一条发送；RPC 尚在结束时到达的确认同样生效。新建会话仍等待独立创建确认。
+- 本轮 frozen lockfile 安装、291 项 JS 测试、bundle 重建、47 项定向 Swift 测试及 1 项 fixture UI 回归通过；UI 覆盖未确认时重试、确认后按钮消失、下一条草稿保留及气泡不重复。`git diff --check` 通过。真实账号的延迟确认、弱网与真机尚待复测。
+
 ## 本地项目当前分支只读（2026-10-01）
 
 - New Session 的 Project 行下显示项目目录的当前分支，点击该行刷新，返回前台自动刷新。读取失败显示具体原因并可点击重试；非 Git、detached HEAD、无权限及旧机器不支持有明确状态。保留英文文案、动态字号与草稿，读取状态不阻止发送或选择项目。New Tab 继承原会话目录，不展示项目分支行。
@@ -52,7 +67,7 @@
 ## 运行中输入直接 steer（2026-10-01）
 
 - 运行中的空草稿显示暂停按钮；输入有效文字、添加附件或正在导入附件时切为 Send，清空后恢复暂停。发送期间保留禁用的 Sending 按钮，发送确认且草稿为空后回到暂停。直接提交 steer，不显示 queue 选择或确认。
-- Live 发送先同步状态为 `pending_apply` 的用户 turn，再通过工作区／机器隔离的 `session/steer` RPC 提交给原 assistant turn；空闲会话继续使用既有派发路径。机器不支持 steer 或目标结束时，按 Lody 的已确认恢复协议处理为后续消息，无需用户确认；投递结果不明时保留原用户 ID、目标 ID、时间戳和配置，避免重投或覆盖另一发送者的派发指针。目标 ID 与既有重试 ID 一样仅保存在进程内。
+- Live 发送在本地提交状态为 `pending_apply` 的用户 turn 后，通过工作区／机器隔离的 `session/steer` RPC 提交给原 assistant turn，正文上传与 RPC 并行；空闲会话继续先同步正文再发布派发指针。机器不支持 steer 或目标结束时，按 Lody 的已确认恢复协议处理为后续消息，无需用户确认；投递结果不明时保留原用户 ID、目标 ID、时间戳和配置，避免重投或覆盖另一发送者的派发指针。目标 ID 与既有重试 ID 一样仅保存在进程内。
 - RPC 使用独立响应流并匹配请求 ID，支持令牌刷新、5 秒超时和原生取消；响应读取结束后释放网络请求。Fixture App 开启持续状态推送，使发送后与暂停后的按钮依据最新会话状态更新；模型测试默认仍可使用单次快照。
 - 本轮 frozen lockfile 安装、268 项 JS 测试与 bundle 重建通过；72 项定向 Swift 测试通过，fixture 取消检查调整后又通过 27 项 fixture 测试。Simulator 构建、浅色完整交互用例和深色最大辅助字号专用用例均通过（UI 各 1 项），已检查输入、发送后与停止后的截图。深色综合用例未通过，其首条消息断言依赖可见区域；专用用例在 XCTest 点击未聚焦时改点输入框中心，并按实际残留文字完成清空。真实账号的 steer 应用、机器自动恢复、弱网／后台取消及真机尚未实测。
 - 协议参考：本机 Lody `packages/shared/src/message.ts`、`schema.ts`、`packages/loro-streams-rpc/src/rpc.ts`、`packages/components/src/hooks/use-session-actions.ts` 的 `requestSessionSteer`、`apps/cli/src/session/session-execution-service.ts` 的 `steerSession`／`requeueUndeliveredSteer`。

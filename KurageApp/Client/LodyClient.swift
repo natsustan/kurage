@@ -80,6 +80,8 @@ protocol LodyClient: AnyObject {
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
     /// The turn ID reserved for an in-flight or unconfirmed text send.
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
+    /// Retire only the exact pending turn after acceptance or permanent rejection.
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String)
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     func observeConversation(sessionID: String, rootSessionID: String?, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error>
     /// Returns the choice used to author the turn, including on retries.
@@ -160,6 +162,7 @@ extension LodyClient {
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] { [] }
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] { [] }
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? { nil }
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String) {}
 
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         let snapshot = try await conversation(sessionID: sessionID, workspaceID: workspaceID)

@@ -786,7 +786,7 @@ final class AppModel {
             outgoingStartsByWorkspace[workspaceID]?[sessionID] = nil
             if let parentID = start.summary.parentSessionID { pendingTabs[workspaceID]?[parentID] = nil }
         }
-        if !message.canRetry {
+        if !message.canRetry && !message.isDeliveryRejected {
             supersededMessages[workspaceID, default: [:]][sessionID, default: []].insert(message.id)
             if let cached = conversationCache[workspaceID]?[sessionID] {
                 _ = storeConversation(cached, workspaceID: workspaceID)
@@ -833,6 +833,22 @@ final class AppModel {
         } catch {
             guard isCurrentAuthentication(generation),
                   outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+            if start == nil, error as? LodyClientError == .sendNotDelivered ||
+                outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected == true {
+                rejectOutgoingMessage(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
+                throw LodyClientError.sendNotDelivered
+            }
+            // The machine may confirm through synchronization after the RPC
+            // times out, including while this send is still unwinding.
+            if start == nil, conversationCache[workspaceID]?[sessionID]?.turns.contains(where: {
+                $0.id == message.id && $0.author == .user && $0.isDeliveryConfirmed
+            }) == true {
+                outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sent
+                if let cached = conversationCache[workspaceID]?[sessionID] {
+                    _ = storeConversation(cached, workspaceID: workspaceID)
+                }
+                return message.runConfig
+            }
             let hasPendingStart = start.map { start in
                 if let parentID = start.summary.parentSessionID { return pendingTabs[workspaceID]?[parentID] != nil }
                 return client.pendingSessionStarts(workspaceID: workspaceID).contains { $0.id == sessionID }
@@ -860,6 +876,9 @@ final class AppModel {
         }
         guard isCurrentAuthentication(generation),
               outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+        if outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected == true {
+            throw LodyClientError.sendNotDelivered
+        }
         outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sent
         if let cached = conversationCache[workspaceID]?[sessionID] {
             _ = storeConversation(cached, workspaceID: workspaceID)
@@ -930,6 +949,10 @@ final class AppModel {
     private func storeConversation(_ value: Conversation, workspaceID: String) -> Conversation {
         let sessionID = value.sessionID
         var conversation = value.removingLocalImageData()
+        for index in conversation.turns.indices where conversation.turns[index].author == .user &&
+            conversation.turns[index].isDeliveryRejected {
+            conversation.turns[index].delivery = .notDelivered
+        }
         if let ids = supersededMessages[workspaceID]?[sessionID] {
             for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) {
                 conversation.turns[index].delivery = .superseded
@@ -939,7 +962,13 @@ final class AppModel {
            let index = conversation.turns.firstIndex(where: { $0.id == message.id }) {
             imagePreviews.store(message.preservingPreviews(in: conversation.turns[index]),
                                 sessionID: sessionID, workspaceID: workspaceID)
-            if message.delivery == .sent {
+            let accepted = conversation.turns[index].author == .user &&
+                conversation.turns[index].isDeliveryConfirmed &&
+                outgoingStartsByWorkspace[workspaceID]?[sessionID] == nil
+            if conversation.turns[index].author == .user && conversation.turns[index].isDeliveryRejected {
+                rejectOutgoingMessage(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
+            } else if message.delivery == .sent || (message.delivery != .sending && accepted) {
+                client.finishTextSend(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
                 outgoingByWorkspace[workspaceID]?[sessionID] = nil
                 if let start = outgoingStartsByWorkspace[workspaceID]?[sessionID], start.isConfirmed,
                    start.summary.parentSessionID == nil ||
@@ -954,6 +983,14 @@ final class AppModel {
                 conversation.fileChanges?.first(where: { $0.id == key.turnID })?.files.first(where: { $0.path == key.path }) == entry.file
         }
         return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
+    }
+
+    private func rejectOutgoingMessage(turnID: String, sessionID: String, workspaceID: String) {
+        guard outgoingByWorkspace[workspaceID]?[sessionID]?.id == turnID else { return }
+        client.finishTextSend(turnID: turnID, sessionID: sessionID, workspaceID: workspaceID)
+        outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .failed("Not delivered. Edit to send again.")
+        outgoingByWorkspace[workspaceID]?[sessionID]?.canRetry = false
+        outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected = true
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction,
