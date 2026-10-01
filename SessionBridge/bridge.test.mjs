@@ -11,6 +11,7 @@ import { createSessionOptionsCache } from './session-options-cache.mjs';
 import { newSessionOptions } from './session-start.mjs';
 import { runningSessionTabParents } from './session-tabs.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
+import { turnDiffSource } from './turn-diff.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -84,6 +85,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     mentionSkills: extras.mentionSkills,
     sendText: extras.sendText,
     requestMachine: extras.requestMachine,
+    turnDiffSource,
+    loadTurnDiff: extras.loadTurnDiff,
     fetch: async () => {},
     AbortController,
     setTimeout,
@@ -92,6 +95,32 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('turn diff releases the metadata read lock and keeps RPC cancellation alive', async () => {
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  let rpcSignal;
+  const bridge = makeBridge(undefined, [{ docId: 'session-chat', meta: { machineId: 'machine' } }],
+    undefined, undefined, { loadTurnDiff: async (source, access, workspace, session, turn, path, signal) => {
+      assert.equal(source.machineID, 'machine');
+      assert.equal(source.ownerSessionID, 'chat');
+      assert.equal(workspace, 'workspace');
+      assert.equal(turn, 'turn');
+      assert.equal(path, 'file.swift');
+      assert.equal(signal.aborted, false);
+      rpcSignal = signal;
+      started();
+      return await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    } });
+  const request = bridge.window.kurageTurnDiff('workspace', 'chat', 'https://streams.test', 'turn', 'file.swift', 'diff-request');
+  void request.catch(() => {});
+  await ready;
+  await bridge.window.kurageSessions('workspace', 'https://streams.test', 'list-request');
+  assert.equal(rpcSignal.aborted, false);
+  bridge.window.kurageCancel('diff-request');
+  await assert.rejects(request, { name: 'AbortError' });
+  assert.equal(rpcSignal.aborted, true);
+});
 
 test('reopening an unloaded ephemeral transcript restores history instead of resuming past it', async () => {
   const remote = new LoroDoc();

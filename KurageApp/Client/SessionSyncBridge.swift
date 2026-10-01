@@ -126,6 +126,26 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return try JSONDecoder().decode(Conversation.self, from: data)
     }
 
+    func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String,
+                     access: StreamsAccess) async throws -> ConversationFilePreview {
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageTurnDiff(workspaceID, sessionID, baseURL, turnID, path, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "turnID": turnID, "path": path, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        let result = try JSONDecoder().decode(ConversationFilePreview.self, from: Data(json.utf8))
+        guard result.status != .ready || result.edit != nil else { throw LodyClientError.notConnected }
+        return result
+    }
+
     func sendText(_ text: String, attachments: [UploadedAttachment] = [], turnID: String, userID: String, runConfig: RunConfigChoice?,
                   sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
         let choice: Any = runConfig.map { $0.bridgeValue() } ?? NSNull()

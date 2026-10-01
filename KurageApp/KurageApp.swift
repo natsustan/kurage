@@ -28,7 +28,13 @@ struct KurageApp: App {
                 authorizationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-browser")
                     ? ProcessInfo.processInfo.arguments.contains("--fixture-pending-authorization") ? .seconds(600) : .seconds(12)
                     : nil,
-                streamsConversationUpdates: true)
+                streamsConversationUpdates: true,
+                failFilePreviewOnce: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-failure"),
+                filePreviewUnavailableReason: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-too-large")
+                    ? "too_large" : nil,
+                filePreviewDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-file-preview")
+                    ? .seconds(3) : .milliseconds(200),
+                filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"))
             : HTTPLodyClient()
         _model = State(initialValue: AppModel(client: client))
     }

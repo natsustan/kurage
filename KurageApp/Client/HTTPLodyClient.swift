@@ -409,6 +409,24 @@ final class HTTPLodyClient: LodyClient {
         return result
     }
 
+    var supportsHistoricalFilePreviews: Bool { true }
+
+    func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        guard let expectedAccount = account else { throw LodyClientError.signedOut }
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.filePreview(sessionID: sessionID, turnID: turnID, path: path,
+                                                  workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        return result
+    }
+
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill] {
         try Task.checkCancellation()
         let generation = authenticationGeneration

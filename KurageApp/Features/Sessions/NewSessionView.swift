@@ -141,7 +141,7 @@ struct NewSessionView: View {
                     supportsTextSending: true, supportsTextSendingWhileRunning: false,
                     supportsSessionCancellation: false,
                     runConfig: configuration.menu,
-                    placeholder: "Describe a task",
+                    placeholder: "Build anything",
                     identifiers: .init(container: "new-session-composer", field: "new-session-field",
                                        send: "new-session-send"),
                     canSubmit: isCurrentWorkspace && pendingStart == nil && options != nil && !isLoading && !loadFailed,

@@ -144,6 +144,7 @@ struct SessionComposer: View {
     /// Blocks sending while prerequisites load, without blocking typing.
     var canSubmit = true
     var focusesOnAppear = false
+    var dismissFocus = false
     var mentionSourceID = ""
     var loadMentionSessions: (@MainActor () async throws -> [MentionSession])? = nil
     var loadMentionSkills: (@MainActor () async throws -> [MentionSkill])? = nil
@@ -260,7 +261,10 @@ struct SessionComposer: View {
             .onAppear {
                 targetGaugeProgress = runConfig?.reasoningProgress ?? 1
                 gaugeProgress = targetGaugeProgress
-                if focusesOnAppear { isFocused = true }
+                if focusesOnAppear && !dismissFocus { isFocused = true }
+            }
+            .onChange(of: dismissFocus) { _, shouldDismiss in
+                if shouldDismiss { isFocused = false }
             }
             .onChange(of: runConfig?.reasoningProgress) { _, progress in
                 targetGaugeProgress = progress ?? 1
@@ -453,26 +457,29 @@ struct SessionComposer: View {
 
     private var actionRow: some View {
         HStack(spacing: 6) {
-            ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
-                                error: $attachmentError, disabled: blocksEditing)
-            FullAccessButton()
-            Spacer(minLength: 0)
-            if let contextWindowUsage, contextWindowUsage.isValid {
-                ContextWindowButton(usage: contextWindowUsage)
+            HStack(spacing: 0) {
+                ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
+                                    error: $attachmentError, disabled: blocksEditing)
+                FullAccessButton()
             }
-            if let runConfig {
-                Button {
-                    showsRunConfig = true
-                } label: {
-                    ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
-                        .frame(width: 25, height: 25)
-                        .frame(width: 44, height: 44)
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                if let contextWindowUsage, contextWindowUsage.isValid {
+                    ContextWindowButton(usage: contextWindowUsage)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(runConfig.accessibilitySummary)
-                .accessibilityHint("Adjust reasoning or open advanced settings")
-                .accessibilityIdentifier("run-config-menu")
-
+                if let runConfig {
+                    Button {
+                        showsRunConfig = true
+                    } label: {
+                        ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
+                            .frame(width: 25, height: 25)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(runConfig.accessibilitySummary)
+                    .accessibilityHint("Adjust reasoning or open advanced settings")
+                    .accessibilityIdentifier("run-config-menu")
+                }
             }
             if isSessionRunning && supportsSessionCancellation && !showsSend {
                 Button(action: onCancel) {

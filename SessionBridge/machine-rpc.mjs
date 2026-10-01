@@ -39,7 +39,11 @@ async function exchange(repoAccess, workspaceID, machineID, method, params, sign
       const messages = event.payload.json();
       for (const message of Array.isArray(messages) ? messages : [messages]) {
         if (message?.id !== requestID) continue;
-        if (message.error) throw new Error(message.error.message ?? 'Machine request failed');
+        if (message.error) {
+          const error = new Error(message.error.message ?? 'Machine request failed');
+          error.code = message.error.code;
+          throw error;
+        }
         return message.result;
       }
     }

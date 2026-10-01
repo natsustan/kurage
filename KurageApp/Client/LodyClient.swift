@@ -48,6 +48,8 @@ protocol LodyClient: AnyObject {
     var requiresExternalAuthorization: Bool { get }
     /// Whether conversation history and updates can be read.
     var supportsConversations: Bool { get }
+    var supportsHistoricalFilePreviews: Bool { get }
+    func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview
     var supportsTextSending: Bool { get }
     var supportsTextSendingWhileRunning: Bool { get }
     var supportsSessionCancellation: Bool { get }
@@ -181,6 +183,10 @@ extension LodyClient {
     func saveSessionCache(_ cache: SessionCache) {}
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
+    var supportsHistoricalFilePreviews: Bool { false }
+    func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        ConversationFilePreview(status: .unavailable, reason: "unsupported")
+    }
     var supportsTextSending: Bool { false }
     var supportsTextSendingWhileRunning: Bool { false }
     var supportsSessionCancellation: Bool { false }

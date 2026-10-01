@@ -6,6 +6,7 @@ final class FixtureLodyClient: LodyClient {
     private(set) var account: Account?
     var requiresExternalAuthorization: Bool { authorizationDelay != nil }
     let supportsConversations = true
+    let supportsHistoricalFilePreviews = true
     let supportsTextSending = true
     let supportsTextSendingWhileRunning = true
     let supportsSessionCancellation = true
@@ -42,6 +43,46 @@ final class FixtureLodyClient: LodyClient {
         let continuation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation
     }
     private var conversationObservers: [UUID: ConversationObserver] = [:]
+    private var failFilePreviewOnce: Bool
+    private let filePreviewUnavailableReason: String?
+    private let filePreviewDelay: Duration
+    private let filePreviewLargeRewrite: Bool
+
+    func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        let conversation = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        guard let group = conversation.fileChanges?.first(where: { $0.id == turnID }),
+              let file = group.files.first(where: { $0.path == path }) else {
+            return ConversationFilePreview(status: .unavailable, reason: "turn_unavailable")
+        }
+        // A summary-only fixture exercises the historical loader independently
+        // of text embedded in a tool call.
+        try await Task.sleep(for: filePreviewDelay)
+        if failFilePreviewOnce {
+            failFilePreviewOnce = false
+            throw URLError(.timedOut)
+        }
+        if path == "KurageTests/ConversationChangesTests.swift" {
+            if let filePreviewUnavailableReason {
+                return ConversationFilePreview(status: .unavailable, reason: filePreviewUnavailableReason)
+            }
+            let context = (1...6_000).map { "// Unchanged historical context line \($0)\n" }.joined()
+            let added = (1...12).map { "// Historical test line \($0)\n" }.joined()
+            return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
+                id: "\(turnID):\(path)", oldText: context, newText: added + context))
+        }
+        guard let edit = file.edits.first else {
+            return ConversationFilePreview(status: .unavailable, reason: "turn_unavailable")
+        }
+        if filePreviewLargeRewrite {
+            return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
+                id: "\(turnID):\(path)",
+                oldText: (0..<5_000).map { "old \($0)" }.joined(separator: "\n"),
+                newText: (0..<5_000).map { "new \($0)" }.joined(separator: "\n")))
+        }
+        let prefix = (1...46).map { "// Context line \($0)\n" }.joined()
+        return ConversationFilePreview(status: .ready, edit: ConversationFileEdit(
+            id: "\(turnID):\(path)", oldText: prefix + edit.oldText, newText: prefix + edit.newText))
+    }
 
     init(
         startsSignedIn: Bool = false,
@@ -59,8 +100,16 @@ final class FixtureLodyClient: LodyClient {
         mentionDelay: Duration? = nil,
         failSkillRefreshOnce: Bool = false,
         authorizationDelay: Duration? = nil,
-        streamsConversationUpdates: Bool = false
+        streamsConversationUpdates: Bool = false,
+        failFilePreviewOnce: Bool = false,
+        filePreviewUnavailableReason: String? = nil,
+        filePreviewDelay: Duration = .milliseconds(200),
+        filePreviewLargeRewrite: Bool = false
     ) {
+        self.failFilePreviewOnce = failFilePreviewOnce
+        self.filePreviewUnavailableReason = filePreviewUnavailableReason
+        self.filePreviewDelay = filePreviewDelay
+        self.filePreviewLargeRewrite = filePreviewLargeRewrite
         self.streamsConversationUpdates = streamsConversationUpdates
         self.authorizationDelay = authorizationDelay
         self.records = records

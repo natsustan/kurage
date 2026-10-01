@@ -136,6 +136,60 @@ final class AppModel {
     private var sessionRefreshWorkspaceID: WorkspaceSummary.ID?
     private var archiveRefreshGeneration = 0
     private var conversationCache: [WorkspaceSummary.ID: [SessionSummary.ID: Conversation]] = [:]
+    private struct FilePreviewCacheEntry {
+        let file: ConversationFileChange
+        let preview: ConversationFilePreview
+    }
+    private struct FilePreviewKey: Hashable {
+        let accountID: String?
+        let email: String
+        let workspaceID: String
+        let sessionID: String
+        let turnID: String
+        let path: String
+    }
+    private var filePreviews: [FilePreviewKey: FilePreviewCacheEntry] = [:]
+    var supportsHistoricalFilePreviews: Bool { client.supportsHistoricalFilePreviews }
+
+    func filePreview(sessionID: String, turnID: String, file: ConversationFileChange,
+                     workspaceID: String) async throws -> ConversationFilePreview {
+        try Task.checkCancellation()
+        guard selectedWorkspaceID == workspaceID, let account else { throw CancellationError() }
+        let authentication = authenticationGeneration
+        let workspace = workspaceGeneration
+        let key = FilePreviewKey(accountID: account.id, email: account.email,
+                                 workspaceID: workspaceID, sessionID: sessionID, turnID: turnID, path: file.path)
+        if let conversation = conversationCache[workspaceID]?[sessionID] {
+            guard conversation.fileChanges?.first(where: { $0.id == turnID })?.files.first(where: { $0.path == file.path }) == file else {
+                throw CancellationError()
+            }
+        }
+        // Without checkpoint identity, unchanged counts cannot prove that the
+        // historical text is still the same. Refetch these previews on reopen.
+        if file.previewRevision != nil, file.previewFinished == true,
+           let cached = filePreviews[key], cached.file == file { return cached.preview }
+        let preview = try await client.filePreview(sessionID: sessionID, turnID: turnID, path: file.path, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(authentication), self.account == account, workspaceGeneration == workspace,
+              selectedWorkspaceID == workspaceID else { throw CancellationError() }
+        if let conversation = conversationCache[workspaceID]?[sessionID] {
+            guard conversation.fileChanges?.first(where: { $0.id == turnID })?.files.first(where: { $0.path == file.path }) == file else {
+                throw CancellationError()
+            }
+        }
+        if preview.status == .ready, file.previewRevision != nil, file.previewFinished == true {
+            func bytes(_ preview: ConversationFilePreview) -> Int {
+                guard let edit = preview.edit else { return 0 }
+                return edit.oldText.utf8.count + edit.newText.utf8.count
+            }
+            // Larger snapshots must not turn the item-count cache into an unbounded text cache.
+            if filePreviews.count >= 16 || filePreviews.values.reduce(bytes(preview), { $0 + bytes($1.preview) }) > 32 * 1024 * 1024 {
+                filePreviews.removeAll()
+            }
+            filePreviews[key] = FilePreviewCacheEntry(file: file, preview: preview)
+        }
+        return preview
+    }
     /// Transcript text for list search. Memory only — the disk cache stores list display data, not conversation bodies.
     private var searchBodies: [WorkspaceSummary.ID: [SessionSummary.ID: String]] = [:]
     /// Sessions whose transcript was read since the last list refresh.
@@ -305,6 +359,7 @@ final class AppModel {
         sessions = []
         clearArchivedSessions()
         conversationCache = [:]
+        filePreviews = [:]
         stopSessionSearch()
         searchBodies = [:]
         failedSearchBodies = [:]
@@ -894,6 +949,10 @@ final class AppModel {
             }
         }
         conversationCache[workspaceID, default: [:]][sessionID] = conversation
+        filePreviews = filePreviews.filter { key, entry in
+            key.workspaceID != workspaceID || key.sessionID != sessionID ||
+                conversation.fileChanges?.first(where: { $0.id == key.turnID })?.files.first(where: { $0.path == key.path }) == entry.file
+        }
         return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
     }
 
@@ -1067,6 +1126,7 @@ final class AppModel {
             outgoingStartsByWorkspace[workspaceID]?.removeValue(forKey: id)
             supersededMessages[workspaceID]?.removeValue(forKey: id)
             conversationCache[workspaceID]?.removeValue(forKey: id)
+            filePreviews = filePreviews.filter { $0.key.workspaceID != workspaceID || $0.key.sessionID != id }
             searchBodies[workspaceID]?.removeValue(forKey: id)
             freshSearchBodies[workspaceID]?.remove(id)
             dirtySearchBodies[workspaceID]?.remove(id)

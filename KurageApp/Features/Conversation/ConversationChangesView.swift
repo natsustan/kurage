@@ -1,5 +1,7 @@
 import SwiftUI
 
+typealias FilePreviewLoader = @MainActor (ConversationFileChangeGroup, ConversationFileChange) async throws -> ConversationFilePreview
+
 struct ConversationChangesHUD: View {
     let summary: FileChangeSummary
     var compact = false
@@ -73,15 +75,18 @@ struct ConversationChangesView: View {
     let groups: [ConversationFileChangeGroup]
     let latestTurnNumber: Int
     var initialTurnNumber: Int? = nil
+    let loadPreview: FilePreviewLoader?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var detent: PresentationDetent = .large
     @State private var showsAllTurns: Bool
 
-    init(groups: [ConversationFileChangeGroup], latestTurnNumber: Int, initialTurnNumber: Int? = nil) {
+    init(groups: [ConversationFileChangeGroup], latestTurnNumber: Int, initialTurnNumber: Int? = nil,
+         loadPreview: FilePreviewLoader? = nil) {
         self.groups = groups
         self.latestTurnNumber = latestTurnNumber
         self.initialTurnNumber = initialTurnNumber
+        self.loadPreview = loadPreview
         _showsAllTurns = State(initialValue: initialTurnNumber == nil)
     }
 
@@ -110,7 +115,7 @@ struct ConversationChangesView: View {
                         ContentUnavailableView("No recorded changes", systemImage: "doc.text")
                     }
                     ForEach(visibleGroups) { group in
-                        FileChangeTurnSection(group: group, showsHeading: showsAllTurns)
+                        FileChangeTurnSection(group: group, showsHeading: showsAllTurns, loadPreview: loadPreview)
                     }
                 }
                 .padding(16)
@@ -214,6 +219,7 @@ private struct FileChangesWindowControls: View {
 private struct FileChangeTurnSection: View {
     let group: ConversationFileChangeGroup
     let showsHeading: Bool
+    let loadPreview: FilePreviewLoader?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -223,14 +229,16 @@ private struct FileChangeTurnSection: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(group.files) { file in
-                FileChangeCard(file: file)
+                FileChangeCard(group: group, file: file, loadPreview: loadPreview)
             }
         }
     }
 }
 
 private struct FileChangeCard: View {
+    let group: ConversationFileChangeGroup
     let file: ConversationFileChange
+    let loadPreview: FilePreviewLoader?
     @State private var expanded = false
 
     var body: some View {
@@ -248,8 +256,7 @@ private struct FileChangeCard: View {
             .accessibilityHint("Show or hide recorded code differences")
             .background(Color.primary.opacity(0.09))
             if expanded {
-                FileChangeCardDetails(file: file)
-                    .padding(12)
+                FileChangeCardDetails(group: group, file: file, loadPreview: loadPreview)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color(uiColor: .systemBackground))
             }
@@ -286,68 +293,220 @@ private struct FileChangeCardHeader: View {
     }
 }
 
-private struct FileChangeCardDetails: View {
+struct FileChangeCardDetails: View {
+    let group: ConversationFileChangeGroup
     let file: ConversationFileChange
+    let loadPreview: FilePreviewLoader?
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var preview: ConversationFilePreview?
+    @State private var loadedFile: ConversationFileChange?
+    @State private var failed = false
+    @State private var attempt = 0
+    @State private var completedAttempt: Int?
+
+    private struct LoadKey: Equatable {
+        let file: ConversationFileChange
+        let active: Bool
+        let attempt: Int
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if file.edits.isEmpty && file.previewLimited != true {
-                Text("Code preview unavailable for this file.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if !file.edits.isEmpty {
-                Text("Recorded excerpt · relative line numbers")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(file.edits) { edit in
-                    RecordedFileDiffView(edit: edit)
+        let currentPreview = loadedFile == file ? preview : nil
+        VStack(alignment: .leading, spacing: 0) {
+            if let edit = currentPreview?.edit, currentPreview?.status == .ready {
+                RecordedFileDiffView(edit: edit, fallbackEdits: file.edits, fallbackLimited: file.previewLimited == true)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("historical-file-diff-\(file.path)")
+            } else {
+                if loadPreview != nil {
+                    if let currentPreview {
+                        FilePreviewNotice(message: currentPreview.explanation,
+                                          onRetry: currentPreview.canRetry ? { attempt += 1 } : nil)
+                    } else if failed && loadedFile == file {
+                        FilePreviewNotice(message: "Could not load the code preview. Check the session machine and connection, then retry.") {
+                            attempt += 1
+                        }
+                    } else {
+                        ProgressView("Loading code preview…")
+                            .font(.footnote)
+                            .padding(12)
+                            .accessibilityIdentifier("file-preview-loading")
+                    }
+                } else if file.edits.isEmpty && file.previewLimited != true {
+                    Text("Code preview unavailable for this file.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(12)
                 }
+                RecordedFileExcerptsView(edits: file.edits, limited: file.previewLimited == true)
             }
-            if file.previewLimited == true {
-                Text("Some code differences are omitted from this preview.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        }
+        .task(id: LoadKey(file: file, active: scenePhase == .active, attempt: attempt)) {
+            guard scenePhase == .active, let loadPreview else { return }
+            // A completed preview survives backgrounding. In-flight loads are
+            // cancelled by the task identity and resumed when the scene activates.
+            if loadedFile == file && preview != nil && completedAttempt == attempt { return }
+            loadedFile = file
+            preview = nil
+            failed = false
+            do {
+                let result = try await loadPreview(group, file)
+                try Task.checkCancellation()
+                preview = result
+                completedAttempt = attempt
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                failed = true
             }
         }
     }
 }
 
-private struct RecordedFileDiffView: View {
-    let edit: ConversationFileEdit
-    @State private var lines: [FileDiffLine]?
-    @State private var loading = true
+private struct RecordedFileExcerptsView: View {
+    let edits: [ConversationFileEdit]
+    let limited: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if loading {
-                ProgressView()
-            } else if let lines {
-                if lines.isEmpty {
-                    Text("No text differences").font(.footnote).foregroundStyle(.secondary)
-                } else {
-                    ScrollView(.horizontal) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(lines) { line in
-                                FileDiffLineView(line: line)
-                            }
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                    }
-                    .background(Color(uiColor: .systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-            } else {
-                Text("This code difference is too large to preview.")
-                    .font(.footnote).foregroundStyle(.secondary)
+            if !edits.isEmpty {
+                Text("Recorded excerpt · relative line numbers")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
+            ForEach(edits) { edit in
+                RecordedFileDiffView(edit: edit)
+            }
+            if limited {
+                Text("Some code differences are omitted from this preview.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
             }
         }
-        .task(id: edit) {
-            loading = true
-            let task = Task.detached(priority: .userInitiated) { RecordedFileDiff.lines(for: edit) }
+    }
+}
+
+private struct FilePreviewNotice: View {
+    let message: LocalizedStringResource
+    var onRetry: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message).font(.footnote).foregroundStyle(.secondary)
+            if let onRetry {
+                Button("Retry", action: onRetry)
+                    .font(.footnote.weight(.medium))
+                    .accessibilityIdentifier("retry-file-preview")
+            }
+        }
+        .padding(12)
+    }
+}
+
+struct RecordedFileDiffView: View {
+    let edit: ConversationFileEdit
+    var fallbackEdits: [ConversationFileEdit] = []
+    var fallbackLimited = false
+    var computePreview: @Sendable (ConversationFileEdit) -> RecordedFileDiff.Preview = {
+        RecordedFileDiff.preview(for: $0)
+    }
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var preview: RecordedFileDiff.Preview?
+    @State private var completedEdit: ConversationFileEdit?
+
+    private struct LoadKey: Equatable {
+        let edit: ConversationFileEdit
+        let active: Bool
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            switch completedEdit == edit ? preview : nil {
+            case nil:
+                ProgressView()
+            case .ready(let hunks, let truncated):
+                if hunks.isEmpty {
+                    Text("No text differences").font(.footnote).foregroundStyle(.secondary).padding(12)
+                } else {
+                    ForEach(hunks) { hunk in
+                        FileDiffHunkView(hunk: hunk)
+                    }
+                }
+                if truncated {
+                    Text("Showing part of the code difference. File totals include all changes.")
+                        .font(.footnote).foregroundStyle(.secondary).padding(12)
+                        .accessibilityIdentifier("file-preview-truncated")
+                }
+            case .unavailable(let reason):
+                FilePreviewNotice(message: ConversationFilePreview(status: .unavailable, reason: reason).explanation)
+                RecordedFileExcerptsView(edits: fallbackEdits, limited: fallbackLimited)
+            }
+        }
+        .task(id: LoadKey(edit: edit, active: scenePhase == .active)) {
+            guard scenePhase == .active else { return }
+            // Keep completed results; only interrupted comparisons resume on activation.
+            if completedEdit == edit && preview != nil { return }
+            preview = nil
+            completedEdit = nil
+            let computePreview = computePreview
+            let task = Task.detached(priority: .userInitiated) { computePreview(edit) }
             let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
             guard !Task.isCancelled else { return }
-            lines = result
-            loading = false
+            preview = result
+            completedEdit = edit
+        }
+    }
+}
+
+private struct FileDiffHunkView: View {
+    let hunk: FileDiffHunk
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.displayScale) private var displayScale
+    @ScaledMetric(relativeTo: .caption) private var chevronSize = 16
+    @State private var expanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button { expanded.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: chevronSize, height: chevronSize)
+                        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { image in
+                            image.rotationEffect(.degrees(expanded ? 90 : 0))
+                        }
+                        .transaction { $0.disablesAnimations = false }
+                    Text("Lines \(hunk.firstNumber)–\(hunk.lastNumber)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    FileChangeCounts(additions: hunk.additions, deletions: hunk.deletions).font(.caption)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: 44)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("file-diff-hunk-\(hunk.id)")
+            if expanded {
+                Divider()
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(hunk.lines) { line in
+                        FileDiffLineView(line: line)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .overlay {
+            Rectangle()
+                .strokeBorder(Color(uiColor: .separator), lineWidth: 1 / displayScale)
+                .allowsHitTesting(false)
         }
     }
 }
@@ -366,13 +525,15 @@ private struct FileDiffLineView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text((line.newNumber ?? line.oldNumber).map(String.init) ?? "")
+            Text(line.newNumber.map(String.init) ?? (line.kind == .deletion ? "−" : ""))
                 .foregroundStyle(.secondary)
                 .frame(width: lineNumberWidth, alignment: .trailing)
-            Text(line.kind == .addition ? "+" : line.kind == .deletion ? "−" : " ")
-                .fixedSize()
+                .padding(.trailing, 6)
+                .background(tint.opacity(line.kind == .context ? 0 : 0.12))
+                .accessibilityLabel(line.oldNumber.map { "Original line \($0)" } ?? "")
             Text(verbatim: line.text.isEmpty ? " " : line.text)
-                .fixedSize(horizontal: true, vertical: false)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             Spacer(minLength: 8)
         }
@@ -380,6 +541,9 @@ private struct FileDiffLineView: View {
         .padding(.vertical, 3)
         .background(tint.opacity(0.16))
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(line.kind == .addition ? "Added line \(line.newNumber ?? 0), \(line.text)" :
+                                line.kind == .deletion ? "Removed line \(line.oldNumber ?? 0), \(line.text)" :
+                                "Line \(line.newNumber ?? 0), \(line.text)")
     }
 }
 

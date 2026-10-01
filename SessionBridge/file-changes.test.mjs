@@ -7,6 +7,27 @@ import { conversationPatch } from './conversation-observer.mjs';
 const tool = (status, content) => ({ type: 'tool_call', toolCallId: 't', status, content });
 const diff = { type: 'diff', path: 'src/App.swift', oldText: 'old', newText: 'new' };
 
+test('checkpoint changes invalidate previews even when counts and path stay equal', () => {
+  const history = [{ role: 'assistant', id: 'a', fileDiff: [{ filePath: diff.path, add: 1, del: 1,
+    cc: { v: 1, fileId: 'file', opId: '1:2' } }] }];
+  const before = projectFileChanges(history);
+  history[0].fileDiff[0].cc.opId = '1:3';
+  const after = projectFileChanges(history);
+  assert.notEqual(before[0].files[0].previewRevision, after[0].files[0].previewRevision);
+  assert.equal(before[0].files[0].additions, after[0].files[0].additions);
+});
+
+test('a finished turn invalidates the loaded preview even when file counts do not change', () => {
+  const turn = { role: 'assistant', id: 'a', finished: false,
+    fileDiff: [{ filePath: diff.path, add: 1, del: 1 }] };
+  const before = projectFileChanges([turn]);
+  turn.finished = true;
+  const after = projectFileChanges([turn]);
+  assert.equal(before[0].files[0].previewFinished, false);
+  assert.equal(after[0].files[0].previewFinished, true);
+  assert.equal(before[0].files[0].additions, after[0].files[0].additions);
+});
+
 test('projects summary-only turns and retains repeated paths separately by turn', () => {
   const history = [
     { id: 'u', role: 'user' },

@@ -56,7 +56,12 @@ final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, U
         textContainerInset = UIEdgeInsets(top: 12, left: 15, bottom: 12, right: 15)
         textContainer.lineFragmentPadding = 0
         textColor = .label
-        backgroundColor = .systemGray5
+        backgroundColor = UIColor { traits in
+            if traits.userInterfaceStyle == .dark {
+                return UIColor.systemGray5.resolvedColor(with: traits)
+            }
+            return UIColor.label.resolvedColor(with: traits).withAlphaComponent(0.06)
+        }
         layer.cornerRadius = 20
         accessibilityHint = "Your message"
         accessibilityCustomActions = [

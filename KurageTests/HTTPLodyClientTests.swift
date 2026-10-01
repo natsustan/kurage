@@ -1131,7 +1131,42 @@ private final class PendingAuthRequest: @unchecked Sendable {
 @MainActor
 @Suite(.serialized)
 struct StreamFetchHandlerTests {
-    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send"])
+    @Test(.timeLimit(.minutes(1)))
+    func bundledFilePageSupportsCodePreviewEncryptionAndCompressedUnicode() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let access = StreamsAccess(token: "test-token", expiresIn: 300,
+                                   gatewayBaseURL: URL(string: "https://example.test"), shardHostSuffix: nil)
+        let handler = StreamFetchHandler(session: .shared) { _, _ in access }
+        configuration.userContentController.addScriptMessageHandler(handler, contentWorld: .page, name: "streamFetch")
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        handler.webView = webView
+        let page = try #require(Bundle.main.url(forResource: "session-bridge", withExtension: "html"))
+        defer { webView.stopLoading(); webView.loadHTMLString("", baseURL: nil) }
+        _ = try #require(webView.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent()))
+        for _ in 0..<200 {
+            if !webView.isLoading && webView.url == page { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let result = try await webView.callAsyncJavaScript("""
+        await window.kurageBridgeReady;
+        const text = 'let 文本 = "你好"\\r\\n';
+        const bytes = new TextEncoder().encode(text);
+        const hash = await crypto.subtle.digest('SHA-256', bytes);
+        const key = await crypto.subtle.importKey('raw', hash, 'AES-GCM', false, ['encrypt', 'decrypt']);
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const additionalData = new TextEncoder().encode('preview\\0owner');
+        const encrypted = await crypto.subtle.encrypt({name: 'AES-GCM', iv, additionalData}, key, bytes);
+        const decrypted = await crypto.subtle.decrypt({name: 'AES-GCM', iv, additionalData}, key, encrypted);
+        const gzip = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+        const plain = await new Response(new Blob([gzip]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+        return new TextDecoder('utf-8', {fatal: true}).decode(decrypted) === text &&
+               new TextDecoder('utf-8', {fatal: true}).decode(plain) === text;
+        """, arguments: [:], in: nil, contentWorld: .page)
+        #expect(result as? Bool == true)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
@@ -1158,6 +1193,9 @@ struct StreamFetchHandlerTests {
             } else if operation == "send" {
                 _ = try await bridge.sendText("Guidance", turnID: "user-turn", userID: "user", runConfig: nil,
                     sessionID: "chat", workspaceID: "workspace", access: access)
+            } else if operation == "file-preview" {
+                _ = try await bridge.filePreview(sessionID: "chat", turnID: "turn", path: "file.swift",
+                                                  workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,
