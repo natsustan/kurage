@@ -620,7 +620,7 @@ private final class SessionBrowserCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         var buttonConfiguration = UIButton.Configuration.plain()
-        buttonConfiguration.image = UIImage(named: "add")?.withRenderingMode(.alwaysTemplate)
+        buttonConfiguration.image = UIImage(systemName: "square.and.pencil")
         buttonConfiguration.baseForegroundColor = .secondaryLabel
         buttonConfiguration.contentInsets = .zero
         newSessionButton.configuration = buttonConfiguration
@@ -788,6 +788,7 @@ private struct SessionSearchField: View {
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             TextField("Search chats", text: $query)
+                .fontWeight(.medium)
                 .textFieldStyle(.plain)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
