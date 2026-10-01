@@ -404,15 +404,25 @@ private struct FilePreviewNotice: View {
     }
 }
 
-private struct RecordedFileDiffView: View {
+struct RecordedFileDiffView: View {
     let edit: ConversationFileEdit
     var fallbackEdits: [ConversationFileEdit] = []
     var fallbackLimited = false
+    var computePreview: @Sendable (ConversationFileEdit) -> RecordedFileDiff.Preview = {
+        RecordedFileDiff.preview(for: $0)
+    }
+    @Environment(\.scenePhase) private var scenePhase
     @State private var preview: RecordedFileDiff.Preview?
+    @State private var completedEdit: ConversationFileEdit?
+
+    private struct LoadKey: Equatable {
+        let edit: ConversationFileEdit
+        let active: Bool
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            switch preview {
+            switch completedEdit == edit ? preview : nil {
             case nil:
                 ProgressView()
             case .ready(let hunks, let truncated):
@@ -433,12 +443,18 @@ private struct RecordedFileDiffView: View {
                 RecordedFileExcerptsView(edits: fallbackEdits, limited: fallbackLimited)
             }
         }
-        .task(id: edit) {
+        .task(id: LoadKey(edit: edit, active: scenePhase == .active)) {
+            guard scenePhase == .active else { return }
+            // Keep completed results; only interrupted comparisons resume on activation.
+            if completedEdit == edit && preview != nil { return }
             preview = nil
-            let task = Task.detached(priority: .userInitiated) { RecordedFileDiff.preview(for: edit) }
+            completedEdit = nil
+            let computePreview = computePreview
+            let task = Task.detached(priority: .userInitiated) { computePreview(edit) }
             let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
             guard !Task.isCancelled else { return }
             preview = result
+            completedEdit = edit
         }
     }
 }

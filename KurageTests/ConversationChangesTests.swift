@@ -2,9 +2,61 @@ import Foundation
 import Testing
 import SwiftUI
 import UIKit
+import Synchronization
 @testable import Kurage
 
 struct ConversationChangesTests {
+    @MainActor @Test(.timeLimit(.minutes(1)))
+    func diffComputationCancelsInBackgroundAndRetainsCompletedResults() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let probe = FileDiffLifecycleProbe()
+        let host = UIHostingController(rootView: FileDiffLifecycleHarness(probe: probe))
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            probe.computation.finish()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        func waitUntil(_ ready: () -> Bool) async throws {
+            for _ in 0..<200 {
+                if ready() { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            Issue.record("Diff computation did not reach expected state")
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.computation.counts.starts == 0)
+        probe.phase = .active
+        try await waitUntil { probe.computation.counts.starts == 1 }
+        probe.phase = .inactive
+        try await waitUntil { probe.computation.counts.cancellations == 1 }
+        probe.phase = .background
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.computation.counts.starts == 1)
+        #expect(probe.computation.counts.completions == 0)
+        probe.phase = .active
+        try await waitUntil { probe.computation.counts.starts == 2 }
+        probe.computation.finish()
+        try await waitUntil { probe.computation.counts.completions == 1 }
+        // Allow the view's task to publish the detached computation's result.
+        try await Task.sleep(for: .milliseconds(100))
+        probe.phase = .background
+        try await Task.sleep(for: .milliseconds(100))
+        probe.phase = .active
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.computation.counts.starts == 2)
+        probe.phase = .background
+        try await Task.sleep(for: .milliseconds(100))
+        probe.edit = .init(id: "changed", oldText: "old", newText: "updated")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(probe.computation.counts.starts == 2)
+        probe.phase = .active
+        try await waitUntil { probe.computation.counts.completions == 2 }
+        #expect(probe.computation.counts.starts == 3)
+    }
+
     @MainActor @Test(.serialized, .timeLimit(.minutes(1)))
     func historicalLoadCancelsInBackgroundAndResumesWithoutRecordedText() async throws {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
@@ -315,6 +367,57 @@ private struct FilePreviewLifecycleHarness: View {
     var body: some View {
         FileChangeCardDetails(group: .fixture, file: ConversationFileChangeGroup.fixture.files[1],
                               loadPreview: { _, _ in try await probe.load() })
+            .environment(\.scenePhase, probe.phase)
+    }
+}
+
+@MainActor @Observable
+private final class FileDiffLifecycleProbe {
+    var phase = ScenePhase.background
+    var edit = ConversationFileEdit(id: "full", oldText: "old", newText: "new")
+    let computation = FileDiffComputationProbe()
+}
+
+private final class FileDiffComputationProbe: Sendable {
+    struct Counts {
+        var starts = 0
+        var cancellations = 0
+        var completions = 0
+        var canComplete = false
+    }
+
+    private let state = Mutex(Counts())
+    private let wake = DispatchSemaphore(value: 0)
+
+    var counts: Counts { state.withLock { $0 } }
+
+    func finish() {
+        state.withLock { $0.canComplete = true }
+        wake.signal()
+    }
+
+    func compute(_ edit: ConversationFileEdit) -> RecordedFileDiff.Preview {
+        state.withLock { $0.starts += 1 }
+        // Keep the real detached computation alive until cancellation or release.
+        while !state.withLock({ $0.canComplete }) {
+            if Task.isCancelled {
+                state.withLock { $0.cancellations += 1 }
+                return .unavailable(reason: "comparison_limit")
+            }
+            _ = wake.wait(timeout: .now() + .milliseconds(10))
+        }
+        let result = RecordedFileDiff.preview(for: edit)
+        state.withLock { $0.completions += 1 }
+        return result
+    }
+}
+
+private struct FileDiffLifecycleHarness: View {
+    let probe: FileDiffLifecycleProbe
+
+    var body: some View {
+        let computation = probe.computation
+        RecordedFileDiffView(edit: probe.edit, computePreview: { computation.compute($0) })
             .environment(\.scenePhase, probe.phase)
     }
 }
