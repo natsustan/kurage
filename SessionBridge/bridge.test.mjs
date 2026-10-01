@@ -1135,12 +1135,12 @@ test('native send routes steer RPC with workspace auth and retains its target ac
       steering.state.expectedTurnID ??= 'original-assistant';
       await steering.request('machine', { sessionId: sessionID, userTurnId: turnID,
         expectedTurnId: steering.state.expectedTurnID });
-      return 'sent';
+      return states.length === 1 ? 'unconfirmed' : 'sent';
     },
   });
   const send = (workspaceID, operationID) => window.kurageSendText(workspaceID, 'chat',
     'https://gateway.example', 'guide', 'user', 'Guidance', 'timestamp', null, [{ type: 'image' }], operationID);
-  assert.equal(await send('workspace', 'first'), 'sent');
+  assert.equal(await send('workspace', 'first'), 'unconfirmed');
   assert.equal(await send('workspace', 'retry'), 'sent');
   assert.equal(await send('other-workspace', 'other'), 'sent');
   assert.equal(states[0], states[1]);
@@ -1151,4 +1151,40 @@ test('native send routes steer RPC with workspace auth and retains its target ac
     ['workspace', 'first', true], ['workspace', 'retry', true], ['other-workspace', 'other', true],
   ]);
   assert(repos.every(repo => repo.destroyed));
+});
+
+for (const result of ['sent', 'superseded']) {
+  test(`native send releases a steer retry target after ${result}`, async () => {
+    const states = [];
+    const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+      sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+        states.push(steering.state);
+        steering.state.expectedTurnID = 'assistant';
+        return result;
+      },
+    });
+    const send = () => window.kurageSendText('workspace', 'chat', 'https://gateway.example',
+      'guide', 'user', 'Guidance', 'timestamp', null, []);
+    await send();
+    await send();
+    assert.notEqual(states[0], states[1]);
+  });
+}
+
+test('native send retains an ambiguous steer target when the writer throws', async () => {
+  const states = [];
+  const { window } = makeBridge(async () => ({ outcome: 'synced' }), [], undefined, undefined, {
+    sendText: async (_repo, _sessionID, _turnID, _userID, _text, _timestamp, _config, _attachments, steering) => {
+      states.push(steering.state);
+      steering.state.expectedTurnID ??= 'original-assistant';
+      if (states.length === 1) throw new Error('sync interrupted');
+      return 'sent';
+    },
+  });
+  const send = () => window.kurageSendText('workspace', 'chat', 'https://gateway.example',
+    'guide', 'user', 'Guidance', 'timestamp', null, []);
+  await assert.rejects(send(), /sync interrupted/);
+  assert.equal(await send(), 'sent');
+  assert.equal(states[0], states[1]);
+  assert.equal(states[1].expectedTurnID, 'original-assistant');
 });

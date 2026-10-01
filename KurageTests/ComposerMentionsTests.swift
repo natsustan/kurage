@@ -6,6 +6,34 @@ import UIKit
 
 struct ComposerMentionsTests {
     @MainActor
+    @Test(.serialized, arguments: ["Send a follow-up", "Describe a task"])
+    func emptyComposerExposesItsInputPurpose(placeholder: String) throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let host = UIHostingController(rootView: SessionComposer(
+            draft: .constant(""), mentions: .constant(.init()), attachments: .constant([]),
+            isSending: false, isCancelling: false, isSessionRunning: false,
+            supportsTextSending: true, supportsTextSendingWhileRunning: false,
+            supportsSessionCancellation: false, runConfig: nil,
+            placeholder: LocalizedStringResource(stringLiteral: placeholder),
+            onSend: {}, onCancel: {}, onChooseRunConfig: { _, _ in }))
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        host.view.layoutIfNeeded()
+        var views = [host.view!]
+        var editor: UITextView?
+        while let view = views.popLast() {
+            if let textView = view as? UITextView { editor = textView; break }
+            views.append(contentsOf: view.subviews)
+        }
+        let field = try #require(editor)
+        #expect(field.accessibilityLabel == placeholder)
+        #expect(field.accessibilityIdentifier == "follow-up-field")
+        #expect(field.accessibilityValue == "")
+    }
+
+    @MainActor
     @Test(.serialized, .timeLimit(.minutes(1)), arguments: ["@review", "$review"])
     func mentionLoadsCancelOffForegroundAndResume(draft: String) async throws {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)

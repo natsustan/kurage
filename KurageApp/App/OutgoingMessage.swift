@@ -72,30 +72,91 @@ struct OutgoingMessage: Identifiable, Equatable {
     }
 }
 
-extension Conversation {
-    /// Keep local thumbnails across subsequent stream patches without adding
-    /// them to the Codable protocol projection or the disk session cache.
-    func preservingPreviews(from previous: Conversation?) -> Conversation {
-        guard let previous else { return self }
-        var previews: [String: ConversationImage] = [:]
-        for turn in previous.turns {
-            for part in turn.parts {
-                if case .image(let image) = part, image.localPreviewData != nil {
-                    previews[image.id] = image
-                }
+/// Confirmed thumbnails have their own budget. Stored conversation snapshots
+/// contain only references, so evicting a preview actually releases its bytes.
+struct SessionImagePreviewCache {
+    private struct Key: Hashable {
+        let workspaceID: String
+        let sessionID: String
+        let imageID: String
+    }
+
+    private struct Preview {
+        let data: Data
+        let scopeID: UUID?
+    }
+
+    private let maxCount: Int
+    private let maxBytes: Int
+    private var previews: [Key: Preview] = [:]
+    private var order: [Key] = []
+    private var byteCount = 0
+
+    init(maxCount: Int = 24, maxBytes: Int = 8 * 1024 * 1024) {
+        self.maxCount = maxCount
+        self.maxBytes = maxBytes
+    }
+
+    mutating func store(_ turn: ConversationTurn, sessionID: String, workspaceID: String) {
+        for part in turn.parts {
+            guard case .image(let image) = part, let data = image.localPreviewData else { continue }
+            let key = Key(workspaceID: workspaceID, sessionID: image.storageSessionID ?? sessionID, imageID: image.imageID)
+            remove(key)
+            guard maxCount > 0, data.count <= maxBytes else { continue }
+            previews[key] = Preview(data: data, scopeID: image.localPreviewScopeID)
+            order.append(key)
+            byteCount += data.count
+            while order.count > maxCount || byteCount > maxBytes {
+                remove(order[0])
             }
         }
-        guard !previews.isEmpty else { return self }
+    }
+
+    func applying(to conversation: Conversation, workspaceID: String) -> Conversation {
+        conversation.mappingImages { image in
+            var image = image
+            let key = Key(workspaceID: workspaceID, sessionID: image.storageSessionID ?? conversation.sessionID,
+                          imageID: image.imageID)
+            image.localPreviewData = previews[key]?.data
+            image.localPreviewScopeID = previews[key]?.scopeID
+            image.localOriginalData = nil
+            return image
+        }
+    }
+
+    mutating func retainWorkspaces(_ workspaceIDs: Set<String>) {
+        for key in order where !workspaceIDs.contains(key.workspaceID) { remove(key) }
+    }
+
+    mutating func removeSessions(_ sessionIDs: Set<String>, workspaceID: String) {
+        for key in order where key.workspaceID == workspaceID && sessionIDs.contains(key.sessionID) { remove(key) }
+    }
+
+    private mutating func remove(_ key: Key) {
+        if let previous = previews.removeValue(forKey: key) { byteCount -= previous.data.count }
+        order.removeAll { $0 == key }
+    }
+}
+
+extension Conversation {
+    func removingLocalImageData() -> Conversation {
+        mappingImages { image in
+            var image = image
+            image.localPreviewData = nil
+            image.localOriginalData = nil
+            image.localPreviewScopeID = nil
+            return image
+        }
+    }
+
+    fileprivate func mappingImages(_ transform: (ConversationImage) -> ConversationImage) -> Conversation {
         var conversation = self
-        conversation.turns = turns.map { turn in
-            var turn = turn
-            turn.parts = turn.parts.map { part in
-                guard case .image(var image) = part, let previousImage = previews[image.id] else { return part }
-                image.localPreviewData = previousImage.localPreviewData
-                image.localPreviewScopeID = previousImage.localPreviewScopeID
-                return .image(image)
+        for turnIndex in turns.indices {
+            for partIndex in turns[turnIndex].parts.indices {
+                guard case .image(let image) = turns[turnIndex].parts[partIndex] else { continue }
+                let updated = transform(image)
+                if updated != image { conversation.turns[turnIndex].parts[partIndex] = .image(updated) }
             }
-            return turn
         }
         return conversation
     }

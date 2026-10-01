@@ -139,7 +139,7 @@ struct SessionComposer: View {
     let supportsSessionCancellation: Bool
     let runConfig: RunConfigMenu?
     var contextWindowUsage: ContextWindowUsage? = nil
-    var placeholder: LocalizedStringKey = "Send a follow-up"
+    var placeholder: LocalizedStringResource = "Send a follow-up"
     var identifiers: Identifiers = .followUp
     /// Blocks sending while prerequisites load, without blocking typing.
     var canSubmit = true
@@ -231,7 +231,8 @@ struct SessionComposer: View {
                 ZStack(alignment: .topLeading) {
                     MentionEditor(text: editableDraft, selection: $selection,
                                   isFocused: $isFocused,
-                                  ranges: mentions.ranges, isEnabled: !blocksEditing, identifier: identifiers.field)
+                                  ranges: mentions.ranges, isEnabled: !blocksEditing, identifier: identifiers.field,
+                                  accessibilityLabel: placeholder)
                     if draft.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)

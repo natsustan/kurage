@@ -4,6 +4,63 @@ import Testing
 
 @MainActor
 struct OutgoingMessageTests {
+    @Test func confirmedPreviewsEvictBytesAcrossConversationsAndCannotReappearFromOldSnapshots() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        var received: [Conversation] = []
+        for sessionID in ["session-long", "session-pr", "session-tests"] {
+            let image = try ComposerAttachment(fileName: "photo.png", mimeType: "image/png", data: FixtureImage.png,
+                isImage: true, thumbnailData: Data(repeating: 1, count: 4 * 1024 * 1024))
+            try model.stageOutgoingMessage("Photo", composerText: "Photo", mentions: .init(), attachments: [image],
+                                           runConfig: nil, sessionID: sessionID)
+            try await model.deliverOutgoingMessage(sessionID: sessionID)
+            received.append(try #require(model.cachedConversation(sessionID: sessionID)))
+        }
+        func previews(_ turns: [ConversationTurn]) -> [Data] {
+            turns.flatMap(\.parts).compactMap {
+                guard case .image(let image) = $0 else { return nil }
+                return image.localPreviewData
+            }
+        }
+        #expect(previews(received[0].turns).count == 1)
+        #expect(previews(try #require(model.cachedConversation(sessionID: "session-long")).turns).isEmpty)
+        #expect(previews(model.displayedTurns(received[0].turns, sessionID: "session-long")).isEmpty)
+        #expect(previews(try await model.conversation(sessionID: "session-long").turns).isEmpty)
+        #expect(previews(try #require(model.cachedConversation(sessionID: "session-pr")).turns).count == 1)
+        model.signOut()
+        #expect(model.cachedConversation(sessionID: "session-pr") == nil)
+    }
+
+    @Test func previewCacheEnforcesCountBytesAndWorkspaceIsolation() {
+        var cache = SessionImagePreviewCache(maxCount: 2, maxBytes: 6)
+        func turn(_ id: String, count: Int = 2) -> ConversationTurn {
+            ConversationTurn(id: id, author: .user, text: "", parts: [.image(ConversationImage(
+                imageID: id, mimeType: "image/png", localPreviewData: Data(repeating: 1, count: count)))])
+        }
+        let turns = [turn("a"), turn("b"), turn("c")]
+        let conversation = Conversation(sessionID: "s", turns: turns)
+        func data(_ id: String, workspaceID: String = "w") -> Data? {
+            let result = cache.applying(to: conversation, workspaceID: workspaceID)
+            guard case .image(let image) = result.turns.first(where: { $0.id == id })?.parts.first else { return nil }
+            return image.localPreviewData
+        }
+        for turn in turns { cache.store(turn, sessionID: "s", workspaceID: "w") }
+        #expect(data("a") == nil)
+        #expect(data("b")?.count == 2)
+        #expect(data("b", workspaceID: "other") == nil)
+        cache.store(turn("b", count: 5), sessionID: "s", workspaceID: "w")
+        #expect(data("c") == nil)
+        #expect(data("b")?.count == 5)
+        cache.store(turn("b", count: 7), sessionID: "s", workspaceID: "w")
+        #expect(data("b") == nil)
+        cache.store(turn("a"), sessionID: "s", workspaceID: "w")
+        cache.retainWorkspaces(["other"])
+        #expect(data("a") == nil)
+        cache.store(turn("c"), sessionID: "s", workspaceID: "w")
+        cache.removeSessions(["s"], workspaceID: "w")
+        #expect(data("c") == nil)
+    }
+
     @Test(arguments: [false, true])
     func firstTurnIsVisibleBeforeCreationAndKeepsItsIdentityThroughTheEcho(isTab: Bool) async throws {
         let client = FixtureLodyClient(startsSignedIn: true)

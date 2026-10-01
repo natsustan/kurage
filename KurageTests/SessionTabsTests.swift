@@ -10,17 +10,16 @@ struct SessionTabsTests {
         await model.adoptExistingAccount()
         let rootID = "session-long"
         let before = try await client.conversation(sessionID: rootID, workspaceID: "ws-demo")
-        let tabID = try await model.startSessionTab("A separate conversation", rootID: rootID)
+        let tabID = try await stageAndDeliverTab(model, "A separate conversation", rootID: rootID)
         #expect(!model.sessions.contains { $0.id == tabID })
         #expect(model.sessionSummary(tabID)?.parentSessionID == rootID)
         #expect(model.pendingSessionTab(rootID: rootID) == nil)
-        let updates = try await client.observeConversation(sessionID: tabID, workspaceID: "ws-demo")
-        for try await update in updates {
+        try await model.observeConversation(sessionID: tabID, rootSessionID: rootID) { update in
             #expect(update.sessionTabs?.map(\.id) == [rootID, tabID])
             #expect(update.conversation.turns.map(\.text) == ["A separate conversation"])
             #expect(update.conversation.subtasks?.isEmpty != false)
         }
-        try await model.send("Only in this tab", sessionID: tabID)
+        try await stageAndDeliverMessage(model, "Only in this tab", sessionID: tabID)
         try await model.updateSessionMetadata(.tabClosed(true), sessionID: tabID)
         #expect(model.sessionTabs(rootID: rootID).first { $0.id == tabID }?.isTabClosed == true)
         let closed = try await client.conversation(sessionID: tabID, workspaceID: "ws-demo")
@@ -38,14 +37,16 @@ struct SessionTabsTests {
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSessionTab("Original", rootID: "session-long")
+            try await stageAndDeliverTab(model, "Original", rootID: "session-long")
         }
         let pending = try #require(model.pendingSessionTab(rootID: "session-long"))
         await #expect(throws: LodyClientError.previousSendPending("Original")) {
-            try await model.startSessionTab("Changed", rootID: "session-long")
+            try await stageAndDeliverTab(model, "Changed", rootID: "session-long")
         }
         #expect(model.pendingSessionTab(rootID: "session-long") == pending)
-        let id = try await model.startSessionTab("Original", rootID: "session-long")
+        #expect(model.retryOutgoingMessage(sessionID: pending.sessionID))
+        try await model.deliverOutgoingMessage(sessionID: pending.sessionID)
+        let id = pending.sessionID
         #expect(id == pending.sessionID)
         #expect(model.pendingSessionTab(rootID: "session-long") == nil)
         let conversation = try await client.conversation(sessionID: id, workspaceID: "ws-demo")
@@ -64,11 +65,13 @@ struct SessionTabsTests {
         config.selectModel(different.value)
         let choices = config.selections
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSessionTab("Chosen model", selections: choices, rootID: "session-long")
+            try await stageAndDeliverTab(model, "Chosen model", selections: choices, rootID: "session-long")
         }
         let pending = try #require(model.pendingSessionTab(rootID: "session-long"))
         #expect(pending.selections == choices)
-        let tabID = try await model.startSessionTab("Chosen model", selections: [], rootID: "session-long")
+        #expect(model.retryOutgoingMessage(sessionID: pending.sessionID))
+        try await model.deliverOutgoingMessage(sessionID: pending.sessionID)
+        let tabID = pending.sessionID
         let stream = try await client.observeConversation(sessionID: tabID, workspaceID: "ws-demo")
         for try await update in stream {
             #expect(update.runConfig?.model?.value == different.value)
@@ -88,11 +91,13 @@ struct SessionTabsTests {
         #expect(claude.runConfig?.reasoning == nil)
         #expect(claude.runConfig?.model?.value == "sonnet")
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSessionTab("On Claude", agentConfigID: "claude", rootID: "session-long")
+            try await stageAndDeliverTab(model, "On Claude", agentConfigID: "claude", rootID: "session-long")
         }
         let pending = try #require(model.pendingSessionTab(rootID: "session-long"))
         #expect(pending.agentConfigID == "claude")
-        let tabID = try await model.startSessionTab("On Claude", rootID: "session-long")
+        #expect(model.retryOutgoingMessage(sessionID: pending.sessionID))
+        try await model.deliverOutgoingMessage(sessionID: pending.sessionID)
+        let tabID = pending.sessionID
         #expect(tabID == pending.sessionID)
         #expect(model.sessionSummary(tabID)?.agentName == "claude")
         let stream = try await client.observeConversation(sessionID: tabID, workspaceID: "ws-demo")
@@ -124,7 +129,7 @@ struct SessionTabsTests {
         await model.adoptExistingAccount()
         let rootID = "session-long"
         #expect(model.activeSessionTab(rootID: rootID) == rootID)
-        let tabID = try await model.startSessionTab("A separate conversation", rootID: rootID)
+        let tabID = try await stageAndDeliverTab(model, "A separate conversation", rootID: rootID)
         model.setActiveSessionTab(tabID, rootID: rootID)
         #expect(model.activeSessionTab(rootID: rootID) == tabID)
         #expect(model.activeSessionTab(rootID: "session-pr") == "session-pr")
@@ -138,7 +143,10 @@ struct SessionTabsTests {
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
         let rootID = "session-long"
-        let tabID = try await model.startSessionTab("Remembered tab", rootID: rootID)
+        let tabID = try await stageAndDeliverTab(model, "Remembered tab", rootID: rootID)
+        // Like the visible conversation, consume the creation echo before
+        // exercising later metadata changes against its authoritative tabs.
+        try await model.observeConversation(sessionID: tabID, rootSessionID: rootID) { _ in }
         model.setActiveSessionTab(tabID, rootID: rootID)
         // Change the service independently of the model's cached membership.
         if state == "closed" {

@@ -59,7 +59,7 @@ enum MentionText {
             case .skill: symbol = "sparkles"
             }
             let tokenRange = NSRange(location: range.start, length: range.end - range.start)
-            result.addAttributes([.foregroundColor: color, .font: emphasized(font)], range: tokenRange)
+            result.addAttributes([.foregroundColor: color, .font: font], range: tokenRange)
             let prefix = (text as NSString).substring(with: NSRange(location: range.start, length: 1))
             result.replaceCharacters(in: NSRange(location: range.start, length: 1),
                                      with: icon(symbol, original: prefix, font: font, color: color))
@@ -76,7 +76,7 @@ enum MentionText {
                 location: position, length: reference.range.location - position
             )), attributes: [.font: font, .foregroundColor: UIColor.label]))
             let chip = NSMutableAttributedString(attributedString: icon(reference.symbol, original: "", font: font, color: color))
-            chip.append(NSAttributedString(string: reference.label, attributes: [.font: emphasized(font), .foregroundColor: color]))
+            chip.append(NSAttributedString(string: reference.label, attributes: [.font: font, .foregroundColor: color]))
             // Copying any selection that includes this complete reference keeps
             // its original target, while the screen shows its human label.
             chip.addAttribute(originalReferenceKey, value: source.substring(with: reference.range),
@@ -108,10 +108,6 @@ enum MentionText {
             }
         }
         return result
-    }
-
-    private static func emphasized(_ font: UIFont) -> UIFont {
-        UIFont(descriptor: font.fontDescriptor.withSymbolicTraits(.traitBold) ?? font.fontDescriptor, size: font.pointSize)
     }
 
     private static func icon(_ symbol: String, original: String, font: UIFont, color: UIColor) -> NSAttributedString {
@@ -146,6 +142,8 @@ struct MentionEditor: UIViewRepresentable {
     let ranges: [ComposerMentionState.Range]
     let isEnabled: Bool
     let identifier: String
+    let accessibilityLabel: LocalizedStringResource
+    @Environment(\.locale) private var locale
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
 
@@ -199,6 +197,9 @@ struct MentionEditor: UIViewRepresentable {
         // delegate instead, preserving the keyboard during a send.
         (view as? MentionEditorTextView)?.isInputEnabled = isEnabled
         view.accessibilityIdentifier = identifier
+        var label = accessibilityLabel
+        label.locale = locale
+        view.accessibilityLabel = String(localized: label)
         view.accessibilityValue = text
         if isFocused && isEnabled && !view.isFirstResponder { view.becomeFirstResponder() }
         else if !isFocused && view.isFirstResponder { view.resignFirstResponder() }

@@ -17,11 +17,11 @@ final class AppModel {
     private var tabsByWorkspace: [String: [String: [SessionSummary]]] = [:]
     private var activeTabsByWorkspace: [WorkspaceSummary.ID: [SessionSummary.ID: SessionSummary.ID]] = [:]
     private var pendingTabs: [String: [String: SessionTabStart]] = [:]
-    private var startingTabs: Set<String> = []
     private var outgoingByWorkspace: [String: [String: OutgoingMessage]] = [:]
     private var outgoingStartsByWorkspace: [String: [String: OutgoingSessionStart]] = [:]
     private var activeMessageSends: Set<String> = []
     private var imagePreviewScopes: [String: UUID] = [:]
+    private var imagePreviews = SessionImagePreviewCache()
     private var supersededMessages: [String: [String: Set<String>]] = [:]
     var supportsSessionTabs: Bool { client.supportsSessionTabs }
 
@@ -73,45 +73,6 @@ final class AppModel {
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
         return result
-    }
-
-    func startSessionTab(_ text: String, attachments: [ComposerAttachment] = [], selections: [RunConfigChoice] = [],
-                         agentConfigID: String? = nil, rootID: String) async throws -> String {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !attachments.isEmpty else { throw LodyClientError.emptyMessage }
-        guard supportsSessionTabs, supportsSessionCreation, let workspaceID = selectedWorkspaceID,
-              let root = sessions.first(where: { $0.id == rootID }) else { throw LodyClientError.sessionMissing }
-        let generation = authenticationGeneration
-        let selection = workspaceGeneration
-        let operationKey = "\(generation):\(workspaceID):\(rootID)"
-        guard startingTabs.insert(operationKey).inserted else { throw LodyClientError.deliveryUnconfirmed }
-        defer { startingTabs.remove(operationKey) }
-        if let pending = pendingTabs[workspaceID]?[rootID], pending.text != text || pending.attachments != attachments {
-            throw LodyClientError.previousSendPending(pending.text)
-        }
-        let request = pendingTabs[workspaceID]?[rootID] ??
-            SessionTabStart(text: text, attachments: attachments, selections: selections, agentConfigID: agentConfigID)
-        pendingTabs[workspaceID, default: [:]][rootID] = request
-        do {
-            try await client.startSessionTab(request, parentSessionID: rootID, workspaceID: workspaceID)
-        } catch LodyClientError.sessionCreationRejected {
-            if isCurrentAuthentication(generation) { pendingTabs[workspaceID]?[rootID] = nil }
-            throw LodyClientError.sessionCreationRejected
-        }
-        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
-        // Keep the retry identity if the initiating sheet disappeared after the
-        // write: a later caller must confirm this tab, not create a duplicate.
-        try Task.checkCancellation()
-        pendingTabs[workspaceID]?[rootID] = nil
-        var tabs = sessionTabs(rootID: rootID)
-        if !tabs.contains(where: { $0.id == request.sessionID }) {
-            tabs.append(SessionSummary(id: request.sessionID, title: String((text.isEmpty ? attachments.first?.fileName ?? "New tab" : text).prefix(50)),
-                agentName: request.agentConfigID ?? root.agentName, activity: .idle, preview: text,
-                projectID: root.projectID, projectName: root.projectName, machineName: root.machineName,
-                parentSessionID: rootID))
-        }
-        tabsByWorkspace[workspaceID, default: [:]][rootID] = tabs
-        return request.sessionID
     }
 
     private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
@@ -326,17 +287,15 @@ final class AppModel {
         cancelSessionRefresh()
         client.signOut()
         pendingStartsByWorkspace = [:]
-        selectedSessionProjects = [:]
-        projectCatalogGeneration = -1
         pendingTabs = [:]
         outgoingByWorkspace = [:]
         outgoingStartsByWorkspace = [:]
         activeMessageSends = []
         imagePreviewScopes = [:]
+        imagePreviews = SessionImagePreviewCache()
         supersededMessages = [:]
         tabsByWorkspace = [:]
         activeTabsByWorkspace = [:]
-        startingTabs = []
         archiveOperations = [:]
         activeArchiveOperations = [:]
         account = nil
@@ -380,6 +339,7 @@ final class AppModel {
             outgoingByWorkspace = outgoingByWorkspace.filter { workspaceIDs.contains($0.key) }
             outgoingStartsByWorkspace = outgoingStartsByWorkspace.filter { workspaceIDs.contains($0.key) }
             imagePreviewScopes = imagePreviewScopes.filter { workspaceIDs.contains($0.key) }
+            imagePreviews.retainWorkspaces(workspaceIDs)
             supersededMessages = supersededMessages.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -648,7 +608,7 @@ final class AppModel {
 
     func cachedConversation(sessionID: SessionSummary.ID) -> Conversation? {
         guard let workspaceID = selectedWorkspaceID else { return nil }
-        return conversationCache[workspaceID]?[sessionID]
+        return conversationCache[workspaceID]?[sessionID].map { imagePreviews.applying(to: $0, workspaceID: workspaceID) }
     }
 
     func pendingTextSend(sessionID: SessionSummary.ID) -> PendingTextSend? {
@@ -781,6 +741,9 @@ final class AppModel {
     }
 
     func displayedTurns(_ turns: [ConversationTurn], sessionID: String) -> [ConversationTurn] {
+        let turns = selectedWorkspaceID.map {
+            imagePreviews.applying(to: Conversation(sessionID: sessionID, turns: turns), workspaceID: $0).turns
+        } ?? turns
         guard let outgoing = outgoingMessage(sessionID: sessionID) else { return turns }
         if turns.contains(where: { $0.id == outgoing.id }) {
             // Seeing history alone does not confirm that the daemon accepted
@@ -911,7 +874,7 @@ final class AppModel {
     @discardableResult
     private func storeConversation(_ value: Conversation, workspaceID: String) -> Conversation {
         let sessionID = value.sessionID
-        var conversation = value.preservingPreviews(from: conversationCache[workspaceID]?[sessionID])
+        var conversation = value.removingLocalImageData()
         if let ids = supersededMessages[workspaceID]?[sessionID] {
             for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) {
                 conversation.turns[index].delivery = .superseded
@@ -919,7 +882,8 @@ final class AppModel {
         }
         if let message = outgoingByWorkspace[workspaceID]?[sessionID],
            let index = conversation.turns.firstIndex(where: { $0.id == message.id }) {
-            conversation.turns[index] = message.preservingPreviews(in: conversation.turns[index])
+            imagePreviews.store(message.preservingPreviews(in: conversation.turns[index]),
+                                sessionID: sessionID, workspaceID: workspaceID)
             if message.delivery == .sent {
                 outgoingByWorkspace[workspaceID]?[sessionID] = nil
                 if let start = outgoingStartsByWorkspace[workspaceID]?[sessionID], start.isConfirmed,
@@ -930,34 +894,8 @@ final class AppModel {
             }
         }
         conversationCache[workspaceID, default: [:]][sessionID] = conversation
-        return conversation
+        return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
     }
-
-    @discardableResult
-    func send(_ text: String, attachments: [ComposerAttachment] = [], runConfig: RunConfigChoice? = nil,
-              turnID: ConversationTurn.ID = UUID().uuidString.lowercased(),
-              sessionID: SessionSummary.ID) async throws -> RunConfigChoice? {
-        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
-        let generation = authenticationGeneration
-        let sentChoice = try await client.send(text, attachments: attachments, runConfig: runConfig, turnID: turnID,
-                                               sessionID: sessionID, workspaceID: workspaceID)
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
-            throw CancellationError()
-        }
-        if let index = sessions.firstIndex(where: { $0.id == sessionID }) {
-            var session = sessions.remove(at: index)
-            session.preview = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            sessions.insert(session, at: 0)
-            sessionsByWorkspace[workspaceID] = sessions
-            persistSession()
-        }
-        await refreshSessions(restart: true)
-        return sentChoice
-    }
-
-    // Authorized targets live only for the current account/workspace generation.
-    private var selectedSessionProjects: [String: SessionProject] = [:]
-    private var projectCatalogGeneration: Int = -1
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction,
                          path: String? = nil, cursor: String? = nil) async throws -> SessionProjectResult {
@@ -969,13 +907,6 @@ final class AppModel {
         try Task.checkCancellation()
         guard generation == workspaceGeneration, isCurrentAuthentication(auth), selectedWorkspaceID == workspaceID else {
             throw CancellationError()
-        }
-        if projectCatalogGeneration != generation {
-            selectedSessionProjects.removeAll()
-            projectCatalogGeneration = generation
-        }
-        for project in (result.projects ?? []) + (result.project.map { [$0] } ?? []) {
-            selectedSessionProjects[project.id] = project
         }
         return result
     }
@@ -1003,68 +934,9 @@ final class AppModel {
         return result
     }
 
-    func startSession(
-        _ text: String, attachments: [ComposerAttachment] = [],
-        agentConfigID: String? = nil,
-        selections: [RunConfigChoice],
-        projectID: String,
-        templateSessionID: SessionSummary.ID
-    ) async throws -> SessionSummary.ID {
-        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
-        guard let template = sessionSummary(templateSessionID) else { throw LodyClientError.notConnected }
-        // A template from another project is only meaningful for a project that
-        // has no session of its own yet — the sheet then borrows the session the
-        // user came from. Judging that against the live list keeps the pairing
-        // check without the stale catalog entry that rejected a project as soon
-        // as a catalog refresh moved it to a newer session; the write path
-        // revalidates the pair anyway.
-        guard template.projectID == projectID || !sessions.contains(where: { $0.projectID == projectID })
-        else { throw LodyClientError.notConnected }
-        let generation = authenticationGeneration
-        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
-        let sessionID = try await client.startSession(
-            text, attachments: attachments, agentConfigID: agentConfigID, selections: selections, projectID: projectID,
-            templateSessionID: templateSessionID, workspaceID: workspaceID
-        )
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
-            throw CancellationError()
-        }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !sessions.contains(where: { $0.id == sessionID }) {
-            sessions.insert(SessionSummary(
-                id: sessionID, title: String((trimmed.isEmpty ? attachments.first?.fileName ?? "New session" : trimmed).prefix(50)), agentName: template.agentName,
-                activity: .idle, preview: trimmed, projectID: projectID,
-                projectName: selectedSessionProjects[projectID]?.name ?? template.projectName, machineName: template.machineName
-            ), at: 0)
-            sessionsByWorkspace[workspaceID] = sessions
-            persistSession()
-        }
-        // Navigation opens the session now; the list catches up in the background.
-        Task { await refreshSessions(restart: true) }
-        return sessionID
-    }
-
     private func refreshPendingStarts(workspaceID: WorkspaceSummary.ID, generation: Int) {
         guard isCurrentAuthentication(generation) else { return }
         pendingStartsByWorkspace[workspaceID] = client.pendingSessionStarts(workspaceID: workspaceID)
-    }
-
-    func retrySessionStart(_ pending: PendingSessionStart) async throws -> SessionSummary.ID {
-        guard supportsSessionCreation, let workspaceID = selectedWorkspaceID else {
-            throw LodyClientError.notConnected
-        }
-        let generation = authenticationGeneration
-        defer { refreshPendingStarts(workspaceID: workspaceID, generation: generation) }
-        guard client.pendingSessionStarts(workspaceID: workspaceID).contains(pending) else {
-            throw LodyClientError.sessionMissing
-        }
-        // Recovery uses the client's original request, independent of active templates or options.
-        let sessionID = try await client.retrySessionStart(sessionID: pending.id, workspaceID: workspaceID)
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
-            throw CancellationError()
-        }
-        Task { await refreshSessions(restart: true) }
-        return sessionID
     }
 
     func cancelSession(sessionID: SessionSummary.ID) async throws {
@@ -1189,6 +1061,7 @@ final class AppModel {
             tabsByWorkspace[workspaceID] = workspaceTabs.isEmpty ? nil : workspaceTabs
         }
         pendingTabs[workspaceID]?.removeValue(forKey: sessionID)
+        imagePreviews.removeSessions(archivedIDs, workspaceID: workspaceID)
         for id in archivedIDs {
             outgoingByWorkspace[workspaceID]?.removeValue(forKey: id)
             outgoingStartsByWorkspace[workspaceID]?.removeValue(forKey: id)

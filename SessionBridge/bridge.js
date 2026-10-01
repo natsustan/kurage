@@ -429,6 +429,7 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
   const key = JSON.stringify([workspaceID, sessionID, turnID]);
   if (!steerTargets.has(key)) steerTargets.set(key, {});
   const state = steerTargets.get(key);
+  let result;
   try {
     const access = {
       baseURL: gatewayBaseURL,
@@ -442,12 +443,13 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
     };
     const steering = { state, request: (machineID, params) => requestMachine(access, workspaceID, machineID,
       'session/steer', params, controller.signal, 5000) };
-    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    result = await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
       repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering),
       { operationID, signal: controller.signal }, controller.signal);
+    return result;
   } finally {
     controller.abort();
-    if (!state.expectedTurnID) steerTargets.delete(key);
+    if (!state.expectedTurnID || result === 'sent' || result === 'superseded') steerTargets.delete(key);
     if (operationID) sessionRefreshes.delete(operationID);
   }
 };

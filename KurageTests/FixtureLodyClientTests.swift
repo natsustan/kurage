@@ -2,6 +2,37 @@ import Foundation
 import Testing
 @testable import Kurage
 
+// Exercise the same staging and delivery entry points as the feature views.
+@MainActor
+@discardableResult
+func stageAndDeliverMessage(_ model: AppModel, _ text: String, attachments: [ComposerAttachment] = [],
+                            runConfig: RunConfigChoice? = nil, turnID: String = UUID().uuidString.lowercased(),
+                            sessionID: String) async throws -> RunConfigChoice? {
+    try model.stageOutgoingMessage(text, composerText: text, mentions: .init(), attachments: attachments,
+                                   runConfig: runConfig, sessionID: sessionID, turnID: turnID)
+    return try await model.deliverOutgoingMessage(sessionID: sessionID)
+}
+
+@MainActor
+func stageAndDeliverSession(_ model: AppModel, _ text: String, attachments: [ComposerAttachment] = [],
+                            agentConfigID: String? = nil, selections: [RunConfigChoice] = [],
+                            projectID: String, templateSessionID: String, parentSessionID: String? = nil) async throws -> String {
+    let id = try model.stageSessionStart(text, composerText: text, mentions: .init(), attachments: attachments,
+        agentConfigID: agentConfigID, selections: selections, projectID: projectID,
+        projectName: model.sessionSummary(templateSessionID)?.projectName ?? "Project",
+        templateSessionID: templateSessionID, parentSessionID: parentSessionID)
+    try await model.deliverOutgoingMessage(sessionID: id)
+    return id
+}
+
+@MainActor
+func stageAndDeliverTab(_ model: AppModel, _ text: String, attachments: [ComposerAttachment] = [],
+                        selections: [RunConfigChoice] = [], agentConfigID: String? = nil, rootID: String) async throws -> String {
+    let root = try #require(model.sessionSummary(rootID))
+    return try await stageAndDeliverSession(model, text, attachments: attachments, agentConfigID: agentConfigID,
+        selections: selections, projectID: root.projectID ?? "", templateSessionID: rootID, parentSessionID: rootID)
+}
+
 @MainActor
 struct FixtureLodyClientTests {
     @Test func attachmentOnlyMessagesKeepImageBytesAndFileMetadata() async throws {
@@ -121,7 +152,7 @@ struct FixtureLodyClientTests {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()
 
-        try await model.send("  look again  ", sessionID: "session-pr")
+        try await stageAndDeliverMessage(model, "  look again  ", sessionID: "session-pr")
 
         #expect(model.sessions.first?.id == "session-pr")
         #expect(model.sessions.first?.preview == "look again")
@@ -139,7 +170,7 @@ struct FixtureLodyClientTests {
         #expect(initial.applying(choice).reasoning?.label == "Low")
         #expect(initial.applying(choice).model == initial.model)
 
-        let sentChoice = try await model.send("faster please", runConfig: choice, sessionID: "session-long")
+        let sentChoice = try await stageAndDeliverMessage(model, "faster please", runConfig: choice, sessionID: "session-long")
         #expect(sentChoice == choice)
         #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value == "low")
     }
@@ -153,10 +184,12 @@ struct FixtureLodyClientTests {
         let firstChoice = hasChoice ? try #require(initial.choosing("low")) : nil
         let retryChoice = try #require(initial.choosing("high"))
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.send("retry me", runConfig: firstChoice, turnID: "original", sessionID: "session-long")
+            try await stageAndDeliverMessage(model, "retry me", runConfig: firstChoice, turnID: "original", sessionID: "session-long")
         }
         #expect(model.pendingTextSend(sessionID: "session-long")?.turnID == "original")
-        let sentChoice = try await model.send("retry me", runConfig: retryChoice, turnID: "replacement", sessionID: "session-long")
+        #expect(retryChoice != firstChoice)
+        #expect(model.retryOutgoingMessage(sessionID: "session-long"))
+        let sentChoice = try await model.deliverOutgoingMessage(sessionID: "session-long")
         #expect(sentChoice == firstChoice)
         #expect(try await latestRunConfig(model, sessionID: "session-long")?.reasoning?.value ==
                 (firstChoice?.value ?? initial.reasoning?.value))
@@ -205,12 +238,14 @@ struct FixtureLodyClientTests {
             action: .select, path: "/Users/demo/projects/New App").project)
         let options = try await model.newSessionOptions(templateSessionID: template.id)
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSession("Create in selected folder", selections: options.runConfig?.selections ?? [],
+            try await stageAndDeliverSession(model, "Create in selected folder", selections: options.runConfig?.selections ?? [],
                 projectID: project.id, templateSessionID: template.id)
         }
         let pending = try #require(model.pendingSessionStarts.first)
         #expect(pending.projectID == project.id)
-        let id = try await model.retrySessionStart(pending)
+        #expect(model.retryOutgoingMessage(sessionID: pending.id))
+        try await model.deliverOutgoingMessage(sessionID: pending.id)
+        let id = pending.id
         #expect(id == pending.id)
         let refreshed = try await client.sessions(workspaceID: "ws-demo")
         #expect(refreshed.first { $0.id == id }?.projectID == project.id)
@@ -239,7 +274,7 @@ struct FixtureLodyClientTests {
         var runConfig = try #require(codex.runConfig)
         runConfig.selectModel("gpt-5.4-mini")
         runConfig.selectReasoning("low")
-        let sessionID = try await model.startSession(
+        let sessionID = try await stageAndDeliverSession(model,
             "  Add a settings screen  ", agentConfigID: "codex", selections: runConfig.selections,
             projectID: "local:machine-1:prism", templateSessionID: template.id
         )
@@ -254,7 +289,7 @@ struct FixtureLodyClientTests {
         #expect(config.reasoning?.value == "low")
 
         await #expect(throws: LodyClientError.notConnected) {
-            try await model.startSession("Wrong project", selections: [],
+            try await stageAndDeliverSession(model, "Wrong project", selections: [],
                                          projectID: "local:machine-1:kurage", templateSessionID: template.id)
         }
     }
@@ -267,7 +302,7 @@ struct FixtureLodyClientTests {
         let template = try #require(model.newSessionTemplate(projectID: projectID))
         let options = try await model.newSessionOptions(templateSessionID: template.id)
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSession("Recover original task", selections: options.runConfig?.selections ?? [], projectID: projectID,
+            try await stageAndDeliverSession(model, "Recover original task", selections: options.runConfig?.selections ?? [], projectID: projectID,
                                          templateSessionID: template.id)
         }
         let pending = try #require(model.pendingSessionStarts.first)
@@ -278,11 +313,13 @@ struct FixtureLodyClientTests {
             try await model.newSessionOptions(templateSessionID: template.id, agentConfigID: provider)
         }
         #expect(configuration.loadFailed)
-        #expect(try await model.retrySessionStart(pending) == pending.id)
+        #expect(try model.restoreSessionStart(pending, projectName: "Prism") == pending.id)
+        #expect(model.retryOutgoingMessage(sessionID: pending.id))
+        try await model.deliverOutgoingMessage(sessionID: pending.id)
         #expect(model.pendingSessionStarts.isEmpty)
         let conversation = try await client.conversation(sessionID: pending.id, workspaceID: "ws-demo")
         #expect(conversation.turns.filter { $0.author == .user }.map(\.text) == ["Recover original task"])
-        await #expect(throws: LodyClientError.sessionMissing) { try await model.retrySessionStart(pending) }
+        #expect(!model.retryOutgoingMessage(sessionID: pending.id))
     }
 
     @Test func signingOutClearsPendingCreationRecovery() async throws {
@@ -292,7 +329,7 @@ struct FixtureLodyClientTests {
         let template = try #require(model.newSessionTemplate(projectID: "local:machine-1:prism"))
         let options = try await model.newSessionOptions(templateSessionID: template.id)
         await #expect(throws: LodyClientError.deliveryUnconfirmed) {
-            try await model.startSession("Pending", selections: options.runConfig?.selections ?? [], projectID: "local:machine-1:prism",
+            try await stageAndDeliverSession(model, "Pending", selections: options.runConfig?.selections ?? [], projectID: "local:machine-1:prism",
                                          templateSessionID: template.id)
         }
         #expect(model.pendingSessionStarts.count == 1)
