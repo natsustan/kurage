@@ -844,7 +844,7 @@ final class ShellFlowTests: XCTestCase {
             XCTAssertTrue(indicator.isHittable)
             XCTAssertEqual(indicator.frame.width, 44, accuracy: 0.5)
             XCTAssertEqual(indicator.frame.height, 44, accuracy: 0.5)
-            XCTAssertGreaterThan(indicator.frame.minX, app.buttons["add-attachment"].frame.maxX)
+            XCTAssertGreaterThanOrEqual(indicator.frame.minX, app.buttons["add-attachment"].frame.maxX)
             XCTAssertEqual(indicator.label, "Permission mode")
             XCTAssertEqual(indicator.value as? String, "Full access")
             attachScreen(app, name: "\(name)-full-access-row")
@@ -884,7 +884,7 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
         let context = app.buttons["context-window-usage"]
         XCTAssertTrue(context.waitForExistence(timeout: 5))
-        XCTAssertLessThan(context.frame.maxX, menu.frame.minX)
+        XCTAssertLessThanOrEqual(context.frame.maxX, menu.frame.minX)
         XCTAssertEqual(context.label, "Context window")
         XCTAssertEqual(context.value as? String, "217K used of 258K")
         tap(context)

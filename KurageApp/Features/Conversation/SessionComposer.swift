@@ -453,26 +453,29 @@ struct SessionComposer: View {
 
     private var actionRow: some View {
         HStack(spacing: 6) {
-            ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
-                                error: $attachmentError, disabled: blocksEditing)
-            FullAccessButton()
-            Spacer(minLength: 0)
-            if let contextWindowUsage, contextWindowUsage.isValid {
-                ContextWindowButton(usage: contextWindowUsage)
+            HStack(spacing: 0) {
+                ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
+                                    error: $attachmentError, disabled: blocksEditing)
+                FullAccessButton()
             }
-            if let runConfig {
-                Button {
-                    showsRunConfig = true
-                } label: {
-                    ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
-                        .frame(width: 25, height: 25)
-                        .frame(width: 44, height: 44)
+            Spacer(minLength: 0)
+            HStack(spacing: 0) {
+                if let contextWindowUsage, contextWindowUsage.isValid {
+                    ContextWindowButton(usage: contextWindowUsage)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(runConfig.accessibilitySummary)
-                .accessibilityHint("Adjust reasoning or open advanced settings")
-                .accessibilityIdentifier("run-config-menu")
-
+                if let runConfig {
+                    Button {
+                        showsRunConfig = true
+                    } label: {
+                        ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
+                            .frame(width: 25, height: 25)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(runConfig.accessibilitySummary)
+                    .accessibilityHint("Adjust reasoning or open advanced settings")
+                    .accessibilityIdentifier("run-config-menu")
+                }
             }
             if isSessionRunning && supportsSessionCancellation && !showsSend {
                 Button(action: onCancel) {

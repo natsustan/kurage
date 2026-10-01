@@ -40,8 +40,8 @@
 
 ## 深色模式消息气泡对比度（2026-10-01）
 
-- 我方文字气泡背景由 6% 透明度的 label 色改为不透明的系统 `systemGray5`，随浅色／深色外观自动切换，提升黑色会话背景上的可辨识度。
-- 本轮 Simulator 构建通过；现有多行 Unicode 消息复制 UI 用例在浅色／深色模式各通过一次，截图确认气泡与页面背景清楚区分。使用 fixture，未验证真机或真实账号。
+- 我方文字气泡在深色模式使用不透明的系统 `systemGray5`，提升黑色会话背景上的可辨识度；浅色模式保持原有 6% 透明度的 label 色。动态颜色随系统外观自动切换。
+- 浅色恢复修订的 Simulator 构建通过；现有多行 Unicode 消息复制 UI 用例在浅色／深色模式各通过一次。截图确认浅色气泡恢复原有淡灰，深色气泡与修订前一致。使用 fixture，未验证真机或真实账号。
 
 ## 发送与暂停按钮胶囊形试用（2026-10-01）
 
@@ -136,8 +136,9 @@
 ## Markdown 渲染（2026-09-29）
 
 - 会话正文仍用 `MarkdownView`。围栏代码块字号通过公开的 `.font(.system(.footnote, design: .monospaced), for: .codeBlock)` 调小，不改库。行内代码底色没有公开样式，上游在 `MarkdownViewRenderer` 和 `MarkdownTextConverter` 里写死 10% 背景。
-- 依赖改为 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/plain-inline-code`，钉在 `f7ba69da43c1eee1f5494d5857103d3cfe04bfd9`（基于上游 3.0.0 / `6f452b5`，只去掉这两处背景）。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
-- 未改围栏代码块的底色、圆角和描边。行内代码字号仍跟正文。真实会话里的行内代码和代码块字号尚未在模拟器核对。
+- 依赖改为 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/plain-inline-code`，钉在 `b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed`（基于上游 3.0.0 / `6f452b5`，去掉这两处背景，并为两条渲染路径的行内代码设置 `.code` presentation intent 以使用等宽字体）。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
+- 未改围栏代码块的底色、圆角和描边。行内代码使用等宽字体，字号仍跟正文。真实会话里的行内代码和代码块字号尚未在模拟器核对。
+- 行内代码等宽字体修订（2026-10-01）：MarkdownView 的 14 项文本转换测试通过，客户端 Simulator 构建通过；尚未在模拟器或真实账号核对视觉效果。
 
 ## 当前状态
 

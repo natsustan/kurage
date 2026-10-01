@@ -6,7 +6,7 @@ import UIKit
 
 struct ComposerMentionsTests {
     @MainActor
-    @Test(.serialized, arguments: ["Send a follow-up", "Describe a task"])
+    @Test(.serialized, arguments: ["Send a follow-up", "Build anything"])
     func emptyComposerExposesItsInputPurpose(placeholder: String) throws {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let host = UIHostingController(rootView: SessionComposer(
