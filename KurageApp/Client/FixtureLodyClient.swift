@@ -105,15 +105,9 @@ final class FixtureLodyClient: LodyClient {
         filePreviewUnavailableReason: String? = nil,
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
-        failBranchSwitchOnce: Bool = false,
-        dirtyProject: String? = nil
+        projectGitFailureOnce: ProjectGitFailure? = nil
     ) {
-        self.failBranchSwitchOnce = failBranchSwitchOnce
-        if let dirtyProject {
-            projectGitStates[dirtyProject] = ProjectGitState(git: true, currentBranch: "lody:branch:local:main",
-                branches: ["lody:branch:local:main", "lody:branch:local:feature%2Fclient"],
-                workingTree: .init(clean: false, staged: false, unstaged: false, untracked: true, conflicted: false), busy: false)
-        }
+        self.projectGitFailureOnce = projectGitFailureOnce
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.filePreviewDelay = filePreviewDelay
@@ -451,12 +445,12 @@ final class FixtureLodyClient: LodyClient {
     }
 
     private var addedProjects: [String: SessionProject] = [:]
-    var supportsProjectBranches: Bool { true }
+    var supportsProjectGitReading: Bool { true }
     var projectGitStates: [String: ProjectGitState] = [:]
     var projectGitDelay: Duration? = nil
-    var failBranchSwitchOnce = false
+    private var projectGitFailureOnce: ProjectGitFailure?
 
-    func projectGit(templateSessionID: String, projectID: String, branch: String?, workspaceID: String) async throws -> ProjectGitResult {
+    func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult {
         if let projectGitDelay { try await Task.sleep(for: projectGitDelay) }
         try Task.checkCancellation()
         try requireAccount()
@@ -469,32 +463,12 @@ final class FixtureLodyClient: LodyClient {
               addedProjects[projectID] != nil || records.contains(where: { $0.summary.projectID == projectID }) else {
             throw LodyClientError.notConnected
         }
-        var state = projectGitStates[projectID] ?? ProjectGitState(
-            git: true, currentBranch: "lody:branch:local:main",
-            branches: ["lody:branch:local:main", "lody:branch:local:feature%2Fclient", "lody:branch:remote:origin:develop"],
-            workingTree: .init(clean: true, staged: false, unstaged: false, untracked: false, conflicted: false), busy: false)
-        state.busy = records.contains { $0.summary.projectID == projectID &&
-            !archivedSessionIDs.contains($0.summary.id) && $0.summary.activity == .running }
-        if let branch {
-            guard state.git else { return ProjectGitResult(state: state, failure: .notGit) }
-            guard !state.busy else { return ProjectGitResult(state: state, failure: .busy) }
-            guard state.branches.contains(branch) else { return ProjectGitResult(state: state, failure: .branchMissing) }
-            if state.currentBranch != branch {
-                guard state.workingTree?.clean == true else { return ProjectGitResult(state: state, failure: .localChanges) }
-                if failBranchSwitchOnce {
-                    failBranchSwitchOnce = false
-                    return ProjectGitResult(state: state, failure: .switchFailed)
-                }
-                if ProjectBranch(id: branch).isRemote {
-                    let name = ProjectBranch(id: branch).name.split(separator: "/", maxSplits: 1).last.map(String.init) ?? "develop"
-                    state.currentBranch = "lody:branch:local:\(name.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? name)"
-                    if let current = state.currentBranch, !state.branches.contains(current) { state.branches.append(current) }
-                } else { state.currentBranch = branch }
-                projectGitStates[projectID] = state
-            }
+        if let failure = projectGitFailureOnce {
+            projectGitFailureOnce = nil
+            return ProjectGitResult(failure: failure)
         }
-        state.observedAtMs = Date().timeIntervalSince1970 * 1_000
-        return ProjectGitResult(state: state)
+        return ProjectGitResult(state: projectGitStates[projectID] ?? ProjectGitState(
+            git: true, currentBranch: "lody:branch:local:main"))
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,

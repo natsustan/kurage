@@ -90,7 +90,6 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     loadTurnDiff: extras.loadTurnDiff,
     projectGitSource: extras.projectGitSource ?? projectGitSource,
     readProjectGit: extras.readProjectGit,
-    switchProjectBranch: extras.switchProjectBranch,
     fetch: async () => {},
     AbortController,
     setTimeout,
@@ -134,7 +133,7 @@ test('project Git releases metadata lock, scopes token refresh and cancels only 
   const bridge = makeBridge(undefined, [], undefined, undefined, {
     projectGitSource: async (_repo, workspace, template, project) => {
       assert.equal(workspace, 'workspace'); assert.equal(template, 'template'); assert.equal(project, 'local:mac:p');
-      return { machineID: 'mac', localProjectID: 'p', busy: false };
+      return { machineID: 'mac', localProjectID: 'p' };
     },
     createNativeFetch: () => ({ fetch: async () => {}, receive() {}, bindSignal: (token, signal) => { bound = { token, signal }; } }),
     postMessage: async message => {
@@ -150,7 +149,7 @@ test('project Git releases metadata lock, scopes token refresh and cancels only 
       return await new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
     },
   });
-  const pending = bridge.window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user', null, 'git-read');
+  const pending = bridge.window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user', 'git-read');
   void pending.catch(() => {});
   await ready;
   await bridge.window.kurageSessions('workspace', 'https://streams.test', 'list');

@@ -62,10 +62,9 @@ protocol LodyClient: AnyObject {
                            sessionID: String, workspaceID: String) async throws
     /// Whether a local project can start a session from its most recent one.
     var supportsSessionCreation: Bool { get }
-    var supportsProjectBranches: Bool { get }
-    /// A non-nil branch switches the shared project folder, then reads its state.
-    /// Never retry a switch automatically after an uncertain result.
-    func projectGit(templateSessionID: String, projectID: String, branch: String?, workspaceID: String) async throws -> ProjectGitResult
+    var supportsProjectGitReading: Bool { get }
+    /// Read the current branch of the registered project folder.
+    func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult
 
     var supportsSessionTabs: Bool { get }
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws
@@ -206,8 +205,8 @@ extension LodyClient {
         throw LodyClientError.notConnected
     }
     var supportsSessionCreation: Bool { false }
-    var supportsProjectBranches: Bool { false }
-    func projectGit(templateSessionID: String, projectID: String, branch: String?, workspaceID: String) async throws -> ProjectGitResult {
+    var supportsProjectGitReading: Bool { false }
+    func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult {
         ProjectGitResult(failure: .unsupported)
     }
 

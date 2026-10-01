@@ -1,15 +1,13 @@
 # Kurage 会话功能
 
-## 本地项目分支读取与切换（2026-10-01）
+## 本地项目当前分支只读（2026-10-01）
 
-- New Session 的 Project 行下新增原生分支菜单，显示项目根目录的当前分支，可选择本地分支及机器已有的远端跟踪引用，返回前台刷新，读取失败或切换结果未确认时提供重试。已核查现有机器协议仅支持已有分支 checkout，因此不提供创建分支入口。保留 Lody 的精确分支 selector，显示名称时才解码；远端切换交由机器端建立／复用本地跟踪分支。非 Git、detached HEAD、无权限、旧机器不支持及读取失败均有明确状态。New Tab 继承原会话目录，不提供项目分支切换。
-- 读取经 `AppModel` → `LodyClient` → `SessionSyncBridge` 调用 `local-project/git-state`；切换调用 `local-project/control` 的 `local-project/checkout-branch`。按工作区／机器／项目验证目录登记、待删除状态及响应归属；机器请求在 metadata 读取锁外进行，沿用独立鉴权、刷新与取消作用域，不阻塞实时正文。分支状态只保留在页面，不写磁盘或会话 metadata。
-- 机器、项目、分支详情行统一最小高度与间距，移除分支行下常驻说明；dirty／running 时菜单选项保持可点击，点选后弹出原生 Error，实际切换失败也使用弹窗，保留当前分支及草稿。
-- 切换前重新读取 Git 状态并再次同步 metadata，阻止运行中、待派发或待 steer 的项目会话、尚未确认的新会话／Tab，以及有本地修改的工作区；机器端再次检查修改状态。切换期间禁用发送及项目选择，保留草稿；结束或取消后重新解析技能提及。切换回复丢失时不自动重发命令，重新读取实际分支；尚未读到状态时阻止发送，用户可刷新。创建仍直接使用项目目录，不创建 worktree，不为会话固定分支。
-- 协议参考本机 Lody `ea3d599e`：`packages/loro-streams-rpc/src/rpc.ts` 的 Git-state 请求／响应与 control，`packages/shared/src/message.ts` 的 checkout schema，`packages/shared/src/node/local-project.cjs` 的分支 selector／checkout，以及 `apps/cli/src/lib/message-handler.ts` 的机器访问校验。运行会话保护是客户端 metadata 检查，现有机器接口不提供与其它端派发或切换共用的原子锁；跨端竞争仍可能发生。
-- 初次接入时的验证记录：frozen lockfile 安装、293 项 JavaScript 测试及 bundle 重建通过；最终代码的 39 项 Swift 定向测试通过，包括账号／工作区过期结果隔离、未确认 Tab 的切换保护和 WebKit→原生网络取消。浅色默认字号 3 项 fixture UI 测试通过，覆盖项目／目录选择、失败重试、远端分支、后台返回、草稿保留与 dirty／running 保护；深色 accessibility-extra-large 两项分支 UI 回归通过。大字号初测发现长失败提示使分支行部分滚入导航栏，缩短提示后复测通过，截图确认分支／项目入口、失败提示、草稿与键盘区域可用，已恢复模拟器显示设置。真实账号的读取／切换、跨端竞争、断网后结果确认与真机尚未实测。
-
-- 本次交互调整：最终代码的深色 accessibility-extra-large 两项 fixture UI 回归通过，覆盖点击后报错、错误关闭后重试、详情行间距、远端切换、后台返回、草稿保留与不展示创建入口；浅色默认字号截图也已检查。`git diff --check` 通过。首轮测试因原生 alert 不暴露旧行内文本标识而失败，已改用 alert／消息内容断言后通过；真实账号与真机本次未验证。
+- New Session 的 Project 行下显示项目目录的当前分支，点击该行刷新，返回前台自动刷新。读取失败显示具体原因并可点击重试；非 Git、detached HEAD、无权限及旧机器不支持有明确状态。保留英文文案、动态字号与草稿，读取状态不阻止发送或选择项目。New Tab 继承原会话目录，不展示项目分支行。
+- 读取经 `AppModel` → `LodyClient` → `SessionSyncBridge` 调用 `local-project/git-state`。按工作区／机器／项目验证目录登记、待删除状态及响应归属；机器请求在 metadata 读取锁外进行，沿用独立鉴权、令牌刷新与取消作用域。页面只保留当前分支，不缓存到磁盘或会话 metadata。
+- 审查确认 Lody `ea3d599e` 的本地 daemon control 支持 checkout，但 Streams RPC 的 `dispatchLocalProjectControlViaRpc`／`precheckLocalProjectHistoryRequest` 不接受 `local-project/checkout-branch`。客户端已移除切换入口、checkout RPC、busy／dirty 检查、切换未确认状态及对应 fixture；当前功能仅为读取，不支持创建或切换分支。新会话仍直接使用项目目录，不创建 worktree 或固定分支。
+- 协议参考：Lody `packages/loro-streams-rpc/src/rpc.ts` 的 Git-state 请求／响应，`packages/shared/src/node/local-project.cjs` 的分支 selector，`apps/cli/src/lib/message-handler.ts` 的 Git-state 访问校验及远端 control 路由，`apps/cli/src/lib/local-project-history-precheck.ts` 的远端请求白名单。selector 仅在显示名称时解码。
+- 本轮 `pnpm install --frozen-lockfile`、289 项桥接测试、bundle 重建、XcodeGen、iOS Simulator 编译、6 项 ProjectGit Swift 测试及 `git diff --check` 通过。原生桥接的取消与代理 4 项测试通过（含 project-git 取消）；扩大运行套件时，现有压缩 Unicode／加密预览用例因模拟器 file 页面缺少 `crypto.subtle` 失败，未修改该用例或相关实现。
+- 本轮 fixture UI 在浅色默认字号下 3 项、深色 accessibility-extra-large 下 2 项通过，覆盖刷新、前后台恢复、失败重试、草稿保持、发送及项目／目录选择；截图确认分支行与错误原因未重叠或裁切。深色大字号切换项目后，输入框截图偶尔仅显示草稿末尾，测试确认完整草稿仍保留，输入框滚动位置待后续排查。截图未绘出软件键盘，键盘存在与输入框避让的自动断言通过。真实账号与真机读取尚未验证。
 
 ## PR #23 后台代码比较审查修复（2026-10-01）
 

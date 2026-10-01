@@ -64,9 +64,6 @@ struct NewSessionView: View {
     @State private var attachments: [ComposerAttachment] = []
     @State private var startedSessionID: SessionSummary.ID?
     @State private var banner: String?
-    @State private var isSwitchingBranch = false
-    @State private var requiresBranchRefresh = false
-    @State private var branchRevision = 0
     @Environment(\.scenePhase) private var scenePhase
 
     init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
@@ -147,9 +144,9 @@ struct NewSessionView: View {
                     placeholder: "Build anything",
                     identifiers: .init(container: "new-session-composer", field: "new-session-field",
                                        send: "new-session-send"),
-                    canSubmit: isCurrentWorkspace && scenePhase == .active && !isSwitchingBranch && !requiresBranchRefresh && pendingStart == nil && options != nil && !isLoading && !loadFailed,
+                    canSubmit: isCurrentWorkspace && scenePhase == .active && pendingStart == nil && options != nil && !isLoading && !loadFailed,
                     focusesOnAppear: true,
-                    mentionSourceID: "\(route.workspaceGeneration):\(projectID):\(templateSessionID):\(options?.agentConfigID ?? ""):\(branchRevision)",
+                    mentionSourceID: "\(route.workspaceGeneration):\(projectID):\(templateSessionID):\(options?.agentConfigID ?? "")",
                     loadMentionSessions: { try await model.mentionSessions(projectID: projectID) },
                     loadMentionSkills: {
                         try await model.mentionSkills(templateSessionID: templateSessionID,
@@ -191,13 +188,11 @@ struct NewSessionView: View {
                     workspaceGeneration: route.workspaceGeneration,
                     onChoose: selectProject
                 )
-                .disabled(isStarting || isSwitchingBranch || pendingStart != nil || !isCurrentWorkspace)
-                if model.supportsProjectBranches {
-                    ProjectBranchMenu(model: model, projectID: projectID, templateSessionID: templateSessionID,
-                                      workspaceGeneration: route.workspaceGeneration,
-                                      isDisabled: isStarting || pendingStart != nil,
-                                      onSwitchFinished: { branchRevision += 1 },
-                                      isSwitching: $isSwitchingBranch, requiresBranchRefresh: $requiresBranchRefresh)
+                .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
+                if model.supportsProjectGitReading {
+                    ProjectBranchRow(model: model, projectID: projectID, templateSessionID: templateSessionID,
+                                     workspaceGeneration: route.workspaceGeneration,
+                                     isDisabled: isStarting || pendingStart != nil)
                         .id(projectID)
                 }
             } else {
@@ -246,7 +241,6 @@ struct NewSessionView: View {
         guard isCurrentWorkspace, !isStarting else { return }
         configuration.cancelLoads()
         selectedProject = project
-        requiresBranchRefresh = false
         configuration = NewSessionConfiguration()
         request = LoadRequest(attempt: request.attempt + 1)
         // The draft is preserved, so its mentions must be too: clearing them
@@ -287,7 +281,7 @@ struct NewSessionView: View {
     }
 
     private func start() {
-        guard isCurrentWorkspace, scenePhase == .active, !isSwitchingBranch, !requiresBranchRefresh, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
+        guard isCurrentWorkspace, scenePhase == .active, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
               (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
         do {
             let id = try model.stageSessionStart(mentions.expanded(draft), composerText: draft, mentions: mentions,
