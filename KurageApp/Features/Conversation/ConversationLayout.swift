@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
 
+enum ConversationMetrics {
+    static let maximumContentWidth: CGFloat = 800
+}
+
 /// UIKit owns keyboard avoidance and scrolling; SwiftUI owns message and composer content.
 struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     let turns: [ConversationTurn]
@@ -95,10 +99,15 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         // Track the screen edge when the keyboard is hidden, so the transcript fills the
         // home-indicator area instead of leaving the view's background as an empty band.
         view.keyboardLayoutGuide.usesBottomSafeArea = false
+        let fillsAvailableWidth = contentView.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor)
+        fillsAvailableWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             contentView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            contentView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            contentView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            contentView.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor),
+            contentView.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor),
+            contentView.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            contentView.widthAnchor.constraint(lessThanOrEqualToConstant: ConversationMetrics.maximumContentWidth),
+            fillsAvailableWidth,
             contentView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
         ])
 

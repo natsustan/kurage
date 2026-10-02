@@ -20,6 +20,7 @@ struct KurageApp: App {
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
                 failStartAndArchiveProjectOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-unconfirmed"),
+                rejectStartOnce: ProcessInfo.processInfo.arguments.contains("--fixture-start-rejected"),
                 sendDelay: ProcessInfo.processInfo.arguments.contains("--fixture-tab-send") ? .seconds(15)
                     : ProcessInfo.processInfo.arguments.contains("--fixture-slow-send") ? .seconds(3) : nil,
                 startDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-start") ? .seconds(8) : nil,

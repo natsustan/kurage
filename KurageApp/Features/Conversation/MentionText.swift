@@ -136,9 +136,15 @@ private final class MentionIconAttachment: NSTextAttachment {
 /// UTF-16 positions stay unchanged: only the one-character trigger becomes an
 /// icon attachment. Native selection, dictation, and IME composition stay in UIKit.
 struct MentionEditor: UIViewRepresentable {
+    struct SelectionRequest: Equatable {
+        let id = UUID()
+        let caret: Int
+    }
+
     @Binding var text: String
     @Binding var selection: TextSelection?
     @Binding var isFocused: Bool
+    var selectionRequest: SelectionRequest? = nil
     let ranges: [ComposerMentionState.Range]
     let isEnabled: Bool
     let identifier: String
@@ -180,16 +186,7 @@ struct MentionEditor: UIViewRepresentable {
                 coordinator.renderedFont = font
                 coordinator.renderedStyle = view.traitCollection.userInterfaceStyle
             }
-            if let selection, case .selection(let range) = selection.indices,
-               (range.lowerBound == text.endIndex || text.indices.contains(range.lowerBound)),
-               (range.upperBound == text.endIndex || text.indices.contains(range.upperBound)) {
-                let start = range.lowerBound.utf16Offset(in: text)
-                let end = range.upperBound.utf16Offset(in: text)
-                if start <= end, end <= view.attributedText.length {
-                    let desired = NSRange(location: start, length: end - start)
-                    if view.selectedRange != desired { view.selectedRange = desired }
-                }
-            }
+            coordinator.applyRequestedSelection(to: view)
         }
         view.typingAttributes = [.font: font, .foregroundColor: UIColor.label]
         // Changing isEditable while this is the first responder can reenter
@@ -220,16 +217,33 @@ struct MentionEditor: UIViewRepresentable {
         var renderedRanges: [ComposerMentionState.Range] = []
         var renderedFont: UIFont?
         var renderedStyle: UIUserInterfaceStyle = .unspecified
+        var appliedSelectionRequest: SelectionRequest?
+        private var hasDeferredEdit = false
 
         init(_ parent: MentionEditor) { self.parent = parent }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-            parent.isEnabled
+            return parent.isEnabled
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            guard !isUpdating else { return }
+            if isUpdating {
+                // UIKit can deliver keyboard input while responder/layout work
+                // reenters the run loop inside updateUIView. Publish the latest
+                // native edit after that update instead of dropping the input.
+                guard !hasDeferredEdit else { return }
+                hasDeferredEdit = true
+                Task { @MainActor [weak self, weak textView] in
+                    guard let self, let textView else { return }
+                    hasDeferredEdit = false
+                    textViewDidChange(textView)
+                }
+                return
+            }
             let edited = MentionText.originalText(textView.attributedText)
+            // UIKit already rendered this edit. Replacing attributedText on
+            // every keystroke can interrupt native input and move the caret.
+            renderedText = edited
             parent.text = edited
             // Atomic deletion can expand the edit and supply its own caret.
             if parent.text == edited { updateSelection(textView) }
@@ -240,13 +254,26 @@ struct MentionEditor: UIViewRepresentable {
             updateSelection(textView)
         }
 
+        func applyRequestedSelection(to view: UITextView) {
+            // Native selections are published for mention queries. Explicit
+            // requests are the only selections written back to UIKit.
+            guard let request = parent.selectionRequest, request != appliedSelectionRequest,
+                  request.caret >= 0, request.caret <= view.attributedText.length else { return }
+            appliedSelectionRequest = request
+            let desired = NSRange(location: request.caret, length: 0)
+            if view.selectedRange != desired { view.selectedRange = desired }
+        }
+
         private func updateSelection(_ view: UITextView) {
             let range = view.selectedRange
             let text = parent.text
-            guard NSMaxRange(range) <= text.utf16.count else { return }
+            guard text == MentionText.originalText(view.attributedText), NSMaxRange(range) <= text.utf16.count else { return }
             let indices = String.Index(utf16Offset: range.location, in: text)..<String.Index(utf16Offset: NSMaxRange(range), in: text)
-            if let selection = parent.selection, case .selection(let previous) = selection.indices, previous == indices { return }
-            parent.selection = TextSelection(range: indices)
+            if let selection = parent.selection, case .selection(let previous) = selection.indices, previous == indices {
+                return
+            }
+            let selection = TextSelection(range: indices)
+            parent.selection = selection
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) { if !isUpdating { parent.isFocused = true } }

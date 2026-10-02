@@ -1,6 +1,6 @@
 import SwiftUI
 
-private struct TabDraft {
+struct ConversationDraft {
     var text = ""
     var mentions = ComposerMentionState()
     var attachments: [ComposerAttachment] = []
@@ -9,15 +9,40 @@ private struct TabDraft {
     var runConfig = ConversationRunConfigState()
 }
 
+/// Transient drafts outlive the detail column, but never cross a workspace generation.
+@MainActor @Observable
+final class ConversationDraftStore {
+    private struct Key: Hashable {
+        let rootID: String
+        let workspaceGeneration: Int
+    }
+
+    private var values: [Key: [String: ConversationDraft]] = [:]
+
+    subscript(rootID rootID: String, sessionID sessionID: String, workspaceGeneration workspaceGeneration: Int) -> ConversationDraft {
+        get { values[Key(rootID: rootID, workspaceGeneration: workspaceGeneration)]?[sessionID] ?? ConversationDraft() }
+        set { values[Key(rootID: rootID, workspaceGeneration: workspaceGeneration), default: [:]][sessionID] = newValue }
+    }
+
+    func removeRoots(_ rootIDs: Set<String>, workspaceGeneration: Int) {
+        guard !rootIDs.isEmpty else { return }
+        values = values.filter { key, _ in
+            key.workspaceGeneration != workspaceGeneration || !rootIDs.contains(key.rootID)
+        }
+    }
+}
+
 struct ConversationTabsContent: View {
     let rootID: String
     let title: String
     let model: AppModel
     let workspaceGeneration: Int
     let isReadOnly: Bool
+    var draftStore: ConversationDraftStore? = nil
+    var onArchived: (() -> Void)? = nil
     var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
     @Environment(\.scenePhase) private var scenePhase
-    @State private var drafts: [String: TabDraft] = [:]
+    @State private var localDrafts = ConversationDraftStore()
     @State private var showsNewTab = false
     @State private var restoredTabMessage: OutgoingMessage?
     @State private var errorMessage: String?
@@ -27,9 +52,9 @@ struct ConversationTabsContent: View {
     private var tabs: [SessionSummary] { model.sessionTabs(rootID: rootID) }
     private var openTabs: [SessionSummary] { tabs.filter { $0.id == rootID || $0.isTabClosed != true } }
     private var closedTabs: [SessionSummary] { tabs.filter { $0.id != rootID && $0.isTabClosed == true } }
-    private var draft: Binding<TabDraft> {
-        let id = activeID
-        return Binding(get: { drafts[id] ?? TabDraft() }, set: { drafts[id] = $0 })
+    private var draft: Binding<ConversationDraft> {
+        @Bindable var store = draftStore ?? localDrafts
+        return $store[rootID: rootID, sessionID: activeID, workspaceGeneration: workspaceGeneration]
     }
 
     var body: some View {
@@ -39,11 +64,12 @@ struct ConversationTabsContent: View {
                     projectID: model.sessionSummary(rootID)?.projectID ?? "",
                     projectName: model.sessionSummary(rootID)?.projectName ?? "Shared working directory",
                     templateSessionID: rootID, workspaceGeneration: workspaceGeneration, parentSessionID: rootID
-                ), model: model, restoredMessage: restoredTabMessage) { id in
+                ), model: model, restoredMessage: restoredTabMessage, onStaged: { id in
+                    guard let id else { return }
                     model.setActiveSessionTab(id, rootID: rootID)
                     showsNewTab = false
                     restoredTabMessage = nil
-                }
+                })
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button("Cancel") { showsNewTab = false }
@@ -56,7 +82,7 @@ struct ConversationTabsContent: View {
                     draft: draft.text, mentions: draft.mentions, attachments: draft.attachments,
                     isCancelling: draft.isCancelling, banner: draft.banner,
                     runConfigState: draft.runConfig,
-                    rootSessionID: rootID,
+                    rootSessionID: rootID, onArchived: onArchived,
                     onNewTab: !isReadOnly && model.supportsSessionTabs ? {
                         restoredTabMessage = nil
                         showsNewTab = true
@@ -78,6 +104,8 @@ struct ConversationTabsContent: View {
                 SessionTabBar(rootID: rootID, activeID: activeID, openTabs: openTabs,
                               select: { model.setActiveSessionTab($0, rootID: rootID) },
                               setClosed: setClosed)
+                    .frame(maxWidth: ConversationMetrics.maximumContentWidth)
+                    .frame(maxWidth: .infinity)
                     .disabled(changingTab || scenePhase != .active)
             }
         }

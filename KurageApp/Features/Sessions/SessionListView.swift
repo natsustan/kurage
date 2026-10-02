@@ -6,17 +6,121 @@ struct SessionNavigation {
         case newSession(NewSessionRoute)
     }
 
-    var path: [Route] = []
+    var selection: Route?
+    var stagedSessionID: SessionSummary.ID?
+    var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
+
+    var selectedSessionID: SessionSummary.ID? {
+        if case .conversation(let id) = selection { return id }
+        return stagedSessionID
+    }
+
+    mutating func open(_ route: Route) {
+        if selection != route {
+            selection = route
+            stagedSessionID = nil
+        }
+        preferredCompactColumn = .detail
+    }
 }
 
 struct SessionListView: View {
     let model: AppModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var navigation = SessionNavigation()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var drafts = ConversationDraftStore()
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility,
+                            preferredCompactColumn: $navigation.preferredCompactColumn) {
+            SessionSidebarView(
+                model: model,
+                selectedSessionID: navigation.selectedSessionID,
+                isCompactWindow: horizontalSizeClass == .compact,
+                isDetailPresented: navigation.preferredCompactColumn == .detail,
+                onOpen: { id in
+                    if navigation.selectedSessionID == id {
+                        navigation.preferredCompactColumn = .detail
+                    } else {
+                        navigation.open(.conversation(id))
+                    }
+                },
+                onNewSession: startNewSession,
+                onOpenPending: { navigation.open(.newSession($0)) }
+            )
+            .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
+        } detail: {
+            SessionDetailView(route: navigation.selection, model: model, drafts: drafts,
+                onStaged: { id in
+                    if id == nil, let discardedID = navigation.stagedSessionID {
+                        drafts.removeRoots([discardedID], workspaceGeneration: model.workspaceGeneration)
+                    }
+                    navigation.stagedSessionID = id
+                },
+                onArchived: { route in
+                    guard navigation.selection == route else { return }
+                    navigation = SessionNavigation()
+                })
+        }
+        .navigationSplitViewStyle(.balanced)
+        .onChange(of: model.sessions.map(\.id)) { previousIDs, ids in
+            drafts.removeRoots(Set(previousIDs).subtracting(ids), workspaceGeneration: model.workspaceGeneration)
+            guard let id = navigation.selectedSessionID,
+                  !ids.contains(id), !model.isSessionStartPending(sessionID: id) else { return }
+            navigation = SessionNavigation()
+        }
+    }
+
+    private func startNewSession(projectID: String) {
+        guard let template = model.newSessionTemplate(projectID: projectID) else { return }
+        navigation.open(.newSession(NewSessionRoute(
+            projectID: projectID,
+            projectName: template.projectName ?? "Project",
+            templateSessionID: template.id,
+            workspaceGeneration: model.workspaceGeneration
+        )))
+    }
+}
+
+private struct SessionDetailView: View {
+    let route: SessionNavigation.Route?
+    let model: AppModel
+    let drafts: ConversationDraftStore
+    let onStaged: (SessionSummary.ID?) -> Void
+    let onArchived: (SessionNavigation.Route) -> Void
+
+    var body: some View {
+        switch route {
+        case .conversation(let id):
+            ConversationView(sessionID: id, title: model.sessionSummary(id)?.title ?? "Session",
+                             model: model, draftStore: drafts, onArchived: { onArchived(.conversation(id)) })
+        case .newSession(let newSession):
+            NewSessionView(route: newSession, model: model, draftStore: drafts,
+                           onArchived: { onArchived(.newSession(newSession)) }, onStaged: onStaged)
+                .id(newSession.id)
+        case nil:
+            ContentUnavailableView("Select a session", systemImage: "bubble.left.and.bubble.right",
+                                   description: Text("Choose a conversation or start a new chat."))
+                .accessibilityIdentifier("session-detail-empty")
+        }
+    }
+}
+
+private struct SessionSidebarView: View {
+    let model: AppModel
+    let selectedSessionID: SessionSummary.ID?
+    let isCompactWindow: Bool
+    let isDetailPresented: Bool
+    let onOpen: (SessionSummary.ID) -> Void
+    let onNewSession: (String) -> Void
+    let onOpenPending: (NewSessionRoute) -> Void
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
-    @State private var navigation = SessionNavigation()
+    @State private var isVisible = false
 
     private var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -29,144 +133,134 @@ struct SessionListView: View {
 
     private var refreshContext: RefreshContext {
         RefreshContext(
-            isVisible: scenePhase == .active && navigation.path.isEmpty && !showArchivedSessions,
+            isVisible: scenePhase == .active && isVisible && !showArchivedSessions
+                && (!isCompactWindow || !isDetailPresented),
             workspaceGeneration: model.workspaceGeneration
         )
     }
 
     var body: some View {
-        NavigationStack(path: $navigation.path) {
-            SessionList(
-                sessions: model.sessions,
-                canEdit: model.supportsSessionMetadataEditing,
-                canCopyURL: model.canCopySessionURL,
-                onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
-                mode: listMode,
-                supportsConversations: model.supportsConversations,
-                canArchive: model.supportsSessionArchiving,
-                archivingSessionID: model.archivingSessionID,
-                isRefreshing: model.isRefreshingSessions && !model.hasCachedSessions,
-                isIndexingSearch: model.isIndexingSessionSearch,
-                hasIncompleteSearch: model.hasIncompleteSessionSearch,
-                onRetrySearch: { Task { await model.indexSessionsForSearch() } },
-                statusNote: model.statusNote,
-                searchQuery: $searchQuery,
-                query: searchQuery,
-                searchBody: { model.sessionSearchBody(sessionID: $0) },
-                canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
-                onOpen: { navigation.path.append(.conversation($0)) },
-                onChat: {
-                    if let template = model.sessions.first(where: { $0.projectID?.hasPrefix("local:") == true }),
-                       let projectID = template.projectID { startNewSession(projectID: projectID) }
-                },
-                canChat: model.supportsSessionCreation && model.sessions.contains { $0.projectID?.hasPrefix("local:") == true },
-                onNewSession: startNewSession
-            )
-            .task(id: isSearchActive) {
-                if isSearchActive {
-                    await model.indexSessionsForSearch()
-                } else {
-                    model.stopSessionSearch()
-                }
+        SessionList(
+            sessions: model.sessions,
+            canEdit: model.supportsSessionMetadataEditing,
+            canCopyURL: model.canCopySessionURL,
+            onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
+            mode: listMode,
+            selectedSessionID: isCompactWindow ? nil : selectedSessionID,
+            supportsConversations: model.supportsConversations,
+            canArchive: model.supportsSessionArchiving,
+            archivingSessionID: model.archivingSessionID,
+            isRefreshing: model.isRefreshingSessions && !model.hasCachedSessions,
+            isIndexingSearch: model.isIndexingSessionSearch,
+            hasIncompleteSearch: model.hasIncompleteSessionSearch,
+            onRetrySearch: { Task { await model.indexSessionsForSearch() } },
+            statusNote: model.statusNote,
+            searchQuery: $searchQuery,
+            query: searchQuery,
+            searchBody: { model.sessionSearchBody(sessionID: $0) },
+            canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
+            onOpen: onOpen,
+            onChat: {
+                if let template = model.sessions.first(where: { $0.projectID?.hasPrefix("local:") == true }),
+                   let projectID = template.projectID { onNewSession(projectID) }
+            },
+            canChat: model.supportsSessionCreation && model.sessions.contains { $0.projectID?.hasPrefix("local:") == true },
+            onNewSession: onNewSession
+        )
+        .task(id: isSearchActive) {
+            if isSearchActive {
+                await model.indexSessionsForSearch()
+            } else {
+                model.stopSessionSearch()
             }
-            .navigationTitle("Kurage")
-            .navigationBarTitleDisplayMode(.inline)
-            .refreshable { await model.refreshContent() }
-            .navigationDestination(for: SessionNavigation.Route.self) { destination in
-                switch destination {
-                case .conversation(let sessionID):
-                    ConversationView(
-                        sessionID: sessionID,
-                        title: model.sessions.first { $0.id == sessionID }?.title ?? "Session",
-                        model: model
-                    )
-                case .newSession(let route):
-                    NewSessionView(route: route, model: model)
+        }
+        .navigationTitle("Kurage")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await model.refreshContent() }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text("Kurage")
+                        .font(.headline)
+                    Text(model.workspaceLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .lineLimit(1)
+                .accessibilityElement(children: .combine)
             }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    VStack(spacing: 1) {
-                        Text("Kurage")
-                            .font(.headline)
-                        Text(model.workspaceLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            if !model.pendingSessionStarts.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(model.pendingSessionStarts) { pending in
+                            Button(String(pending.displayText.prefix(50))) {
+                                onOpenPending(NewSessionRoute(
+                                    projectID: pending.projectID,
+                                    projectName: model.sessions.first { $0.projectID == pending.projectID }?.projectName ?? "Project",
+                                    templateSessionID: pending.templateSessionID,
+                                    workspaceGeneration: model.workspaceGeneration
+                                ))
+                            }
+                        }
+                    } label: {
+                        Label("Unconfirmed starts", systemImage: "arrow.clockwise.circle")
                     }
-                    .lineLimit(1)
-                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("pending-session-starts")
                 }
-                if !model.pendingSessionStarts.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
+            }
+            ToolbarItem(placement: .topBarLeading) {
+                Menu {
+                    if let email = model.account?.email {
+                        Label(email, systemImage: "person.crop.circle")
+                        Divider()
+                    }
+                    if model.workspaces.count > 1 {
                         Menu {
-                            ForEach(model.pendingSessionStarts) { pending in
-                                Button(String(pending.displayText.prefix(50))) {
-                                    navigation.path.append(.newSession(NewSessionRoute(
-                                        projectID: pending.projectID,
-                                        projectName: model.sessions.first { $0.projectID == pending.projectID }?.projectName ?? "Project",
-                                        templateSessionID: pending.templateSessionID,
-                                        workspaceGeneration: model.workspaceGeneration
-                                    )))
+                            ForEach(model.workspaces) { workspace in
+                                Button {
+                                    Task { await model.selectWorkspace(workspace.id) }
+                                } label: {
+                                    if workspace.id == model.selectedWorkspaceID {
+                                        Label(workspace.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(workspace.name)
+                                    }
                                 }
                             }
                         } label: {
-                            Label("Unconfirmed starts", systemImage: "arrow.clockwise.circle")
+                            Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
                         }
-                        .accessibilityIdentifier("pending-session-starts")
                     }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        if let email = model.account?.email {
-                            Label(email, systemImage: "person.crop.circle")
-                            Divider()
-                        }
-                        if model.workspaces.count > 1 {
-                            Menu {
-                                ForEach(model.workspaces) { workspace in
-                                    Button {
-                                        Task { await model.selectWorkspace(workspace.id) }
-                                    } label: {
-                                        if workspace.id == model.selectedWorkspaceID {
-                                            Label(workspace.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(workspace.name)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
-                            }
-                        }
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                            model.signOut()
-                        }
-                        .accessibilityIdentifier("sign-out-button")
-                    } label: {
-                        AccountAvatar(account: model.account)
+                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                        model.signOut()
                     }
-                    .accessibilityIdentifier("account-menu")
+                    .accessibilityIdentifier("sign-out-button")
+                } label: {
+                    AccountAvatar(account: model.account)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Picker("List view", selection: $listMode) {
-                            Label("By Project", systemImage: "folder").tag(SessionListMode.byProject)
-                            Label("By Time", systemImage: "clock.arrow.circlepath").tag(SessionListMode.byTime)
-                        }
-                        .pickerStyle(.inline)
-                        Divider()
-                        Button("Archived sessions", systemImage: "archivebox") {
-                            showArchivedSessions = true
-                        }
-                        .accessibilityIdentifier("archived-sessions")
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .accessibilityLabel("More options")
+                .accessibilityIdentifier("account-menu")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("List view", selection: $listMode) {
+                        Label("By Project", systemImage: "folder").tag(SessionListMode.byProject)
+                        Label("By Time", systemImage: "clock.arrow.circlepath").tag(SessionListMode.byTime)
                     }
-                    .accessibilityIdentifier("more-options")
+                    .pickerStyle(.inline)
+                    Divider()
+                    Button("Archived sessions", systemImage: "archivebox") {
+                        showArchivedSessions = true
+                    }
+                    .accessibilityIdentifier("archived-sessions")
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .accessibilityLabel("More options")
                 }
+                .accessibilityIdentifier("more-options")
             }
         }
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
         .task(id: refreshContext) {
             guard refreshContext.isVisible else { return }
             await model.refreshSessionsWhileVisible()
@@ -178,16 +272,6 @@ struct SessionListView: View {
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(36)
         }
-    }
-
-    private func startNewSession(projectID: String) {
-        guard let template = model.newSessionTemplate(projectID: projectID) else { return }
-        navigation.path.append(.newSession(NewSessionRoute(
-            projectID: projectID,
-            projectName: template.projectName ?? "Project",
-            templateSessionID: template.id,
-            workspaceGeneration: model.workspaceGeneration
-        )))
     }
 }
 
@@ -241,6 +325,7 @@ private struct SessionList: View {
     let canCopyURL: Bool
     let onAction: (SessionSummary, SessionAction) -> Void
     let mode: SessionListMode
+    let selectedSessionID: SessionSummary.ID?
     let supportsConversations: Bool
     let canArchive: Bool
     let archivingSessionID: SessionSummary.ID?
@@ -297,6 +382,7 @@ private struct SessionList: View {
                     onAction: onAction,
                     canArchive: canArchive,
                     opensSessions: supportsConversations,
+                    selectedSessionID: selectedSessionID,
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
                     onOpen: onOpen,
                     onToggleProject: toggleProject,
@@ -457,6 +543,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
     var onAction: (SessionSummary, SessionAction) -> Void
     var canArchive: Bool
     var opensSessions: Bool
+    var selectedSessionID: SessionSummary.ID?
     var bottomContentInset: CGFloat
     var onOpen: (SessionSummary.ID) -> Void
     var onToggleProject: (String) -> Void
@@ -476,7 +563,8 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.onNewSession = onNewSession
         controller.bottomContentInset = bottomContentInset
         controller.refreshAction = context.environment.refresh
-        controller.render(rows: rows, canArchive: canArchive, opensSessions: opensSessions)
+        controller.render(rows: rows, canArchive: canArchive, opensSessions: opensSessions,
+                          selectedSessionID: selectedSessionID)
     }
 
     static func dismantleUIViewController(_ controller: SessionBrowserController, coordinator: ()) {
@@ -497,6 +585,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     var onNewSession: ((String) -> Void)?
     private var canArchive = false
     private var opensSessions = false
+    private var selectedSessionID: SessionSummary.ID?
     var bottomContentInset: CGFloat = 0 {
         didSet { applyBottomContentInset() }
     }
@@ -527,7 +616,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         tableView.register(SessionProjectHeader.self, forHeaderFooterViewReuseIdentifier: "project")
         dataSource = UITableViewDiffableDataSource(tableView: tableView) { [weak self] tableView, indexPath, itemID in
             let cell = tableView.dequeueReusableCell(withIdentifier: "row", for: indexPath) as! SessionBrowserCell
-            cell.configure(self?.rows[itemID])
+            cell.configure(self?.rows[itemID], isCurrent: itemID == self?.selectedSessionID.map { "session-\($0)" })
             return cell
         }
         dataSource.defaultRowAnimation = .fade
@@ -559,13 +648,16 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         tableView.verticalScrollIndicatorInsets.bottom = bottomContentInset
     }
 
-    func render(rows: [SessionBrowserRow], canArchive: Bool, opensSessions: Bool) {
+    func render(rows: [SessionBrowserRow], canArchive: Bool, opensSessions: Bool,
+                selectedSessionID: SessionSummary.ID?) {
         self.canArchive = canArchive
         self.opensSessions = opensSessions
         let previousRows = self.rows
+        let previousSelection = self.selectedSessionID
+        self.selectedSessionID = selectedSessionID
         let nextRows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
         let nextIDs = rows.map(\.id)
-        guard orderedRowIDs != nextIDs || previousRows != nextRows else { return }
+        guard orderedRowIDs != nextIDs || previousRows != nextRows || previousSelection != selectedSessionID else { return }
         orderedRowIDs = nextIDs
         let previousSnapshot = dataSource.snapshot()
         var snapshot = NSDiffableDataSourceSnapshot<String, String>()
@@ -588,7 +680,9 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         // Update only changed, retained rows. One snapshot preserves swipe deletion
         // animations without a second animated pass over every visible cell.
         snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { id in
-            previousRows[id] != nil && previousRows[id] != nextRows[id]
+            previousRows[id] != nil && (previousRows[id] != nextRows[id]
+                || (previousSelection != selectedSessionID &&
+                    (id == previousSelection.map { "session-\($0)" } || id == selectedSessionID.map { "session-\($0)" })))
         })
         snapshot.reloadSections(snapshot.sectionIdentifiers.filter { id in
             nextHeaders[id] != nil && previousRows[id] != nil &&
@@ -850,7 +944,9 @@ private final class SessionBrowserCell: UITableViewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    func configure(_ row: SessionBrowserRow?) {
+    func configure(_ row: SessionBrowserRow?, isCurrent: Bool = false) {
+        backgroundColor = isCurrent ? .tertiarySystemFill : .clear
+        accessibilityTraits = isCurrent ? [.button, .selected] : []
         accessoryType = .none
         accessibilityHint = nil
         accessibilityValue = nil

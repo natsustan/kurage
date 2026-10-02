@@ -22,6 +22,7 @@ final class FixtureLodyClient: LodyClient {
     ]
     private var nextTurnNumber = 0
     private var failStartAndArchiveProjectOnce: Bool
+    private var rejectStartOnce: Bool
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
     private let conversationDelay: Duration?
@@ -92,6 +93,7 @@ final class FixtureLodyClient: LodyClient {
         failingConversationIDsOnce: Set<String> = [],
         conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
+        rejectStartOnce: Bool = false,
         sendDelay: Duration? = nil,
         startDelay: Duration? = nil,
         failSendOnce: Bool = false,
@@ -118,6 +120,7 @@ final class FixtureLodyClient: LodyClient {
         self.authorizationDelay = authorizationDelay
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
+        self.rejectStartOnce = rejectStartOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
         self.conversationDelay = conversationDelay
         self.sendDelay = sendDelay
@@ -539,6 +542,10 @@ final class FixtureLodyClient: LodyClient {
         try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if rejectStartOnce {
+            rejectStartOnce = false
+            throw LodyClientError.sessionCreationRejected
+        }
         if let pending = pendingSessionStarts(workspaceID: workspaceID).first(where: { $0.projectID == projectID }) {
             guard pending.text == text.trimmingCharacters(in: .whitespacesAndNewlines), pending.attachments == attachments else {
                 throw LodyClientError.previousSendPending(pending.text)

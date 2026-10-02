@@ -155,6 +155,7 @@ struct SessionComposer: View {
     @ScaledMetric(relativeTo: .body) private var mentionIconWidth = 24
     @State private var isFocused = false
     @State private var selection: TextSelection?
+    @State private var selectionRequest: MentionEditor.SelectionRequest?
     @State private var mentionSessions: [MentionSession] = []
     @State private var mentionSkills: [MentionSkill] = []
     @State private var sessionsLoaded = false
@@ -180,6 +181,7 @@ struct SessionComposer: View {
                 draft = edit.text
                 if let caret = edit.caret {
                     selection = TextSelection(insertionPoint: String.Index(utf16Offset: caret, in: edit.text))
+                    selectionRequest = .init(caret: caret)
                 }
             }
         )
@@ -232,6 +234,7 @@ struct SessionComposer: View {
                 ZStack(alignment: .topLeading) {
                     MentionEditor(text: editableDraft, selection: $selection,
                                   isFocused: $isFocused,
+                                  selectionRequest: selectionRequest,
                                   ranges: mentions.ranges, isEnabled: !blocksEditing, identifier: identifiers.field,
                                   accessibilityLabel: placeholder)
                     if draft.isEmpty {
@@ -446,6 +449,7 @@ struct SessionComposer: View {
         let (text, caretOffset) = mentions.insert(token, kind: kind, replacing: query.range, in: draft)
         draft = text
         selection = TextSelection(insertionPoint: String.Index(utf16Offset: caretOffset, in: text))
+        selectionRequest = .init(caret: caretOffset)
         isFocused = true
     }
 

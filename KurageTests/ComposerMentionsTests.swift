@@ -6,6 +6,59 @@ import UIKit
 
 struct ComposerMentionsTests {
     @MainActor
+    @Test func nativeTypingDoesNotReplayItsPublishedCaret() {
+        var text = "Im"
+        var selection: TextSelection? = TextSelection(insertionPoint: text.endIndex)
+        let editor = MentionEditor(text: Binding(get: { text }, set: { text = $0 }),
+                                   selection: Binding(get: { selection }, set: { selection = $0 }),
+                                   isFocused: .constant(false), ranges: [], isEnabled: true,
+                                   identifier: "editor", accessibilityLabel: "Draft")
+        let coordinator = editor.makeCoordinator()
+        let view = UITextView()
+        view.attributedText = NSAttributedString(string: "Immediate")
+        view.selectedRange = NSRange(location: 9, length: 0)
+        coordinator.textViewDidChange(view)
+        #expect(text == "Immediate")
+        #expect(coordinator.renderedText == text)
+
+        // UIKit can advance its caret before the next delegate callback.
+        // A SwiftUI update must not replay the last published native caret.
+        view.attributedText = NSAttributedString(string: "Immediate first")
+        view.selectedRange = NSRange(location: 15, length: 0)
+        coordinator.applyRequestedSelection(to: view)
+        #expect(view.selectedRange.location == 15)
+        coordinator.textViewDidChange(view)
+        #expect(text == "Immediate first")
+
+        coordinator.parent.selectionRequest = .init(caret: 0)
+        coordinator.applyRequestedSelection(to: view)
+        #expect(view.selectedRange == NSRange(location: 0, length: 0))
+    }
+
+    @MainActor
+    @Test func nativeTypingDuringAViewUpdateIsDeferredInsteadOfDropped() async {
+        var text = "Imme"
+        var selection: TextSelection?
+        let editor = MentionEditor(text: Binding(get: { text }, set: { text = $0 }),
+                                   selection: Binding(get: { selection }, set: { selection = $0 }),
+                                   isFocused: .constant(false), ranges: [], isEnabled: true,
+                                   identifier: "editor", accessibilityLabel: "Draft")
+        let coordinator = editor.makeCoordinator()
+        let view = UITextView()
+        coordinator.isUpdating = true
+        for value in ["Immediate", "Immediate first turn"] {
+            view.attributedText = NSAttributedString(string: value)
+            view.selectedRange = NSRange(location: value.utf16.count, length: 0)
+            coordinator.textViewDidChange(view)
+        }
+        #expect(text == "Imme")
+        coordinator.isUpdating = false
+        await Task.yield()
+        #expect(text == "Immediate first turn")
+        #expect(coordinator.renderedText == text)
+    }
+
+    @MainActor
     @Test(.serialized, arguments: ["Send a follow-up", "Build anything"])
     func emptyComposerExposesItsInputPurpose(placeholder: String) throws {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)

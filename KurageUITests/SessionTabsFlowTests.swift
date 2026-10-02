@@ -48,7 +48,10 @@ final class SessionTabsFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["new-session-field"].firstMatch
         tap(field)
         field.typeText("Immediate first turn")
+        XCTAssertEqual(field.value as? String, "Immediate first turn")
         tap(app.buttons["new-session-send"])
+        let send = app.buttons["send-follow-up"]
+        XCTAssertEqual(send.label, "Sending")
         let transcript = app.tables["conversation-transcript"]
         let bubble = transcript.staticTexts["Immediate first turn"].firstMatch
         XCTAssertTrue(bubble.waitForExistence(timeout: 2))
@@ -56,8 +59,6 @@ final class SessionTabsFlowTests: XCTestCase {
         XCTAssertTrue(nextDraft.waitForExistence(timeout: 2))
         XCTAssertTrue(nextDraft.isEnabled)
         XCTAssertTrue(app.keyboards.firstMatch.exists)
-        let send = app.buttons["send-follow-up"]
-        XCTAssertEqual(send.label, "Sending")
         XCTAssertFalse(app.buttons["new-session-send"].exists)
         tap(nextDraft)
         nextDraft.typeText("Next draft survives creation")
@@ -85,7 +86,9 @@ final class SessionTabsFlowTests: XCTestCase {
         XCTAssertEqual(transcript.staticTexts.matching(identifier: "Immediate first turn").count, 1)
         XCTAssertFalse(app.navigationBars[isTab ? "New Tab" : "New Session"].exists)
         attachScreen(name: isTab ? "First tab after sync" : "First session after sync")
-        app.navigationBars.buttons.firstMatch.tap()
+        if !app.buttons["more-options"].isHittable {
+            app.navigationBars.buttons.firstMatch.tap()
+        }
         XCTAssertTrue(app.buttons["more-options"].waitForExistence(timeout: 5))
     }
 
@@ -323,7 +326,7 @@ final class SessionTabsFlowTests: XCTestCase {
     @MainActor
     private func tap(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(element.waitForExistence(timeout: 5), file: file, line: line)
-        XCTAssertTrue(element.isHittable, file: file, line: line)
+        XCTAssertTrue(element.wait(for: \.isHittable, toEqual: true, timeout: 5), file: file, line: line)
         element.tap()
     }
 

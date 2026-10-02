@@ -14,6 +14,7 @@ struct RootView: View {
         Group {
             if model.isSignedIn {
                 SessionListView(model: model)
+                    .id(model.workspaceGeneration)
             } else if hasFinishedAccountRestoration {
                 SignInView(model: model)
             } else {

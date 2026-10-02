@@ -18,6 +18,7 @@
 		357BCBEC79197D443B735EE1 /* ConversationTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374F20ECC60DB1DC17DDDDCA /* ConversationTabsView.swift */; };
 		36A47666D86EC3CEA0817A81 /* UserMessageText.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA46E2844598B0A50F9A983F /* UserMessageText.swift */; };
 		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
+		374BB6DA235990ADAD39C728 /* AdaptiveLayoutFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */; };
 		3AE24C610D1992B80F5EDA3D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 689573159C8EC11124B112A6 /* LaunchScreen.storyboard */; };
 		3BF139DE4510CCC4A72F4E9F /* OutgoingMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */; };
 		401B74DA0A333A159C23A634 /* ConversationSubtasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6E7BB882700BCC2B3DCE1A /* ConversationSubtasksView.swift */; };
@@ -111,6 +112,7 @@
 		38FAFEC4E8C04B28773FAECF /* ConversationImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationImageView.swift; sourceTree = "<group>"; };
 		39F52F4447A649EB64999DF6 /* UserMessageSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageSelectionTests.swift; sourceTree = "<group>"; };
 		49C39757158A6D291B6DF642 /* AuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenStore.swift; sourceTree = "<group>"; };
+		49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdaptiveLayoutFlowTests.swift; sourceTree = "<group>"; };
 		4A6AC2AF5662316492B81CF0 /* OutgoingMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMessage.swift; sourceTree = "<group>"; };
 		4C69CCB7DF6027B62311BCFF /* ConversationLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayoutTests.swift; sourceTree = "<group>"; };
 		52992274F3830D8D34FF1B15 /* ConversationChangesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChangesTests.swift; sourceTree = "<group>"; };
@@ -310,6 +312,7 @@
 		E987D242A0CEF1167D8F9DEE /* KurageUITests */ = {
 			isa = PBXGroup;
 			children = (
+				49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */,
 				D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */,
 				2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */,
 				52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */,
@@ -448,6 +451,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				374BB6DA235990ADAD39C728 /* AdaptiveLayoutFlowTests.swift in Sources */,
 				C03092CC8B3720F717546291 /* SessionTabsFlowTests.swift in Sources */,
 				0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */,
 				2C6A69AAD4625C9D8D4E1911 /* SignInFlowTests.swift in Sources */,
@@ -545,7 +549,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
@@ -553,18 +557,18 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage;
 				PRODUCT_MODULE_NAME = Kurage;
 				PRODUCT_NAME = Kurage;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -574,25 +578,25 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spike.kurage;
 				PRODUCT_MODULE_NAME = Kurage;
 				PRODUCT_NAME = Kurage;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -692,7 +696,7 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -785,7 +789,7 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};

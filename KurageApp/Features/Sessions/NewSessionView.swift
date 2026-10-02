@@ -45,7 +45,9 @@ extension NewSessionOptions {
 struct NewSessionView: View {
     let route: NewSessionRoute
     let model: AppModel
-    var onStaged: ((SessionSummary.ID) -> Void)? = nil
+    var draftStore: ConversationDraftStore? = nil
+    var onArchived: (() -> Void)? = nil
+    var onStaged: ((SessionSummary.ID?) -> Void)? = nil
 
     @State private var selectedProject: SessionProject?
     private var projectID: String { selectedProject?.id ?? route.projectID }
@@ -67,9 +69,12 @@ struct NewSessionView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
-         onStaged: ((SessionSummary.ID) -> Void)? = nil) {
+         draftStore: ConversationDraftStore? = nil, onArchived: (() -> Void)? = nil,
+         onStaged: ((SessionSummary.ID?) -> Void)? = nil) {
         self.route = route
         self.model = model
+        self.draftStore = draftStore
+        self.onArchived = onArchived
         self.onStaged = onStaged
         _draft = State(initialValue: restoredMessage?.composerText ?? "")
         _mentions = State(initialValue: restoredMessage?.mentions ?? .init())
@@ -108,6 +113,7 @@ struct NewSessionView: View {
                 // Its local first turn and the synchronized turn share an ID.
                 ConversationTabsContent(rootID: startedSessionID, title: model.sessionSummary(startedSessionID)?.title ?? "Session",
                     model: model, workspaceGeneration: route.workspaceGeneration, isReadOnly: false,
+                    draftStore: draftStore, onArchived: onArchived,
                     onEditSessionStart: restoreDraft)
             } else {
                 composition
@@ -159,6 +165,8 @@ struct NewSessionView: View {
                 .padding(.bottom, 8)
             }
         }
+        .frame(maxWidth: ConversationMetrics.maximumContentWidth)
+        .frame(maxWidth: .infinity)
         .navigationTitle(route.parentSessionID == nil ? "New Session" : "New Tab")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: request) { await load() }
@@ -332,6 +340,7 @@ struct NewSessionView: View {
         configuration = NewSessionConfiguration()
         request = LoadRequest(attempt: request.attempt + 1)
         banner = nil
+        onStaged?(nil)
     }
 }
 
