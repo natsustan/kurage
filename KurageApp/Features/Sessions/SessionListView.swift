@@ -708,7 +708,11 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
     override init(reuseIdentifier: String?) {
         super.init(reuseIdentifier: reuseIdentifier)
         var background = UIBackgroundConfiguration.clear()
-        background.backgroundColor = .systemBackground
+        // Use concrete color components so UIKit keeps an opaque surface
+        // instead of converting the semantic background into a pinned material.
+        background.backgroundColor = UIColor { traits in
+            UIColor(cgColor: UIColor.systemBackground.resolvedColor(with: traits).cgColor)
+        }
         backgroundConfiguration = background
         isAccessibilityElement = false
         toggleButton.isAccessibilityElement = true
@@ -752,8 +756,8 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
             icon.heightAnchor.constraint(equalToConstant: 20),
             titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(equalTo: toggleButton.trailingAnchor),
-            titleLabel.topAnchor.constraint(equalTo: toggleButton.topAnchor, constant: 18),
-            titleLabel.bottomAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: -8),
+            titleLabel.topAnchor.constraint(equalTo: toggleButton.topAnchor, constant: 13),
+            titleLabel.bottomAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: -13),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             newSessionButton.widthAnchor.constraint(equalToConstant: 44),
             newSessionButton.heightAnchor.constraint(equalTo: titleLabel.heightAnchor),
