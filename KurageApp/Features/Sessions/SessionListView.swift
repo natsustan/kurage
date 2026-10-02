@@ -591,7 +591,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
             previousRows[id] != nil && previousRows[id] != nextRows[id]
         })
         snapshot.reloadSections(snapshot.sectionIdentifiers.filter { id in
-            nextHeaders[id] != nil && previousSnapshot.sectionIdentifiers.contains(id) &&
+            nextHeaders[id] != nil && previousRows[id] != nil &&
                 previousRows[id] != nextHeaders[id]
         })
         let interacting = tableView.isDragging || tableView.isDecelerating ||
@@ -695,6 +695,12 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
     private let icon = UIImageView()
     private let titleLabel = UILabel()
     private let newSessionButton = ProjectNewSessionButton(configuration: .plain())
+    private lazy var toggleTrailingToNewSession = toggleButton.trailingAnchor.constraint(
+        equalTo: newSessionButton.leadingAnchor, constant: -8
+    )
+    private lazy var toggleTrailingToContent = toggleButton.trailingAnchor.constraint(
+        equalTo: contentView.trailingAnchor, constant: -16
+    )
     private var projectID: String?
     var onToggleProject: ((String) -> Void)?
     var onNewSession: ((String) -> Void)?
@@ -735,12 +741,11 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         }, for: .primaryActionTriggered)
         contentView.addSubview(toggleButton)
         contentView.addSubview(newSessionButton)
-        accessibilityElements = [toggleButton, newSessionButton]
         NSLayoutConstraint.activate([
             toggleButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             toggleButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             toggleButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            toggleButton.trailingAnchor.constraint(equalTo: newSessionButton.leadingAnchor, constant: -8),
+            toggleTrailingToContent,
             icon.leadingAnchor.constraint(equalTo: toggleButton.leadingAnchor),
             icon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 20),
@@ -772,6 +777,10 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         toggleButton.accessibilityValue = collapsed ? "Collapsed" : "Expanded"
         toggleButton.accessibilityHint = "Collapses or expands this project's sessions"
         newSessionButton.isHidden = !canCreate
+        accessibilityElements = canCreate ? [toggleButton, newSessionButton] : [toggleButton]
+        toggleTrailingToNewSession.isActive = false
+        toggleTrailingToContent.isActive = false
+        (canCreate ? toggleTrailingToNewSession : toggleTrailingToContent).isActive = true
         newSessionButton.accessibilityLabel = "New session in \(name)"
         newSessionButton.accessibilityIdentifier = "new-session-\(id)"
     }

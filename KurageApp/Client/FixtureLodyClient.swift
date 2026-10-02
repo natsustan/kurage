@@ -1031,6 +1031,14 @@ extension ConversationFileChangeGroup {
 
 
 extension SessionRecord {
+    static var samplesWithUnassignedSession: [SessionRecord] {
+        [SessionRecord(
+            summary: SessionSummary(id: "fixture-unassigned-session", title: "Standalone chat",
+                                    agentName: "codex", activity: .idle, preview: ""),
+            turns: [], permission: nil
+        )] + samples
+    }
+
     static var samplesWithLongSessionList: [SessionRecord] {
         samples + ["kurage", "prism"].flatMap { (project: String) in
             (1...24).map { number in

@@ -745,6 +745,36 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testProjectHeaderWithoutCreationUsesFullWidth() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-unassigned-session"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let table = app.tables.firstMatch
+        let heading = app.buttons["project-header-unassigned"]
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["new-session-unassigned"].exists)
+        XCTAssertEqual(heading.frame.maxX, table.frame.maxX - 16, accuracy: 1)
+        attachScreen(app, name: "project-header-without-creation-full-width")
+
+        // Tap the column previously reserved for the hidden new-session button.
+        let rightEdge = table.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: table.frame.width - 20, dy: heading.frame.midY - table.frame.minY
+        ))
+        rightEdge.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Collapsed"), object: heading
+        )], timeout: 3), .completed)
+        XCTAssertFalse(app.descendants(matching: .any)["session-fixture-unassigned-session"].exists)
+        rightEdge.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Expanded"), object: heading
+        )], timeout: 3), .completed)
+        XCTAssertTrue(app.descendants(matching: .any)["session-fixture-unassigned-session"].waitForExistence(timeout: 3))
+        attachScreen(app, name: "project-header-without-creation-expanded")
+    }
+
+    @MainActor
     func testProjectHeadersStayPinnedAndKeepTheirActions() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-long-session-list"]
