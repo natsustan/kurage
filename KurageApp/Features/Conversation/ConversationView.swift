@@ -353,16 +353,16 @@ struct ConversationContent: View {
         conversation = latest
     }
 
-    private func sendDraft() {
+    private func sendDraft() -> Bool {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsTextSending,
               outgoingMessage == nil,
-              model.supportsTextSendingWhileRunning || !isRunning else { return }
+              model.supportsTextSendingWhileRunning || !isRunning else { return false }
         do {
             try model.stageOutgoingMessage(mentions.expanded(draft), composerText: draft, mentions: mentions,
                 attachments: attachments, runConfig: runConfigState.choice, sessionID: sessionID)
         } catch {
             banner = "Could not prepare this message. Try again."
-            return
+            return false
         }
         draft = ""
         mentions.clear()
@@ -370,6 +370,7 @@ struct ConversationContent: View {
         scrollRequestID += 1
         banner = nil
         deliverMessage()
+        return true
     }
 
     private func retryMessage() {
@@ -767,7 +768,7 @@ private struct ConversationFooter: View {
     let mentionSourceID: String
     let loadMentionSessions: @MainActor () async throws -> [MentionSession]
     let loadMentionSkills: @MainActor () async throws -> [MentionSkill]
-    let onSend: () -> Void
+    let onSend: () -> Bool
     let onCancel: () -> Void
     let onChooseRunConfig: (String) -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void

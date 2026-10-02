@@ -183,33 +183,32 @@ struct NewSessionView: View {
     @ViewBuilder
     private var details: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let machineName {
-                detailRow(machineName, imageName: "laptop")
-                    .accessibilityIdentifier("new-session-machine")
-            }
-            if route.parentSessionID == nil {
-                SessionProjectMenu(
-                    model: model,
-                    current: SessionProject(id: projectID, name: projectName,
-                                            rootPath: selectedProject?.rootPath ?? "",
-                                            templateSessionID: templateSessionID),
-                    workspaceGeneration: route.workspaceGeneration,
-                    onChoose: selectProject
-                )
-                .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
-                if model.supportsProjectGitReading {
-                    ProjectBranchRow(model: model, projectID: projectID, templateSessionID: templateSessionID,
-                                     workspaceGeneration: route.workspaceGeneration,
-                                     isDisabled: isStarting || pendingStart != nil)
-                        .id(projectID)
+            // Rows already provide a 44pt height; keep their touch targets adjacent.
+            VStack(alignment: .leading, spacing: 0) {
+                if let machineName {
+                    detailRow(machineName, imageName: "laptop")
+                        .accessibilityIdentifier("new-session-machine")
                 }
-            } else {
-                Label {
-                    Text(projectName).lineLimit(1)
-                } icon: {
-                    NewSessionIcon(imageName: "folder-open")
+                if route.parentSessionID == nil {
+                    SessionProjectMenu(
+                        model: model,
+                        current: SessionProject(id: projectID, name: projectName,
+                                                rootPath: selectedProject?.rootPath ?? "",
+                                                templateSessionID: templateSessionID),
+                        workspaceGeneration: route.workspaceGeneration,
+                        onChoose: selectProject
+                    )
+                    .disabled(isStarting || pendingStart != nil || !isCurrentWorkspace)
+                    if model.supportsProjectGitReading {
+                        ProjectBranchRow(model: model, projectID: projectID, templateSessionID: templateSessionID,
+                                         workspaceGeneration: route.workspaceGeneration,
+                                         isDisabled: isStarting || pendingStart != nil)
+                            .id(projectID)
+                    }
+                } else {
+                    detailRow(projectName, imageName: "folder-open")
+                        .accessibilityIdentifier("inherited-tab-project")
                 }
-                .accessibilityIdentifier("inherited-tab-project")
             }
             if let pendingStart {
                 Text(pendingStart.displayText)
@@ -288,9 +287,9 @@ struct NewSessionView: View {
         }
     }
 
-    private func start() {
+    private func start() -> Bool {
         guard isCurrentWorkspace, scenePhase == .active, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
-              (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
+              (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return false }
         do {
             let id = try model.stageSessionStart(mentions.expanded(draft), composerText: draft, mentions: mentions,
                 attachments: attachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
@@ -301,8 +300,10 @@ struct NewSessionView: View {
             attachments = []
             showConversation(id)
             deliverStart(id)
+            return true
         } catch {
             banner = "Could not prepare the new session. Try again."
+            return false
         }
     }
 

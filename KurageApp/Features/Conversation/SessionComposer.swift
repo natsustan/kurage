@@ -148,7 +148,8 @@ struct SessionComposer: View {
     var mentionSourceID = ""
     var loadMentionSessions: (@MainActor () async throws -> [MentionSession])? = nil
     var loadMentionSkills: (@MainActor () async throws -> [MentionSkill])? = nil
-    let onSend: () -> Void
+    /// Returns true only after the message has entered the local outbox.
+    let onSend: () -> Bool
     let onCancel: () -> Void
     let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
     @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 64
@@ -167,6 +168,7 @@ struct SessionComposer: View {
     @State private var showsAdvanced = false
     @State private var gaugeProgress: Double?
     @State private var targetGaugeProgress = 1.0
+    @State private var sendFeedbackView: ComposerSendFeedbackView?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
@@ -255,6 +257,13 @@ struct SessionComposer: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(identifiers.container)
         }
+            .background {
+                if let sendFeedbackView {
+                    ComposerSendFeedbackAnchor(view: sendFeedbackView)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             .alert("Attachment unavailable", isPresented: Binding(
                 get: { attachmentError != nil },
                 set: { if !$0 { attachmentError = nil } }
@@ -262,6 +271,7 @@ struct SessionComposer: View {
                 Button("OK", role: .cancel) { attachmentError = nil }
             } message: { Text(attachmentError ?? "") }
             .onAppear {
+                if sendFeedbackView == nil { sendFeedbackView = ComposerSendFeedbackView() }
                 targetGaugeProgress = runConfig?.reasoningProgress ?? 1
                 gaugeProgress = targetGaugeProgress
                 if focusesOnAppear && !dismissFocus { isFocused = true }
@@ -495,10 +505,13 @@ struct SessionComposer: View {
                 .accessibilityIdentifier("pause-session")
             }
             if showsSend {
-                Button(action: onSend) {
+                Button {
+                    if onSend() { sendFeedbackView?.play() }
+                } label: {
                     composerIcon("arrow.up", enabled: canSend)
                 }
                 .disabled(!canSend)
+                .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.plain)
                 .accessibilityLabel(isSending ? Text("Sending") : Text("Send"))
                 .accessibilityIdentifier(identifiers.send)
@@ -515,6 +528,24 @@ struct SessionComposer: View {
             .frame(width: 48, height: 44)
             .contentShape(Rectangle())
     }
+}
+
+/// Play before navigation replaces a new session's composer. A SwiftUI state
+/// trigger can disappear with that view before its feedback is delivered.
+private final class ComposerSendFeedbackView: UIView {
+    private lazy var feedback = UIImpactFeedbackGenerator(style: .light, view: self)
+
+    func play() {
+        guard window != nil else { return }
+        feedback.impactOccurred(intensity: 0.6)
+    }
+}
+
+private struct ComposerSendFeedbackAnchor: UIViewRepresentable {
+    let view: ComposerSendFeedbackView
+
+    func makeUIView(context: Context) -> ComposerSendFeedbackView { view }
+    func updateUIView(_ uiView: ComposerSendFeedbackView, context: Context) {}
 }
 
 private struct FullAccessButton: View {
@@ -644,6 +675,7 @@ private struct RunConfigPanel: View {
 private struct ReasoningDial: View {
     let section: RunConfigMenu.Section
     let onChoose: (String) -> Void
+    @State private var selectionFeedbackID = 0
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var selectedIndex: Int? {
@@ -683,7 +715,10 @@ private struct ReasoningDial: View {
                     ? geometry.size.width - value.location.x : value.location.x
                 let index = min(section.options.count - 1, max(0, Int(((x - 28) / max(1, step)).rounded())))
                 let option = section.options[index]
-                if option.value != section.selection { onChoose(option.value) }
+                if option.value != section.selection {
+                    onChoose(option.value)
+                    selectionFeedbackID += 1
+                }
             })
         }
         .frame(height: 56)
@@ -693,16 +728,19 @@ private struct ReasoningDial: View {
         .accessibilityAdjustableAction { direction in
             let current = selectedIndex ?? -1
             let index = direction == .increment ? min(section.options.count - 1, current + 1) : max(0, current - 1)
-            onChoose(section.options[index].value)
+            let value = section.options[index].value
+            onChoose(value)
+            if value != section.selection { selectionFeedbackID += 1 }
         }
         .accessibilityIdentifier("reasoning-dial")
-        .sensoryFeedback(.selection, trigger: section.selection)
+        .sensoryFeedback(.selection, trigger: selectionFeedbackID)
     }
 }
 
 private struct RunConfigAdvanced: View {
     let runConfig: RunConfigMenu?
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
+    @State private var selectionFeedbackID = 0
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -737,6 +775,7 @@ private struct RunConfigAdvanced: View {
                 }
             }
         }
+        .sensoryFeedback(.selection, trigger: selectionFeedbackID)
     }
 
     @ViewBuilder
@@ -750,6 +789,7 @@ private struct RunConfigAdvanced: View {
                     ForEach(section.options) { option in
                         Button {
                             onChoose(kind, option.value)
+                            if option.value != section.selection { selectionFeedbackID += 1 }
                         } label: {
                             if option.value == section.selection {
                                 Label(option.label, systemImage: "checkmark")
