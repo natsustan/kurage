@@ -554,6 +554,11 @@
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.2.1（3），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1]`。
 - 归档仍有 `ConversationView.swift` 非 Sendable 函数转为 `@MainActor @Sendable` 的并发警告。本轮未运行单元／UI 测试或真实账号回归。
 
+## 历史文件预览回调并发警告修复（2026-10-02）
+
+- 将历史文件预览闭包先声明为 `FilePreviewLoader`，再按能力决定传入该回调或 `nil`，让闭包创建时具备目标 `@MainActor`／`@Sendable` 类型；保留 workspace 校验和取消处理。
+- 本轮 Xcode 27 Release 模拟器构建通过，arm64／x86_64 均重新编译且无并发警告；仍有未依赖 AppIntents.framework 的元数据提取提示。本轮未运行单元／UI 测试、设备归档或真实账号回归。
+
 ## iPad 与窗口自适应（2026-10-02）
 
 - 应用启用 iPhone/iPad 通用设备族；iPhone 支持竖屏与双向横屏，iPad 支持四个方向。更新 `project.yml` 并重新生成 Xcode 工程，保留 0.2.1（3）版本配置。
@@ -599,3 +604,16 @@
 
 - New Session 的 machine／project／branch 使用相邻的 44pt 最小高度行，移除原有额外 14pt 纵向间距；New Tab 的继承项目行复用相同高度与图标布局。加载、错误和重试提示仍保留独立间距。
 - 本轮构建与 iPhone 17／iOS 27 的 2 项浅色默认字号 fixture UI 回归通过，另 1 项深色 XXXL 回归通过；截图确认新建 session／tab 的信息行等距、图标文字对齐，深色大字没有重叠或裁剪。XCTest 在发送步骤出现动画等待超时后继续执行，最终均通过。模拟器外观与字号已恢复。截图未显示软件键盘，本轮未验证键盘弹出布局、真机、iPad 或 iOS 26。
+
+## TestFlight 0.3.1 发布（2026-10-02）
+
+- 将应用版本更新为 0.3.1，构建号更新为 5，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.3.1（5），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 补查上一轮 0.3.0（4）上传日志，确认其也已上传成功。
+- 归档仍有 `ConversationView.swift` 非 Sendable 函数转为 `@MainActor @Sendable` 的并发警告。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.3.2 发布（2026-10-02）
+
+- 将应用版本更新为 0.3.2，构建号更新为 6，并通过 XcodeGen 重新生成工程；包内包含工作区已有的文件预览加载闭包并发警告修复。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.3.2（6），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 本轮归档未再出现此前的 `ConversationView.swift` Sendable 转换警告；仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
