@@ -499,6 +499,7 @@ struct SessionComposer: View {
                     composerIcon("arrow.up", enabled: canSend)
                 }
                 .disabled(!canSend)
+                .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.plain)
                 .accessibilityLabel(isSending ? Text("Sending") : Text("Send"))
                 .accessibilityIdentifier(identifiers.send)

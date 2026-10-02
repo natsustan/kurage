@@ -27,6 +27,7 @@ struct SessionNavigation {
 struct SessionListView: View {
     let model: AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.displayScale) private var displayScale
     @State private var navigation = SessionNavigation()
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var drafts = ConversationDraftStore()
@@ -47,9 +48,20 @@ struct SessionListView: View {
                     }
                 },
                 onNewSession: startNewSession,
-                onOpenPending: { navigation.open(.newSession($0)) }
+                onOpenPending: { navigation.open(.newSession($0)) },
+                onToggleSidebar: toggleSidebar
             )
-            .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
+            .overlay(alignment: .trailing) {
+                if horizontalSizeClass != .compact {
+                    Rectangle()
+                        .fill(Color(.separator))
+                        .frame(width: 1 / displayScale)
+                        .ignoresSafeArea(.container, edges: .vertical)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 400)
         } detail: {
             SessionDetailView(route: navigation.selection, model: model, drafts: drafts,
                 onStaged: { id in
@@ -62,6 +74,16 @@ struct SessionListView: View {
                     guard navigation.selection == route else { return }
                     navigation = SessionNavigation()
                 })
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbar(removing: horizontalSizeClass == .compact ? nil : .sidebarToggle)
+                .toolbar {
+                    if horizontalSizeClass != .compact && columnVisibility == .detailOnly {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Show sidebar", systemImage: "sidebar.left", action: toggleSidebar)
+                                .accessibilityIdentifier("toggle-session-sidebar")
+                        }
+                    }
+                }
         }
         .navigationSplitViewStyle(.balanced)
         .onChange(of: model.sessions.map(\.id)) { previousIDs, ids in
@@ -69,6 +91,12 @@ struct SessionListView: View {
             guard let id = navigation.selectedSessionID,
                   !ids.contains(id), !model.isSessionStartPending(sessionID: id) else { return }
             navigation = SessionNavigation()
+        }
+    }
+
+    private func toggleSidebar() {
+        withAnimation {
+            columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
         }
     }
 
@@ -115,12 +143,14 @@ private struct SessionSidebarView: View {
     let onOpen: (SessionSummary.ID) -> Void
     let onNewSession: (String) -> Void
     let onOpenPending: (NewSessionRoute) -> Void
+    let onToggleSidebar: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
     @State private var searchQuery = ""
     @State private var showArchivedSessions = false
     @State private var isVisible = false
+    @FocusState private var isSearchFocused: Bool
 
     private var isSearchActive: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -146,6 +176,7 @@ private struct SessionSidebarView: View {
             canCopyURL: model.canCopySessionURL,
             onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
             mode: listMode,
+            keepsListHeight: !isCompactWindow && !isSearchFocused,
             selectedSessionID: isCompactWindow ? nil : selectedSessionID,
             supportsConversations: model.supportsConversations,
             canArchive: model.supportsSessionArchiving,
@@ -156,6 +187,7 @@ private struct SessionSidebarView: View {
             onRetrySearch: { Task { await model.indexSessionsForSearch() } },
             statusNote: model.statusNote,
             searchQuery: $searchQuery,
+            isSearchFocused: $isSearchFocused,
             query: searchQuery,
             searchBody: { model.sessionSearchBody(sessionID: $0) },
             canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
@@ -176,6 +208,7 @@ private struct SessionSidebarView: View {
         }
         .navigationTitle("Kurage")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(removing: isCompactWindow ? nil : .sidebarToggle)
         .refreshable { await model.refreshContent() }
         .toolbar {
             ToolbarItem(placement: .principal) {
@@ -239,6 +272,12 @@ private struct SessionSidebarView: View {
                     AccountAvatar(account: model.account)
                 }
                 .accessibilityIdentifier("account-menu")
+            }
+            if !isCompactWindow {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Hide sidebar", systemImage: "sidebar.left", action: onToggleSidebar)
+                        .accessibilityIdentifier("toggle-session-sidebar")
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -325,6 +364,7 @@ private struct SessionList: View {
     let canCopyURL: Bool
     let onAction: (SessionSummary, SessionAction) -> Void
     let mode: SessionListMode
+    let keepsListHeight: Bool
     let selectedSessionID: SessionSummary.ID?
     let supportsConversations: Bool
     let canArchive: Bool
@@ -335,6 +375,7 @@ private struct SessionList: View {
     let onRetrySearch: () -> Void
     let statusNote: StatusNote?
     @Binding var searchQuery: String
+    @FocusState.Binding var isSearchFocused: Bool
     let query: String
     let searchBody: (SessionSummary.ID) -> String
     let canCreateSession: (String) -> Bool
@@ -392,12 +433,16 @@ private struct SessionList: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Detail input keeps the list fixed. The search overlay still receives the
+        // keyboard safe area, and sidebar search keeps a scrollable viewport.
+        .ignoresSafeArea(.keyboard, edges: keepsListHeight ? .bottom : [])
         // The list fills the screen, including the home-indicator area. The search field
         // keeps its own safe-area padding so it floats above that area.
         .overlay(alignment: .bottom) {
             GlassEffectContainer(spacing: 10) {
                 HStack(spacing: 10) {
-                    SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty)
+                    SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty,
+                                       isFocused: $isSearchFocused)
                     Button(action: onChat) {
                         Image(systemName: "square.and.pencil")
                             .font(.title3)
@@ -596,6 +641,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     private var dataSource: UITableViewDiffableDataSource<String, String>!
 
     override func loadView() {
+        tableView.accessibilityIdentifier = "session-browser"
         tableView.backgroundColor = .clear
         tableView.separatorStyle = .none
         tableView.sectionHeaderTopPadding = 0
@@ -620,7 +666,19 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
             return cell
         }
         dataSource.defaultRowAnimation = .fade
-        view = tableView
+        let containerView = UIView()
+        containerView.addSubview(tableView)
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        containerView.keyboardLayoutGuide.usesBottomSafeArea = false
+        NSLayoutConstraint.activate([
+            tableView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            tableView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor),
+        ])
+        // Keep the column fixed while its scrollable viewport ends above the
+        // keyboard, so even the final rows remain reachable during detail input.
+        view = containerView
         applyBottomContentInset()
     }
 
@@ -885,6 +943,7 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
 }
 
 private final class SessionBrowserCell: UITableViewCell {
+    private let currentBackground = UIView()
     private let leadingSlot = UIView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let unreadDot = UIView()
@@ -896,7 +955,15 @@ private final class SessionBrowserCell: UITableViewCell {
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .clear
+        backgroundConfiguration = .clear()
         selectionStyle = .none
+        focusStyle = .custom
+        focusEffect = nil
+        currentBackground.backgroundColor = .tertiarySystemFill
+        currentBackground.isUserInteractionEnabled = false
+        currentBackground.isAccessibilityElement = false
+        currentBackground.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(currentBackground)
         spinner.hidesWhenStopped = true
         spinner.isAccessibilityElement = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -908,8 +975,10 @@ private final class SessionBrowserCell: UITableViewCell {
         leadingSlot.addSubview(unreadDot)
         leadingSlot.setContentHuggingPriority(.required, for: .horizontal)
         titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.numberOfLines = 1
         snippetLabel.font = .preferredFont(forTextStyle: .subheadline)
+        snippetLabel.adjustsFontForContentSizeCategory = true
         snippetLabel.textColor = .secondaryLabel
         snippetLabel.numberOfLines = 1
         textStack.axis = .vertical
@@ -926,6 +995,10 @@ private final class SessionBrowserCell: UITableViewCell {
         rowStack.addArrangedSubview(textStack)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
+            currentBackground.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            currentBackground.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            currentBackground.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            currentBackground.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             unreadDot.widthAnchor.constraint(equalToConstant: 8),
             unreadDot.heightAnchor.constraint(equalToConstant: 8),
             unreadDot.centerXAnchor.constraint(equalTo: leadingSlot.centerXAnchor),
@@ -944,8 +1017,13 @@ private final class SessionBrowserCell: UITableViewCell {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        currentBackground.layer.cornerRadius = currentBackground.bounds.height / 2
+    }
+
     func configure(_ row: SessionBrowserRow?, isCurrent: Bool = false) {
-        backgroundColor = isCurrent ? .tertiarySystemFill : .clear
+        currentBackground.isHidden = !isCurrent
         accessibilityTraits = isCurrent ? [.button, .selected] : []
         accessoryType = .none
         accessibilityHint = nil
@@ -986,6 +1064,7 @@ private final class SessionBrowserCell: UITableViewCell {
             // Projects are rendered as section headers, never as cells.
             break
         case let .session(session, snippet, dimmed):
+            accessibilityTraits = isCurrent ? [.button, .selected] : [.button]
             titleLabel.text = session.title
             if let snippet {
                 snippetLabel.text = snippet
@@ -1015,7 +1094,7 @@ private extension UIFont {
 private struct SessionSearchField: View {
     @Binding var query: String
     let isIndexing: Bool
-    @FocusState private var isFocused: Bool
+    @FocusState.Binding var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 10) {
