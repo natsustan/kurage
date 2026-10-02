@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## PR #25 永久拒绝前保留正文（2026-10-02）
+
+- 修复首次 steer 正文上传失败后，`lastMissingHistoryUserMsgId` 导致同 ID 重试过早返回永久拒绝的问题。仍有原始 authored CRDT 增量时，先导入同一增量并确认正文同步，再返回 `rejected`，避免原生清理待发送记录和 Edit 恢复草稿后丢失旧的 “Not delivered” 气泡。
+- 补传保留原 turn ID、时间戳、配置与附件，不再次发起 steer RPC 或写普通派发指针；补传失败／异常仍返回未确认，取消继续抛出取消错误，均保留增量供下次恢复。没有可恢复增量的已拒绝 ID 不创建新的正文。
+- 新增 5 项回归覆盖 applied、delivery-unknown、RPC 超时后的跨副本拒绝补传，补传失败／异常／取消后的恢复，以及没有增量时禁止重建原 ID。4 项复现用例在修复前失败，修复后全部通过；另 1 项保护既有的禁止复活行为。
+- 本次 frozen lockfile 安装、309 项 JavaScript 测试、bundle 重建通过。未修改 Swift/JavaScript 消息契约或原生 UI，本次未重跑 iOS 单元测试和 fixture UI；真实账号的永久拒绝补传、弱网与真机尚未验证。
+
 ## 消息投递恢复审查修复（2026-10-02）
 
 - steer 明确返回 `delivery-unknown` 且首次正文上传失败后，重试仍补传原始 authored CRDT 增量，成功后才清除增量。保持原 turn ID、时间戳与配置，不重复发起 RPC 或写普通派发指针；补传失败仍保留增量供下次恢复。

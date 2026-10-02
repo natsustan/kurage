@@ -85,7 +85,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
   const refreshed = await repo.getDocMeta(docID);
   if (!refreshed || refreshed.deleted || refreshed.meta.isArchived) return 'unconfirmed';
   row.meta = refreshed.meta;
-  if (row.meta.lastMissingHistoryUserMsgId === turnID) return 'rejected';
+  if (row.meta.lastMissingHistoryUserMsgId === turnID && !steering?.state.authoredUpdate) return 'rejected';
   // Replay the same CRDT operations, not a second insertion with the same
   // domain ID, when a cancelled/failed upload never reached another replica.
   if (steering?.state.authoredUpdate) handle.doc.import(steering.state.authoredUpdate);
@@ -96,9 +96,9 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     assertSameTurn(existing, userID, text, attachments);
     const outcome = deliveryOutcome(existing, row.meta);
     if (outcome) {
-      // Even an unknown RPC verdict needs its original history to reach the
-      // machine. Upload the same insertion without offering the input again.
-      if (outcome !== 'rejected' && steering?.state.authoredUpdate) {
+      // Unknown or rejected input still needs durable history before its retry
+      // state can be retired. Upload the insertion without offering input again.
+      if (steering?.state.authoredUpdate) {
         const uploaded = await uploadHistory(repo, docID, steering.signal);
         steering.signal?.throwIfAborted();
         if (!uploaded) return 'unconfirmed';

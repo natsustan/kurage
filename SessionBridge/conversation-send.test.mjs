@@ -396,6 +396,107 @@ test('unknown steer delivery still uploads its original insertion on a fresh rep
   assert.equal(persisted.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
 });
 
+for (const verdict of ['applied', 'delivery-unknown', 'timeout']) {
+  test(`a rejected steer persists its original insertion after a failed upload and ${verdict}`, async () => {
+    const state = runningFixture();
+    const baseline = state.doc.export({ mode: 'snapshot' });
+    const attachment = { type: 'image', imageId: 'photo', mimeType: 'image/png' };
+    let uploads = 0;
+    state.repo.sync = async options => ({ outcome: options.scope === 'doc' && ++uploads === 2 ? 'failed' : 'synced' });
+    state.steering.request = async () => {
+      if (verdict === 'timeout') throw Error('timeout');
+      return { type: 'session/steer_response', sessionId: 'chat', userTurnId: 'guide',
+        applied: verdict === 'applied', disposition: verdict };
+    };
+    assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'low' }, [attachment]), 'unconfirmed');
+    const update = state.steering.state.authoredUpdate;
+    assert(update instanceof Uint8Array);
+    Object.assign(state.meta, { lastMissingHistoryUserMsgId: 'guide', lastHandledUserMsgId: 'guide',
+      steerTurnStatuses: { guide: 'pending' } });
+    const replica = new LoroDoc();
+    replica.import(baseline);
+    state.repo.openPersistedDoc = async () => ({ doc: replica });
+    state.steering.request = async () => { assert.fail('A rejected ID cannot be offered again'); };
+    state.repo.upsertDocMeta = async () => { assert.fail('A rejected ID cannot activate ordinary dispatch'); };
+    const calls = [];
+    let durable = baseline;
+    state.repo.sync = async options => {
+      calls.push(options.scope);
+      if (calls.length === 1) {
+        assert.equal(replica.getList('history').toJSON().some(turn => turn.id === 'guide'), false);
+      } else {
+        durable = replica.export({ mode: 'snapshot' });
+      }
+      return { outcome: 'synced' };
+    };
+    assert.equal(await state.send('Guidance', { configOptionID: 'effort', value: 'high' }, [attachment]), 'rejected');
+    assert.deepEqual(calls, ['doc', 'doc']);
+    assert.equal(state.steering.state.authoredUpdate, undefined);
+    const persisted = new LoroDoc();
+    persisted.import(durable);
+    assert.equal(persisted.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+    persisted.import(update);
+    const guides = persisted.getList('history').toJSON().filter(turn => turn.id === 'guide');
+    assert.equal(guides.length, 1);
+    assert.equal(guides[0].timestamp, 'original-time');
+    assert.equal(guides[0].inputConfig.configOptionValues.effort, 'low');
+    assert.deepEqual(guides[0].inputConfig.inputBlocks, [{ type: 'text', text: 'Guidance' }, attachment]);
+    assert.equal(guides[0].status, 'pending_apply');
+    assert.equal(state.meta.latestUserMsgId, 'active-user');
+  });
+}
+
+test('a rejected steer keeps its original insertion until a failed or cancelled retry can persist it', async () => {
+  const state = runningFixture();
+  const baseline = state.doc.export({ mode: 'snapshot' });
+  let uploads = 0;
+  state.repo.sync = async options => ({ outcome: options.scope === 'doc' && ++uploads === 2 ? 'failed' : 'synced' });
+  state.steering.request = async () => { throw Error('timeout'); };
+  assert.equal(await state.send(), 'unconfirmed');
+  const update = state.steering.state.authoredUpdate;
+  assert(update instanceof Uint8Array);
+  state.meta.lastMissingHistoryUserMsgId = 'guide';
+  state.steering.request = async () => { assert.fail('A rejected ID cannot be offered again'); };
+  state.repo.upsertDocMeta = async () => { assert.fail('A rejected ID cannot activate ordinary dispatch'); };
+  let durable = baseline;
+  for (const outcome of ['failed', 'throw', 'abort', 'synced']) {
+    const replica = new LoroDoc();
+    replica.import(durable);
+    state.repo.openPersistedDoc = async () => ({ doc: replica });
+    const controller = new AbortController();
+    state.steering.signal = controller.signal;
+    const calls = [];
+    state.repo.sync = async options => {
+      calls.push(options.scope);
+      if (calls.length === 1) return { outcome: 'synced' };
+      assert.equal(options.signal, controller.signal);
+      if (outcome === 'throw') throw Error('upload failed');
+      if (outcome === 'abort') controller.abort();
+      if (outcome === 'synced') durable = replica.export({ mode: 'snapshot' });
+      return { outcome: outcome === 'failed' ? 'failed' : 'synced' };
+    };
+    if (outcome === 'abort') await assert.rejects(state.send(), { name: 'AbortError' });
+    else assert.equal(await state.send(), outcome === 'synced' ? 'rejected' : 'unconfirmed');
+    assert.deepEqual(calls, ['doc', 'doc']);
+    assert.equal(state.steering.state.authoredUpdate, outcome === 'synced' ? undefined : update);
+  }
+  const persisted = new LoroDoc();
+  persisted.import(durable);
+  assert.equal(persisted.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+  persisted.import(update);
+  assert.equal(persisted.getList('history').toJSON().filter(turn => turn.id === 'guide').length, 1);
+});
+
+test('a missing-history rejection without an authored insertion cannot recreate the old turn', async () => {
+  const state = runningFixture();
+  state.meta.lastMissingHistoryUserMsgId = 'guide';
+  state.steering.request = async () => { assert.fail('A rejected ID cannot be offered again'); };
+  state.repo.upsertDocMeta = async () => { assert.fail('A rejected ID cannot activate ordinary dispatch'); };
+  assert.equal(await state.send(), 'rejected');
+  assert.equal(state.doc.getList('history').toJSON().some(turn => turn.id === 'guide'), false);
+  assert.deepEqual(state.calls.map(call => call.scope), ['doc']);
+});
+
 test('a timeout and failed upload restore the original offer on a fresh replica even after concurrent history grows', async () => {
   const state = runningFixture();
   const baseline = state.doc.export({ mode: 'snapshot' });
