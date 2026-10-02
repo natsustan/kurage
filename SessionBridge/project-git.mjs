@@ -2,7 +2,7 @@ import { requestMachine } from './machine-rpc.mjs';
 import { readLocalProjectState } from './session-archive.mjs';
 
 // Resolve the registered project, never accept a client-supplied filesystem path.
-export async function projectGitSource(repo, workspaceID, templateSessionID, projectID, signal) {
+export async function projectGitSource(repo, workspaceID, templateSessionID, projectID, signal, cache) {
   signal.throwIfAborted();
   const rows = await repo.listDoc();
   const template = rows.find(row => row.docId === `session-${templateSessionID}` &&
@@ -13,7 +13,19 @@ export async function projectGitSource(repo, workspaceID, templateSessionID, pro
     throw new Error('Project does not belong to the template machine');
   }
   const localProjectID = projectID.slice(prefix.length);
-  const catalog = await readLocalProjectState(repo, workspaceID, machineID, signal);
+  const flockID = `${workspaceID}:mf:${machineID}`;
+  let flock = cache?.machine(flockID);
+  // Git reads always reach the machine; only reuse a fresh directory catalog.
+  if (cache?.needsRefresh) flock = undefined;
+  if (!flock) {
+    const document = await repo.openFlockDoc(flockID);
+    const report = await repo.sync({ scope: 'doc', flockDocIds: [flockID], requireTransports: ['cloud'], signal });
+    signal.throwIfAborted();
+    if (!report?.ok && report?.outcome !== 'synced') throw new Error('Project catalog sync failed');
+    flock = document.flock;
+    cache?.rememberMachine(flockID, flock);
+  }
+  const catalog = await readLocalProjectState(repo, workspaceID, machineID, signal, flock);
   signal.throwIfAborted();
   if (!catalog.known || !catalog.projects.has(localProjectID) || catalog.pending.has(localProjectID)) {
     throw new Error('Project is unavailable');

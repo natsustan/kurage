@@ -158,6 +158,130 @@ test('project Git releases metadata lock, scopes token refresh and cancels only 
   await assert.rejects(pending, { name: 'AbortError' });
 });
 
+const gitProjectRows = [{ docId: 'session-template', meta: {
+  machineId: 'mac', project: { kind: 'local', localProjectId: 'p' },
+} }];
+const gitProjectFlock = (pending = false) => ({ flock: { scan: ({ prefix }) => {
+  if (prefix[0] === 'localProject') return [{ key: ['localProject', 'p'], value: { name: 'Project' } }];
+  if (prefix[0] === 'cmd' && pending) return [{ key: ['cmd', 'deleteLocalProject', 'p'] }];
+  return [];
+} } });
+
+test('project Git reuses list metadata and a fresh catalog while every read gets the current branch', async () => {
+  const pulls = [];
+  let reads = 0;
+  const { window, repos } = makeBridge(async options => {
+    pulls.push(options);
+    return { ok: true };
+  }, gitProjectRows, undefined, undefined, {
+    openFlockDoc: () => gitProjectFlock(),
+    readProjectGit: async () => ({ state: { git: true, currentBranch: `branch-${++reads}` } }),
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  pulls.length = 0;
+  for (let read = 1; read <= 2; read++) {
+    const result = JSON.parse(await window.kurageProjectGit('workspace', 'https://streams.test',
+      'template', 'local:mac:p', 'user', `git-${read}`));
+    assert.equal(result.state.currentBranch, `branch-${read}`);
+  }
+  assert.equal(repos.length, 1);
+  assert.equal(repos[0].destroyed, false);
+  assert.deepEqual(pulls, []);
+});
+
+test('project Git refreshes an expired catalog once and checks newly pending project deletions', async () => {
+  let now = 0;
+  let pending = false;
+  let reads = 0;
+  const pulls = [];
+  const { window, repos } = makeBridge(async options => {
+    pulls.push(options);
+    return { ok: true };
+  }, gitProjectRows, undefined, undefined, {
+    now: () => now,
+    openFlockDoc: () => gitProjectFlock(pending),
+    readProjectGit: async () => { reads++; return { state: { git: true } }; },
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  pulls.length = 0;
+  now = 30_000;
+  await window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user');
+  await window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user');
+  assert.equal(pulls.length, 1);
+  assert.equal(pulls[0].scope, 'doc');
+  assert.deepEqual([...pulls[0].flockDocIds], ['workspace:mf:mac']);
+  assert.equal(repos.length, 2);
+  assert.equal(repos[1].destroyed, true);
+  assert.equal(reads, 2);
+  now += 30_000;
+  pending = true;
+  await assert.rejects(window.kurageProjectGit('workspace', 'https://streams.test',
+    'template', 'local:mac:p', 'user'), /Project is unavailable/);
+  assert.equal(reads, 2);
+});
+
+test('project Git never borrows metadata or the project catalog from a different workspace or gateway', async () => {
+  const pulls = [];
+  const { window, repos } = makeBridge(async (options, repo) => {
+    pulls.push({ scope: options.scope, metaStreamID: repo.transport.metaStreamId, baseURL: repo.transport.baseUrl });
+    return { ok: true };
+  }, gitProjectRows, undefined, undefined, {
+    openFlockDoc: () => gitProjectFlock(),
+    readProjectGit: async () => ({ state: { git: true } }),
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  pulls.length = 0;
+  await window.kurageProjectGit('other', 'https://streams.test', 'template', 'local:mac:p', 'user');
+  await window.kurageProjectGit('workspace', 'https://other.test', 'template', 'local:mac:p', 'user');
+  assert.deepEqual(pulls, [
+    { scope: 'meta', metaStreamID: 'other:meta', baseURL: 'https://streams.test' },
+    { scope: 'doc', metaStreamID: 'other:meta', baseURL: 'https://streams.test' },
+    { scope: 'meta', metaStreamID: 'workspace:meta', baseURL: 'https://other.test' },
+    { scope: 'doc', metaStreamID: 'workspace:meta', baseURL: 'https://other.test' },
+  ]);
+  assert.equal(repos.length, 3);
+  assert.ok(repos.slice(1).every(repo => repo.destroyed));
+  assert.equal(repos[0].destroyed, false);
+});
+
+test('cancelling an expired project catalog read discards it and preserves the shared workspace', async () => {
+  let now = 0;
+  let started;
+  let finish;
+  let reads = 0;
+  const ready = new Promise(resolve => { started = resolve; });
+  const delayed = new Promise(resolve => { finish = resolve; });
+  const pulls = [];
+  const { window, repos } = makeBridge(async options => {
+    pulls.push(options);
+    if (now > 0 && options.scope === 'doc') {
+      started();
+      return delayed;
+    }
+    return { ok: true };
+  }, gitProjectRows, undefined, undefined, {
+    now: () => now,
+    openFlockDoc: () => gitProjectFlock(),
+    readProjectGit: async () => { reads++; return { state: { git: true } }; },
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  now = 30_000;
+  const read = window.kurageProjectGit('workspace', 'https://streams.test',
+    'template', 'local:mac:p', 'user', 'cancelled-git');
+  await ready;
+  window.kurageCancel('cancelled-git');
+  finish({ ok: true });
+  await assert.rejects(read, { name: 'AbortError' });
+  assert.equal(reads, 0);
+  assert.equal(repos[0].destroyed, false);
+  assert.equal(repos[1].destroyed, true);
+  pulls.length = 0;
+  await window.kurageProjectGit('workspace', 'https://streams.test', 'template', 'local:mac:p', 'user');
+  assert.equal(pulls.length, 1);
+  assert.equal(pulls[0].scope, 'doc');
+  assert.equal(reads, 1);
+});
+
 test('isolated transcript reads restore history with a fresh replica and cursor', async () => {
   const remote = new LoroDoc();
   remote.getList('history').push({ id: 'turn', role: 'user', items: [{ type: 'text', text: 'Hello' }] });

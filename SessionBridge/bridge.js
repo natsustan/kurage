@@ -123,8 +123,9 @@ window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID,
       controller.signal.throwIfAborted();
       // Validate the registered project, then release the lock before machine IO.
       source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
-        repo => projectGitSource(repo, workspaceID, templateSessionID, projectID, controller.signal),
-        operationID, sourceController, true);
+        (repo, optionsCache) => projectGitSource(repo, workspaceID, templateSessionID, projectID,
+          controller.signal, optionsCache?.reader()),
+        operationID, sourceController);
     } finally { controller.signal.removeEventListener('abort', cancelSource); }
     controller.signal.throwIfAborted();
     const access = { baseURL: gatewayBaseURL, auth: async context => {
