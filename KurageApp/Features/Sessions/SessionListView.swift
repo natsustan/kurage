@@ -52,14 +52,20 @@ struct SessionListView: View {
             .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 400)
         } detail: {
             SessionDetailView(route: navigation.selection, model: model, drafts: drafts,
-                onStaged: { navigation.stagedSessionID = $0 },
+                onStaged: { id in
+                    if id == nil, let discardedID = navigation.stagedSessionID {
+                        drafts.removeRoots([discardedID], workspaceGeneration: model.workspaceGeneration)
+                    }
+                    navigation.stagedSessionID = id
+                },
                 onArchived: { route in
                     guard navigation.selection == route else { return }
                     navigation = SessionNavigation()
                 })
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: model.sessions.map(\.id)) { _, ids in
+        .onChange(of: model.sessions.map(\.id)) { previousIDs, ids in
+            drafts.removeRoots(Set(previousIDs).subtracting(ids), workspaceGeneration: model.workspaceGeneration)
             guard let id = navigation.selectedSessionID,
                   !ids.contains(id), !model.isSessionStartPending(sessionID: id) else { return }
             navigation = SessionNavigation()
@@ -81,7 +87,7 @@ private struct SessionDetailView: View {
     let route: SessionNavigation.Route?
     let model: AppModel
     let drafts: ConversationDraftStore
-    let onStaged: (SessionSummary.ID) -> Void
+    let onStaged: (SessionSummary.ID?) -> Void
     let onArchived: (SessionNavigation.Route) -> Void
 
     var body: some View {

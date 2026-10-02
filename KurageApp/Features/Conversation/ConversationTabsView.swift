@@ -13,15 +13,22 @@ struct ConversationDraft {
 @MainActor @Observable
 final class ConversationDraftStore {
     private struct Key: Hashable {
-        let sessionID: String
+        let rootID: String
         let workspaceGeneration: Int
     }
 
-    private var values: [Key: ConversationDraft] = [:]
+    private var values: [Key: [String: ConversationDraft]] = [:]
 
-    subscript(sessionID sessionID: String, workspaceGeneration workspaceGeneration: Int) -> ConversationDraft {
-        get { values[Key(sessionID: sessionID, workspaceGeneration: workspaceGeneration)] ?? ConversationDraft() }
-        set { values[Key(sessionID: sessionID, workspaceGeneration: workspaceGeneration)] = newValue }
+    subscript(rootID rootID: String, sessionID sessionID: String, workspaceGeneration workspaceGeneration: Int) -> ConversationDraft {
+        get { values[Key(rootID: rootID, workspaceGeneration: workspaceGeneration)]?[sessionID] ?? ConversationDraft() }
+        set { values[Key(rootID: rootID, workspaceGeneration: workspaceGeneration), default: [:]][sessionID] = newValue }
+    }
+
+    func removeRoots(_ rootIDs: Set<String>, workspaceGeneration: Int) {
+        guard !rootIDs.isEmpty else { return }
+        values = values.filter { key, _ in
+            key.workspaceGeneration != workspaceGeneration || !rootIDs.contains(key.rootID)
+        }
     }
 }
 
@@ -47,7 +54,7 @@ struct ConversationTabsContent: View {
     private var closedTabs: [SessionSummary] { tabs.filter { $0.id != rootID && $0.isTabClosed == true } }
     private var draft: Binding<ConversationDraft> {
         @Bindable var store = draftStore ?? localDrafts
-        return $store[sessionID: activeID, workspaceGeneration: workspaceGeneration]
+        return $store[rootID: rootID, sessionID: activeID, workspaceGeneration: workspaceGeneration]
     }
 
     var body: some View {
@@ -58,6 +65,7 @@ struct ConversationTabsContent: View {
                     projectName: model.sessionSummary(rootID)?.projectName ?? "Shared working directory",
                     templateSessionID: rootID, workspaceGeneration: workspaceGeneration, parentSessionID: rootID
                 ), model: model, restoredMessage: restoredTabMessage, onStaged: { id in
+                    guard let id else { return }
                     model.setActiveSessionTab(id, rootID: rootID)
                     showsNewTab = false
                     restoredTabMessage = nil

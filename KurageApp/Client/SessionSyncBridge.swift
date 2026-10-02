@@ -111,6 +111,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         access: StreamsAccess
     ) async throws -> Conversation {
         let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
         let json = try await withTaskCancellationHandler {
             try await callBridge(
                 "return await window.kurageBridgeReady.then(() => window.kurageConversation(workspaceID, sessionID, baseURL, operationID))",

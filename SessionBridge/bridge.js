@@ -607,26 +607,18 @@ window.kurageDeleteArchivedSession = async (workspaceID, sessionID, gatewayBaseU
 window.kurageConversation = async (workspaceID, sessionID, gatewayBaseURL, operationID) => {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
-  try { return await withWorkspaceRepo(workspaceID, gatewayBaseURL, async (repo) => {
+  try { return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async (repo) => {
     const docID = `session-${sessionID}`;
     const rows = await repo.listDoc();
     if (!rows.some((row) => row.docId === docID && !row.deleted)) {
       throw new Error('Session is missing from this workspace');
     }
     const handle = await repo.openPersistedDoc(docID);
-    try {
-      const conversation = await readSyncedConversation({
-        repo, workspaceID, sessionID, doc: handle.doc, signal: controller.signal,
-      });
-      return JSON.stringify(conversation);
-    } finally {
-      // Search reads every transcript. Keep only documents used by a pending
-      // or active observation; unloading those would invalidate its handle.
-      const observed = [...observations.values()].some(observation =>
-        observation.workspaceID === workspaceID && observation.sessionID === sessionID);
-      if (!observed) await repo.unloadDoc(docID);
-    }
-  }, false, controller.signal); }
+    const conversation = await readSyncedConversation({
+      repo, workspaceID, sessionID, doc: handle.doc, signal: controller.signal,
+    });
+    return JSON.stringify(conversation);
+  }, operationID, controller); }
   finally { if (operationID) sessionRefreshes.delete(operationID); }
 };
 

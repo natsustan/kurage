@@ -4,17 +4,36 @@ import Testing
 
 @MainActor
 struct SessionTabsTests {
+    @Test func removingRootsDiscardsTheirTabAttachmentsAndPreservesOtherDrafts() throws {
+        let store = ConversationDraftStore()
+        let attachment = try ComposerAttachment(fileName: "draft.txt", mimeType: "text/plain",
+                                                data: Data("Private draft".utf8), isImage: false)
+        for id in ["root", "open-tab", "closed-tab"] {
+            store[rootID: "root", sessionID: id, workspaceGeneration: 1].attachments = [attachment]
+            store[rootID: "root", sessionID: id, workspaceGeneration: 1].text = "Discard me"
+        }
+        store[rootID: "other", sessionID: "other-tab", workspaceGeneration: 1].attachments = [attachment]
+        store[rootID: "root", sessionID: "root", workspaceGeneration: 2].text = "Other workspace"
+        store.removeRoots(["root"], workspaceGeneration: 1)
+        for id in ["root", "open-tab", "closed-tab"] {
+            #expect(store[rootID: "root", sessionID: id, workspaceGeneration: 1].attachments.isEmpty)
+            #expect(store[rootID: "root", sessionID: id, workspaceGeneration: 1].text.isEmpty)
+        }
+        #expect(store[rootID: "other", sessionID: "other-tab", workspaceGeneration: 1].attachments == [attachment])
+        #expect(store[rootID: "root", sessionID: "root", workspaceGeneration: 2].text == "Other workspace")
+    }
+
     @Test func composerDraftsAreIsolatedBySessionAndWorkspaceGeneration() {
         let store = ConversationDraftStore()
-        store[sessionID: "root", workspaceGeneration: 1].text = "First workspace draft"
-        store[sessionID: "tab", workspaceGeneration: 1].text = "Separate tab draft"
-        store[sessionID: "root", workspaceGeneration: 1].banner = "Unconfirmed send"
-        #expect(store[sessionID: "root", workspaceGeneration: 2].text.isEmpty)
-        #expect(store[sessionID: "root", workspaceGeneration: 2].banner == nil)
-        store[sessionID: "root", workspaceGeneration: 2].text = "Other workspace draft"
-        #expect(store[sessionID: "root", workspaceGeneration: 1].text == "First workspace draft")
-        #expect(store[sessionID: "tab", workspaceGeneration: 1].text == "Separate tab draft")
-        #expect(store[sessionID: "root", workspaceGeneration: 2].text == "Other workspace draft")
+        store[rootID: "root", sessionID: "root", workspaceGeneration: 1].text = "First workspace draft"
+        store[rootID: "root", sessionID: "tab", workspaceGeneration: 1].text = "Separate tab draft"
+        store[rootID: "root", sessionID: "root", workspaceGeneration: 1].banner = "Unconfirmed send"
+        #expect(store[rootID: "root", sessionID: "root", workspaceGeneration: 2].text.isEmpty)
+        #expect(store[rootID: "root", sessionID: "root", workspaceGeneration: 2].banner == nil)
+        store[rootID: "root", sessionID: "root", workspaceGeneration: 2].text = "Other workspace draft"
+        #expect(store[rootID: "root", sessionID: "root", workspaceGeneration: 1].text == "First workspace draft")
+        #expect(store[rootID: "root", sessionID: "tab", workspaceGeneration: 1].text == "Separate tab draft")
+        #expect(store[rootID: "root", sessionID: "root", workspaceGeneration: 2].text == "Other workspace draft")
     }
 
     @Test func tabCreationReadingClosingAndSendingRemainSeparateFromRoot() async throws {

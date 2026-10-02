@@ -47,7 +47,7 @@ struct NewSessionView: View {
     let model: AppModel
     var draftStore: ConversationDraftStore? = nil
     var onArchived: (() -> Void)? = nil
-    var onStaged: ((SessionSummary.ID) -> Void)? = nil
+    var onStaged: ((SessionSummary.ID?) -> Void)? = nil
 
     @State private var selectedProject: SessionProject?
     private var projectID: String { selectedProject?.id ?? route.projectID }
@@ -70,7 +70,7 @@ struct NewSessionView: View {
 
     init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
          draftStore: ConversationDraftStore? = nil, onArchived: (() -> Void)? = nil,
-         onStaged: ((SessionSummary.ID) -> Void)? = nil) {
+         onStaged: ((SessionSummary.ID?) -> Void)? = nil) {
         self.route = route
         self.model = model
         self.draftStore = draftStore
@@ -340,6 +340,7 @@ struct NewSessionView: View {
         configuration = NewSessionConfiguration()
         request = LoadRequest(attempt: request.attempt + 1)
         banner = nil
+        onStaged?(nil)
     }
 }
 

@@ -81,6 +81,52 @@ struct SessionSearchIndexTests {
 
 @MainActor
 struct SessionSearchLifecycleTests {
+    @Test(.timeLimit(.minutes(1))) func searchesBodiesWhileConversationRemainsSubscribed() async throws {
+        let client = SearchLifecycleClient()
+        client.immediateReads = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let observation = Task { try await model.observeConversation(sessionID: "session-pr") { _ in } }
+        defer { observation.cancel() }
+        #expect(await events.next() == "observe")
+
+        await model.indexSessionsForSearch()
+        #expect(model.sessionSearchBody(sessionID: "session-long").contains("Question 7"))
+        #expect(model.sessionSearchBody(sessionID: "session-tests").contains("Running npm test"))
+        #expect(!model.hasIncompleteSessionSearch)
+        #expect(client.observation != nil)
+        model.stopSessionSearch()
+        observation.cancel()
+        _ = await observation.result
+    }
+
+    @Test(.timeLimit(.minutes(1))) func firstConversationUpdateResumesInterruptedSearch() async throws {
+        let client = SearchLifecycleClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var events = client.events.makeAsyncIterator()
+        let indexing = Task { await model.indexSessionsForSearch() }
+        #expect(await events.next() == "read")
+        let observation = Task { try await model.observeConversation(sessionID: "session-pr") { _ in } }
+        defer { observation.cancel(); model.stopSessionSearch() }
+        var received = Set<String>()
+        while received != ["cancelled", "observe"], let event = await events.next() { received.insert(event) }
+        await indexing.value
+        client.immediateReads = true
+        client.observation?.yield(ConversationUpdate(
+            conversation: Conversation(sessionID: "session-pr", turns: [], permission: nil),
+            activity: .idle, syncState: .live
+        ))
+        for _ in 0..<100 {
+            if model.sessionSearchBody(sessionID: "session-long").contains("Question 7") { break }
+            await Task.yield()
+        }
+        #expect(model.sessionSearchBody(sessionID: "session-long").contains("Question 7"))
+        observation.cancel()
+        _ = await observation.result
+    }
+
     @Test(.timeLimit(.minutes(1))) func streamingDefersSearchProjectionUntilSearchResumes() async throws {
         let client = SearchLifecycleClient()
         client.immediateReads = true
@@ -346,12 +392,15 @@ struct SessionSearchLifecycleTests {
         var events = client.events.makeAsyncIterator()
         let observation = Task { try await model.observeConversation(sessionID: "session-pr") { _ in } }
         #expect(await events.next() == "observe")
-        await model.indexSessionsForSearch()
+        let indexing = Task { await model.indexSessionsForSearch() }
+        #expect(await events.next() == "read")
         model.setApplicationActive(false)
+        #expect(await events.next() == "cancelled")
+        await indexing.value
         observation.cancel()
         _ = await observation.result
         await model.indexSessionsForSearch()
-        #expect(client.readCount == 0)
+        #expect(client.readCount == 1)
         #expect(!model.isIndexingSessionSearch)
         model.setApplicationActive(true)
         #expect(await events.next() == "read")

@@ -3,6 +3,55 @@ import UIKit
 
 final class AdaptiveLayoutFlowTests: XCTestCase {
     @MainActor
+    func testIPadSearchesOtherConversationBodiesWithDetailOpen() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launch()
+        tap(session("session-tests", in: app))
+        let transcript = app.tables["conversation-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        let search = app.textFields["session-search"]
+        tap(search)
+        search.typeText("Question 7")
+        let result = session("session-long", in: app)
+        XCTAssertTrue(result.waitForExistence(timeout: 10))
+        XCTAssertTrue(result.isHittable)
+        XCTAssertFalse(session("session-tests", in: app).exists)
+        XCTAssertTrue(transcript.exists)
+        tap(result)
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        XCTAssertTrue(result.isSelected)
+        attach(app, "Body search while detail remains open")
+    }
+
+    @MainActor
+    func testIPadRestoredFirstTurnSurvivesSidebarArchive() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launch(arguments: ["--fixture-start-rejected"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        let field = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(field)
+        field.typeText("Restore this first turn")
+        tap(app.buttons["new-session-send"])
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "edit-message-")).firstMatch
+        tap(edit)
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Restore this first turn")
+        let other = session("session-tests", in: app)
+        XCTAssertTrue(other.wait(for: \.isHittable, toEqual: true, timeout: 5))
+        other.press(forDuration: 1)
+        tap(app.buttons["Archive"])
+        tap(app.buttons["archive-confirm"].firstMatch)
+        XCTAssertTrue(other.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(field.exists)
+        XCTAssertEqual(field.value as? String, "Restore this first turn")
+        attach(app, "Restored first turn after sidebar archive")
+    }
+
+    @MainActor
     func testDraftSurvivesRotationAndSessionSwitching() {
         let app = launch()
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -76,9 +125,9 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--fixture"]
+        app.launchArguments = ["--fixture"] + arguments
         app.launch()
         tap(app.buttons["sign-in-button"])
         return app

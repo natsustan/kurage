@@ -201,7 +201,7 @@ final class AppModel {
     private var searchIndexTask: Task<Void, Never>?
     private var isSessionSearchActive = false
     private var isApplicationActive = true
-    /// Open conversation subscriptions. Search indexing uses the same sync bridge, so it waits until these finish.
+    /// New subscriptions interrupt queued search reads; their first update resumes indexing.
     private var conversationObservationCount = 0
     private(set) var isIndexingSessionSearch = false
 
@@ -579,6 +579,7 @@ final class AppModel {
         }
         let updates = try await client.observeConversation(sessionID: sessionID,
             rootSessionID: rootSessionID ?? sessionSummary(sessionID)?.parentSessionID, workspaceID: workspaceID)
+        var receivedFirstUpdate = false
         for try await update in updates {
             try Task.checkCancellation()
             guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
@@ -637,6 +638,10 @@ final class AppModel {
                 persistSession()
             }
             onUpdate(update)
+            if !receivedFirstUpdate {
+                receivedFirstUpdate = true
+                scheduleSessionSearchIndex()
+            }
         }
     }
 
@@ -1370,7 +1375,7 @@ final class AppModel {
 
     @discardableResult
     private func scheduleSessionSearchIndex() -> Task<Void, Never>? {
-        guard isApplicationActive, isSessionSearchActive, conversationObservationCount == 0, supportsConversations,
+        guard isApplicationActive, isSessionSearchActive, supportsConversations,
               selectedWorkspaceID != nil else {
             isIndexingSessionSearch = false
             return nil

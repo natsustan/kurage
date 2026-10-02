@@ -1209,6 +1209,15 @@ struct StreamFetchHandlerTests {
 
     @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview", "project-git"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
+        try await verifyCancellingNativeBridgeRequest(operation: operation)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingConversationReadStopsTheNativeBridgeRequest() async throws {
+        try await verifyCancellingNativeBridgeRequest(operation: "conversation")
+    }
+
+    private func verifyCancellingNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
         let requestBox = StreamingRequestBox()
@@ -1241,6 +1250,8 @@ struct StreamFetchHandlerTests {
                 _ = try await bridge.projectGit(templateSessionID: "template", projectID: "local:machine:project",
                     userID: "user",
                     workspaceID: "workspace", access: access)
+            } else if operation == "conversation" {
+                _ = try await bridge.conversation(sessionID: "chat", workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,
@@ -1253,7 +1264,7 @@ struct StreamFetchHandlerTests {
         task.cancel()
         var cancellations = stopped.makeAsyncIterator()
         _ = await cancellations.next()
-        if case .success = await task.result { Issue.record("Cancelled options unexpectedly completed") }
+        if case .success = await task.result { Issue.record("Cancelled bridge request unexpectedly completed") }
     }
 
     @Test(.timeLimit(.minutes(1)), arguments: [false, true])

@@ -51,7 +51,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     }
     async unloadDoc(id) { this.loaded.delete(id); await extras.unloadDoc?.(id, this); }
     async getDocMeta(id) { return extras.getDocMeta ? extras.getDocMeta(id, this) : rows.find(row => row.docId === id); }
-    async destroy() { this.destroyed = true; }
+    async destroy() { this.destroyed = true; this.loaded.clear(); await extras.destroy?.(this); }
   }
   class Transport {
     constructor(options) { this.options = options; }
@@ -158,29 +158,27 @@ test('project Git releases metadata lock, scopes token refresh and cancels only 
   await assert.rejects(pending, { name: 'AbortError' });
 });
 
-test('reopening an unloaded ephemeral transcript restores history instead of resuming past it', async () => {
+test('isolated transcript reads restore history with a fresh replica and cursor', async () => {
   const remote = new LoroDoc();
   remote.getList('history').push({ id: 'turn', role: 'user', items: [{ type: 'text', text: 'Hello' }] });
   remote.commit();
   const snapshot = remote.export({ mode: 'snapshot' });
   const documents = new Map();
-  let cursor;
-  const { window } = makeBridge(async options => {
-    if (options.docIds?.includes('session-chat') && cursor === undefined) {
-      documents.get('session-chat').import(snapshot);
-      cursor = 'end-of-history';
+  const cursors = new Map();
+  const { window, repos } = makeBridge(async (options, repo) => {
+    if (options.docIds?.includes('session-chat') && !cursors.has(repo)) {
+      documents.get(repo).import(snapshot);
+      cursors.set(repo, 'end-of-history');
     }
     return { ok: true };
   }, [{ docId: 'session-chat', meta: {} }], undefined, undefined, {
-    openPersistedDoc: id => {
-      if (!documents.has(id)) documents.set(id, new LoroDoc());
-      return { doc: documents.get(id) };
+    openPersistedDoc: (_id, repo) => {
+      if (!documents.has(repo)) documents.set(repo, new LoroDoc());
+      return { doc: documents.get(repo) };
     },
-    unloadDoc: id => { documents.delete(id); },
-    forgetDoc: id => {
-      assert.equal(id, 'session-chat');
-      assert.equal(documents.has(id), false);
-      cursor = undefined;
+    destroy: repo => {
+      documents.delete(repo);
+      cursors.delete(repo);
     },
   });
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -188,6 +186,9 @@ test('reopening an unloaded ephemeral transcript restores history instead of res
       'https://gateway.lody.ai', `read-${attempt}`));
     assert.deepEqual(conversation.turns.map(turn => turn.text), ['Hello']);
     assert.equal(documents.size, 0);
+    assert.equal(cursors.size, 0);
+    assert.equal(repos.length, attempt + 1);
+    assert.ok(repos.every(repo => repo.destroyed));
   }
 });
 
@@ -592,7 +593,9 @@ test('one-shot reads release all loaded transcripts on success and sync failure'
 
 test('a one-shot read does not unload an observed conversation', async () => {
   const { window, repos } = makeBridge(async () => ({ ok: true }),
-    [{ docId: 'session-chat', meta: {} }]);
+    [{ docId: 'session-chat', meta: {} }], undefined, undefined, {
+      observeConversation: async ({ repo }) => { await repo.openPersistedDoc('session-chat'); },
+    });
   await window.kurageObserveConversation('workspace', 'chat', 'https://gateway.lody.ai', 'observe');
   await window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'read');
   assert.equal(repos[0].loaded.has('session-chat'), true);
@@ -1087,17 +1090,28 @@ for (const outcome of ['success', 'failure', 'cancel']) {
   });
 }
 
-for (const cancel of [false, true]) {
-  test(`options ${cancel ? 'cancellation' : 'completion'} leaves a concurrent live SSE reader intact`, async () => {
+for (const operation of ['options', 'conversation']) for (const cancel of [false, true]) {
+  test(`${operation} ${cancel ? 'cancellation' : 'completion'} leaves a concurrent live SSE reader intact`, async () => {
     const entered = Promise.withResolvers();
     const finish = Promise.withResolvers();
     const commands = [];
     let native;
-    const { window, repos, transports } = makeBridge(async () => ({ ok: true }), [], undefined, undefined, {
+    const read = async signal => {
+      const token = await transports[1].auth({ reason: 'unauthorized' });
+      await native.fetch('https://gateway.lody.ai/one-shot', { headers: { authorization: `Bearer ${token}` } });
+      entered.resolve();
+      await finish.promise;
+      signal.throwIfAborted();
+      return { ok: true };
+    };
+    const { window, repos, transports } = makeBridge(async options => {
+      if (operation === 'conversation' && options.scope === 'doc') return read(options.signal);
+      return { ok: true };
+    }, [{ docId: 'session-chat', meta: {} }], undefined, undefined, {
       createNativeFetch: (send, fallback) => native = createNativeFetch(send, fallback),
       postMessage: async command => {
         commands.push(command);
-        if (command.command === 'auth') return { token: command.operationID ? 'options-token' : 'live-token' };
+        if (command.command === 'auth') return { token: command.operationID ? 'read-token' : 'live-token' };
         if (command.command === 'start') {
           await native.receive({ id: command.id, type: 'headers', status: 200,
             headers: { 'content-type': 'text/event-stream' } });
@@ -1106,17 +1120,15 @@ for (const cancel of [false, true]) {
       newSessionOptions: async (repo, _workspace, _template, _agent, signal) => {
         await repo.openPersistedDoc('session-baseline');
         // Exercise native work whose lifetime belongs to the one-shot reader.
-        const token = await transports[1].auth();
-        await native.fetch('https://gateway.lody.ai/options', { headers: { authorization: `Bearer ${token}` } });
-        entered.resolve();
-        await finish.promise;
-        if (cancel) signal.throwIfAborted();
+        await read(signal);
         return {};
       },
     });
     await window.kurageSessions('workspace', 'https://gateway.lody.ai', 'list');
-    const options = window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'options');
-    const result = cancel ? assert.rejects(options, { name: 'AbortError' }) : options;
+    const pending = operation === 'options'
+      ? window.kurageNewSessionOptions('workspace', 'template', null, 'https://gateway.lody.ai', 'read')
+      : window.kurageConversation('workspace', 'chat', 'https://gateway.lody.ai', 'read');
+    const result = cancel ? assert.rejects(pending, { name: 'AbortError' }) : pending;
     await entered.promise;
     const owner = new AbortController();
     const client = new StreamsClient({ url: 'https://gateway.lody.ai/live', auth: transports[0].auth, fetch: native.fetch });
@@ -1124,14 +1136,16 @@ for (const cancel of [false, true]) {
     assert.equal(opened.ok, true);
     const events = opened.result.events[Symbol.asyncIterator]();
     const event = events.next();
-    if (cancel) window.kurageCancel('options');
+    if (cancel) window.kurageCancel('read');
     finish.resolve();
     await result;
     const live = commands.find(command => command.command === 'start' && command.url.startsWith('https://gateway.lody.ai/live'));
-    const oneShot = commands.find(command => command.command === 'start' && command.url === 'https://gateway.lody.ai/options');
+    const oneShot = commands.find(command => command.command === 'start' && command.url === 'https://gateway.lody.ai/one-shot');
     assert.equal(commands.some(command => command.command === 'cancel' && command.id === live.id), false);
     assert.equal(commands.some(command => command.command === 'cancel' && command.id === oneShot.id), true);
     assert.equal(commands.find(command => command.command === 'auth' && !command.operationID).operationID, undefined);
+    assert.equal(commands.find(command => command.command === 'auth' && command.operationID).operationID, 'read');
+    assert.equal(commands.find(command => command.command === 'auth' && command.operationID).refresh, true);
     await native.receive({ id: live.id, type: 'chunk', body: Buffer.from('event: control\ndata: {"streamNextOffset":"1","upToDate":true}\n\n').toString('base64') });
     assert.equal((await event).done, false);
     assert.equal(repos[0].destroyed, false);
