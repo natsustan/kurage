@@ -232,8 +232,10 @@ struct ConversationContent: View {
                                 actionRequest = SessionActionRequest(session: session, action: action)
                             }
                         } else {
-                            Button("Rename session", systemImage: "pencil") {
+                            Button {
                                 actionRequest = SessionActionRequest(session: session, action: .rename)
+                            } label: {
+                                Label("Rename session", image: "pencil")
                             }
                         }
                     } label: {
@@ -689,6 +691,7 @@ private struct MessageDeliveryView: View {
     let onRetry: () -> Void
     let onEdit: () -> Void
     @State private var showsProgress = false
+    @ScaledMetric(relativeTo: .body) private var editIconWidth = 20.0
 
     var body: some View {
         Group {
@@ -708,7 +711,16 @@ private struct MessageDeliveryView: View {
                         HStack(spacing: 0) {
                             retryButton
                                 .accessibilityValue(reason)
-                            Button("Edit", systemImage: "pencil", action: onEdit)
+                            Button(action: onEdit) {
+                                Label {
+                                    Text("Edit")
+                                } icon: {
+                                    Image("pencil")
+                                        .resizable()
+                                        .scaledToFit()
+                                        .frame(width: min(editIconWidth, 30), height: min(editIconWidth, 30))
+                                }
+                            }
                                 .labelStyle(.iconOnly)
                                 .frame(width: 44, height: 44)
                                 .disabled(!canEdit)

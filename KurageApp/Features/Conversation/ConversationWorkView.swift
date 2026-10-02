@@ -69,6 +69,7 @@ struct ConversationActivityRow: View {
     let activity: ConversationActivity
     let disclosures: TurnDisclosures
     @ScaledMetric(relativeTo: .subheadline) private var iconWidth = 20.0
+    @ScaledMetric(relativeTo: .caption) private var stepIconWidth = 14.0
     @State private var expanded: Bool
 
     init(turnID: ConversationTurn.ID, activity: ConversationActivity, disclosures: TurnDisclosures) {
@@ -101,8 +102,11 @@ struct ConversationActivityRow: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(activity.steps) { step in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Image(systemName: step.kind.symbolName)
-                                .font(.caption)
+                            Image(step.kind.imageName)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: stepIconWidth, height: stepIconWidth)
+                                .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
                                 .accessibilityHidden(true)
                             Text(verbatim: step.title)
                                 .font(.caption.monospaced())
@@ -122,8 +126,11 @@ struct ConversationActivityRow: View {
 
     private func header(showsChevron: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: activity.primaryKind.symbolName)
-                .frame(width: iconWidth)
+            Image(activity.primaryKind.imageName)
+                .resizable()
+                .scaledToFit()
+                .frame(width: iconWidth, height: iconWidth)
+                .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
                 .accessibilityHidden(true)
             Text(activity.summary)
             if showsChevron {
@@ -140,11 +147,14 @@ struct ConversationActivityRow: View {
 private struct DisclosureChevron: View {
     let expanded: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ScaledMetric(relativeTo: .caption) private var iconWidth = 12.0
 
     var body: some View {
-        Image(systemName: "chevron.right")
-            .font(.caption.weight(.semibold))
-            .imageScale(.small)
+        Image("disclosure-right")
+            .resizable()
+            .scaledToFit()
+            .frame(width: iconWidth, height: iconWidth)
+            .alignmentGuide(.firstTextBaseline) { $0.height * 0.8 }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { image in
                 image.rotationEffect(.degrees(expanded ? 90 : 0))
             }
@@ -154,14 +164,14 @@ private struct DisclosureChevron: View {
 }
 
 extension ConversationActivity.Kind {
-    var symbolName: String {
+    var imageName: String {
         switch self {
-        case .command: "apple.terminal"
-        case .read: "doc.text"
+        case .command: "terminal"
+        case .read: "activity-read"
         case .edit: "pencil"
-        case .search: "magnifyingglass"
-        case .fetch: "globe"
-        case .tool: "wrench.and.screwdriver"
+        case .search: "activity-search"
+        case .fetch: "activity-fetch"
+        case .tool: "activity-tool"
         }
     }
 }

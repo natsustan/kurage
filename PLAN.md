@@ -431,7 +431,7 @@
 
 ## Session 列表图标与搜索字重（2026-10-01）
 
-- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识。
+- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 统一改用 MingCute pencil，见后文）。
 - 搜索框文字从 regular 提高一级至 medium，包含占位文字和输入内容。
 - 本轮浅色项目创建与搜索两项 fixture UI 测试通过；深色 accessibility-large 下搜索测试通过。仅涉及列表样式，未修改同步协议。
 
@@ -624,3 +624,9 @@
 - 将应用版本更新为 0.3.2，构建号更新为 6，并通过 XcodeGen 重新生成工程；包内包含工作区已有的文件预览加载闭包并发警告修复。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.3.2（6），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 本轮归档未再出现此前的 `ConversationView.swift` Sendable 转换警告；仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## MingCute 活动与编辑图标（2026-10-03）
+
+- 从本机 MingCute Icon System Pro v1.50 的 SVG/cute regular 导入活动图标：命令使用 `terminal_box`，读取使用 `document_2`，编辑使用 `pencil`，搜索使用 `search`，网络获取使用 `earth`，其他工具使用 `tool`；活动摘要与展开步骤共用映射。活动组及 Worked for 展开箭头使用 `right`，保留旋转动画与减少动态效果设置。
+- 消息失败后的 Edit、会话／子会话重命名菜单、列表底部 New chat 和项目 New Session 统一使用相同 pencil 资源，覆盖 SwiftUI 与 UIKit。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
+- 本轮最终 iOS Simulator 构建通过；只有未依赖 AppIntents.framework 的元数据提取跳过提示。未运行单元／UI 测试。iPhone 17／iOS 27 可启动 fixture，但设备交互工具缺失且 CUA 无法打开 Simulator，停在欢迎页，未能检查活动区和菜单的实际图标、深色模式或大字号；真机与真实账号亦未验证。

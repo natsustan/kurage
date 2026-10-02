@@ -19,7 +19,9 @@ struct SessionActionButtons: View {
     var body: some View {
         if model.supportsSessionMetadataEditing {
             Button(session.isPinned == true ? "Unpin" : "Pin", systemImage: session.isPinned == true ? "pin.slash" : "pin") { perform(.pin) }
-            Button("Rename session", systemImage: "pencil") { perform(.rename) }
+            Button { perform(.rename) } label: {
+                Label("Rename session", image: "pencil")
+            }
         }
         Button("Copy Session URL", systemImage: "link") { perform(.copyURL) }
             .disabled(model.sessionURL(sessionID: session.id) == nil)

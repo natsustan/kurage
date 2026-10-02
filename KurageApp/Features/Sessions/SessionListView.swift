@@ -384,6 +384,7 @@ private struct SessionList: View {
     let canChat: Bool
     let onNewSession: (String) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
+    @ScaledMetric(relativeTo: .title3) private var newChatIconWidth = 24.0
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -441,8 +442,10 @@ private struct SessionList: View {
                     SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty,
                                        isFocused: $isSearchFocused)
                     Button(action: onChat) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.title3)
+                        Image("pencil")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: min(newChatIconWidth, 32), height: min(newChatIconWidth, 32))
                             .frame(width: 50, height: 50)
                     }
                     .buttonStyle(.plain)
@@ -799,7 +802,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
                                         image: UIImage(systemName: session.isPinned == true ? "pin.slash" : "pin")) { [weak self] _ in
                     self?.onAction?(session, .pin)
                 })
-                actions.append(UIAction(title: "Rename session", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                actions.append(UIAction(title: "Rename session", image: UIImage(named: "pencil")) { [weak self] _ in
                     self?.onAction?(session, .rename)
                 })
             }
@@ -874,7 +877,7 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         toggleButton.addSubview(icon)
         toggleButton.addSubview(titleLabel)
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: "square.and.pencil")
+        configuration.image = UIImage(named: "pencil")
         configuration.baseForegroundColor = .secondaryLabel
         configuration.contentInsets = .zero
         newSessionButton.configuration = configuration
