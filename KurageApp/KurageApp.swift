@@ -21,6 +21,7 @@ struct KurageApp: App {
                 startDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-start") ? .seconds(8) : nil,
                 failSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-unconfirmed"),
                 rejectSendOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-rejected"),
+                rejectMissingHistoryOnce: ProcessInfo.processInfo.arguments.contains("--fixture-send-not-delivered"),
                 failTabStartOnce: ProcessInfo.processInfo.arguments.contains("--fixture-tab-start-unconfirmed"),
                 skillRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-skill-refresh") ? .seconds(3) : nil,
                 mentionDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-mentions") ? .seconds(6) : nil,

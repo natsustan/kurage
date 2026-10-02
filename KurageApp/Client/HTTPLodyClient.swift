@@ -226,7 +226,8 @@ final class HTTPLodyClient: LodyClient {
                 signOut()
                 return nil
             }
-            let restored = Account(email: email, id: parsed.user?.id)
+            let restored = Account(email: email, id: parsed.user?.id, name: parsed.user?.name,
+                                   image: parsed.user?.image)
             account = restored
             var cache = cachedSession ?? SessionCache(account: restored)
             cache.account = restored
@@ -571,6 +572,13 @@ final class HTTPLodyClient: LodyClient {
         return bridge.observeConversation(sessionID: sessionID, rootSessionID: rootSessionID, workspaceID: workspaceID, access: access)
     }
 
+    func finishTextSend(turnID: String, sessionID: String, workspaceID: String) {
+        guard let userID = account?.id else { return }
+        let key = SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)
+        if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+        sessionBridge?.finishTextSend(turnID: turnID, sessionID: sessionID, workspaceID: workspaceID)
+    }
+
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend? {
         guard let userID = account?.id,
               let pending = pendingSends[SendKey(userID: userID, workspaceID: workspaceID, sessionID: sessionID)]
@@ -636,6 +644,10 @@ final class HTTPLodyClient: LodyClient {
         if result == "busy" {
             if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
             throw LodyClientError.sessionBusy
+        }
+        if result == "rejected" {
+            if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
+            throw LodyClientError.sendNotDelivered
         }
         if result == "superseded" {
             if pendingSends[key]?.turnID == turnID { pendingSends.removeValue(forKey: key) }
@@ -1099,7 +1111,8 @@ final class HTTPLodyClient: LodyClient {
         if data == Data("null".utf8) { throw LodyClientError.signedOut }
         let session = try JSONDecoder().decode(SessionResponse.self, from: data)
         guard let email = session.user?.email, !email.isEmpty else { throw LodyClientError.signInFailed }
-        return Account(email: email, id: session.user?.id)
+        return Account(email: email, id: session.user?.id, name: session.user?.name,
+                       image: session.user?.image)
     }
 
     private func perform(
@@ -1270,6 +1283,8 @@ private struct SessionResponse: Decodable {
 private struct AuthUserBody: Decodable {
     var id: String?
     var email: String?
+    var name: String?
+    var image: String?
 }
 
 private struct OrganizationBody: Decodable {

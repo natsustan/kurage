@@ -1,6 +1,7 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
 import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn } from './run-config.mjs';
 import { isSessionTab } from './session-tabs.mjs';
+import { deliveryOutcome } from './conversation-delivery.mjs';
 
 export function synced(report) {
   return report.outcome === 'synced';
@@ -46,22 +47,22 @@ export function assertSameTurn(existing, userID, text, attachments = []) {
   }
 }
 
-function competingActivation(meta, entries, turnID) {
+function competingActivation(meta, entries, turnID, followUp = false) {
   const otherID = meta.latestUserMsgId;
   if (!otherID || otherID === turnID) return null;
   const otherIndex = entries.findIndex(entry => entry?.id === otherID);
   if (otherIndex < 0) return 'unconfirmed';
   if (otherIndex > entries.findIndex(entry => entry?.id === turnID)) return 'superseded';
+  if (followUp && (meta.processingUserMsgId === otherID || entries[otherIndex]?.status === 'processing')) return null;
   if (otherID !== meta.lastHandledUserMsgId &&
       otherID !== meta.lastMissingHistoryUserMsgId &&
       otherID !== meta.settledActivationUserMsgId) return 'unconfirmed';
   return null;
 }
 
-const deliveredStatuses = ['processing', 'handled', 'canceled', 'failed', 'completed', 'cancelled'];
-
 // A retry keeps its user turn, configuration, and original steer target.
-// Both dispatch routes wait for the body to reach Streams before submission.
+// Steer offers its payload while history uploads; ordinary activation follows
+// durable history. An ephemeral writer stays alive until its upload settles.
 // `runConfig` changes one model or reasoning value, and only for a new turn.
 export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = [], steering) {
   const docID = `session-${sessionID}`;
@@ -70,7 +71,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
   if (!row || row.meta.isArchived || (row.meta.parentSessionId && !isSessionTab(row, rows))) {
     throw new Error('Session is unavailable in this workspace');
   }
-  const { cliType, agentType, status } = row.meta;
+  const { cliType, agentType } = row.meta;
   if (typeof userID !== 'string' || !userID ||
       typeof cliType !== 'string' || !cliType ||
       typeof agentType !== 'string' || !agentType) {
@@ -81,28 +82,43 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     throw new Error('Session history sync failed');
   }
   const history = handle.doc.getList('history');
+  const refreshed = await repo.getDocMeta(docID);
+  if (!refreshed || refreshed.deleted || refreshed.meta.isArchived) return 'unconfirmed';
+  row.meta = refreshed.meta;
+  if (row.meta.lastMissingHistoryUserMsgId === turnID && !steering?.state.authoredUpdate) return 'rejected';
+  // Replay the same CRDT operations, not a second insertion with the same
+  // domain ID, when a cancelled/failed upload never reached another replica.
+  if (steering?.state.authoredUpdate) handle.doc.import(steering.state.authoredUpdate);
   const entries = history.toJSON();
   const existing = entries.find(entry => entry?.id === turnID);
   let steerTarget;
   if (existing) {
     assertSameTurn(existing, userID, text, attachments);
-    if (row.meta.lastHandledUserMsgId === turnID ||
-        deliveredStatuses.includes(existing.status)) return 'sent';
-    if (row.meta.steerTurnStatuses?.[turnID] === 'delivery_unknown' || existing.status === 'delivery_unknown') return 'unconfirmed';
-    if (acceptedSteer(row.meta, turnID)) return 'sent';
+    const outcome = deliveryOutcome(existing, row.meta);
+    if (outcome) {
+      // Unknown or rejected input still needs durable history before its retry
+      // state can be retired. Upload the insertion without offering input again.
+      if (steering?.state.authoredUpdate) {
+        const uploaded = await uploadHistory(repo, docID, steering.signal);
+        steering.signal?.throwIfAborted();
+        if (!uploaded) return 'unconfirmed';
+        delete steering.state.authoredUpdate;
+      }
+      return outcome;
+    }
     if (existing.status === 'pending_apply') {
       // Keep the original target in process memory. CRDT merges can insert
       // another assistant before this user entry, so ordering is not a retry key.
       steerTarget = steering?.state.expectedTurnID;
       if (!steering || !steerTarget) return 'unconfirmed';
     } else {
-      const conflict = competingActivation(row.meta, entries, turnID);
+      const conflict = competingActivation(row.meta, entries, turnID, steering?.state.followUp);
       if (conflict) return conflict;
     }
   } else {
-    if (status?.type !== 'idle') {
+    if (row.meta.status?.type !== 'idle') {
       const assistant = entries.findLast(entry => entry?.role === 'assistant');
-      if (!steering || !['running', 'initializing', 'requestPermission'].includes(status?.type) ||
+      if (!steering || !['running', 'initializing', 'requestPermission'].includes(row.meta.status?.type) ||
           typeof assistant?.id !== 'string' || !assistant.id ||
           assistant.finished === true || typeof assistant.endedAt === 'number' ||
           typeof row.meta.machineId !== 'string' || !row.meta.machineId) return 'busy';
@@ -127,9 +143,15 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {
       config.resume = row.meta.acpSessionId;
     }
+    const before = handle.doc.version();
     appendUserTurn(history, { turnID, userID, text, timestamp, config,
       status: steerTarget ? 'pending_apply' : 'pending' });
     handle.doc.commit();
+    if (steerTarget) steering.state.authoredUpdate = handle.doc.export({ mode: 'update', from: before });
+  }
+  if (steerTarget) {
+    const upload = uploadHistory(repo, docID, steering.signal);
+    return await steerTurn(repo, sessionID, handle.doc, row.meta, turnID, steerTarget, steering, upload);
   }
   // A failure after the local commit is ambiguous; the same turn ID can be
   // retried safely. Never publish the activation before the body is confirmed.
@@ -145,14 +167,14 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
   if (!current || current.deleted) return 'unconfirmed';
   const currentMeta = current.meta;
   if (currentMeta.isArchived) return 'unconfirmed';
-  if (steerTarget) {
-    return await steerTurn(repo, sessionID, history, currentMeta, turnID, steerTarget, steering);
-  }
+  if (currentMeta.lastMissingHistoryUserMsgId === turnID) return 'rejected';
+  const outcome = deliveryOutcome(history.toJSON().find(turn => turn?.id === turnID), currentMeta);
+  if (outcome) return outcome;
   if (currentMeta.lastHandledUserMsgId === turnID ||
       currentMeta.latestUserMsgId === turnID) return 'sent';
-  const conflict = competingActivation(currentMeta, history.toJSON(), turnID);
+  const conflict = competingActivation(currentMeta, history.toJSON(), turnID, steering?.state.followUp);
   if (conflict) return conflict;
-  if (currentMeta.status?.type !== 'idle') return 'unconfirmed';
+  if (currentMeta.status?.type !== 'idle' && !steering?.state.followUp) return 'unconfirmed';
 
   // The pinned LoroRepo has no conditional metadata write. Confirm the merged
   // pointer after syncing instead of reporting a competing write as sent.
@@ -161,59 +183,76 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     return 'unconfirmed';
   }
   const confirmed = await repo.getDocMeta(docID);
+  if (confirmed?.meta.lastMissingHistoryUserMsgId === turnID) return 'rejected';
   return confirmed?.meta.latestUserMsgId === turnID ||
     confirmed?.meta.lastHandledUserMsgId === turnID ? 'sent' : 'unconfirmed';
 }
 
-function acceptedSteer(meta, turnID) {
-  return ['pending', 'processing', 'handled', 'failed', 'canceled'].includes(meta.steerTurnStatuses?.[turnID]);
+async function uploadHistory(repo, docID, signal) {
+  try {
+    return synced(await repo.sync({ scope: 'doc', docIds: [docID], requireTransports: ['cloud'], signal }));
+  } catch { return false; }
 }
 
-async function steerTurn(repo, sessionID, history, meta, turnID, expectedTurnId, steering) {
+async function steerTurn(repo, sessionID, doc, meta, turnID, expectedTurnId, steering, upload) {
+  const history = doc.getList('history');
   const entry = history.toJSON().find(turn => turn?.id === turnID);
-  if (meta.lastHandledUserMsgId === turnID || acceptedSteer(meta, turnID) ||
-      deliveredStatuses.includes(entry?.status)) return 'sent';
-  if (meta.steerTurnStatuses?.[turnID] === 'delivery_unknown' || entry?.status === 'delivery_unknown') {
-    return 'unconfirmed';
-  }
-  if (!entry || !meta.machineId) return 'unconfirmed';
   const params = { sessionId: sessionID, expectedTurnId, userTurnId: turnID,
     userId: entry.userId, timestamp: entry.timestamp, inputConfig: entry.inputConfig };
   let response;
   try {
-    response = await steering.request(meta.machineId, params);
-    if (response?.recoveryOwned && response.disposition === 'promotion-failed') {
+    steering.signal?.throwIfAborted();
+    response = steering.state.applied
+      ? { type: 'session/steer_response', sessionId: sessionID, userTurnId: turnID, applied: true }
+      : steering.state.deliveryUnknown ? undefined : await steering.request(meta.machineId, params);
+    if (response?.type === 'session/steer_response' && response.sessionId === sessionID &&
+        response.userTurnId === turnID && response.recoveryOwned && response.disposition === 'promotion-failed') {
       // Only the daemon can repair its own recovery activation safely.
       response = await steering.request(meta.machineId, params);
     }
   } catch {
     // The RPC may already have reached the provider. Retain this turn for
     // same-ID recovery; never publish an ordinary activation after a timeout.
-    return 'unconfirmed';
+    response = undefined;
   }
-  if (response?.type !== 'session/steer_response' || response.sessionId !== sessionID ||
-      response.userTurnId !== turnID) return 'unconfirmed';
-  if (response.applied === true) return 'sent';
-  if (response.recoveryOwned) {
-    if (!synced(await repo.sync({ scope: 'doc', docIds: [`session-${sessionID}`], requireTransports: ['cloud'] }))) {
-      return 'unconfirmed';
+  const matched = response?.type === 'session/steer_response' && response.sessionId === sessionID &&
+    response.userTurnId === turnID;
+  if (matched && response.disposition === 'delivery-unknown') steering.state.deliveryUnknown = true;
+  if (matched && response.applied === true) {
+    steering.state.applied = true;
+    const index = history.toJSON().findIndex(turn => turn?.id === turnID);
+    if (!steering.signal?.aborted && history.get(index)?.get('status') === 'pending_apply') {
+      history.get(index).set('status', 'processing');
+      history.get(index).set('read', true);
+      history.get(index).get('inputConfig').set('_lodyDeliveryKind', 'steer');
+      doc.commit();
     }
-    if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'] }))) return 'unconfirmed';
-    const confirmed = await repo.getDocMeta(`session-${sessionID}`);
-    const recovered = history.toJSON().find(turn => turn?.id === turnID);
-    return acceptedSteer(confirmed?.meta ?? {}, turnID) ||
-      confirmed?.meta.lastHandledUserMsgId === turnID || deliveredStatuses.includes(recovered?.status)
-      ? 'sent' : 'unconfirmed';
   }
+  // Do not destroy this replica while its original insertion is uploading.
+  const uploaded = await upload;
+  steering.signal?.throwIfAborted();
+  if (!uploaded) return 'unconfirmed';
+  delete steering.state.authoredUpdate;
+  if (!await uploadHistory(repo, `session-${sessionID}`, steering.signal)) return 'unconfirmed';
+  if (!synced(await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal: steering.signal }))) return 'unconfirmed';
+  steering.signal?.throwIfAborted();
+  const confirmed = await repo.getDocMeta(`session-${sessionID}`);
+  if (!confirmed || confirmed.deleted || confirmed.meta.isArchived) return 'unconfirmed';
+  const outcome = deliveryOutcome(history.toJSON().find(turn => turn?.id === turnID), confirmed.meta);
+  if (outcome) return outcome;
+  if (!matched || response.recoveryOwned) return 'unconfirmed';
   if (['no-active-turn', 'promotion-failed'].includes(response.disposition)) {
     // Legacy machines can prove non-delivery without owning recovery. Reuse
     // this exact turn; the ordinary path still checks competing activations.
     const index = history.toJSON().findIndex(turn => turn?.id === turnID);
-    if (history.get(index)?.get('status') !== 'pending_apply') return 'unconfirmed';
-    history.get(index).set('status', 'pending');
-    (await repo.openPersistedDoc(`session-${sessionID}`)).doc.commit();
+    const status = history.get(index)?.get('status');
+    if (status === 'pending_apply') {
+      history.get(index).set('status', 'pending');
+      doc.commit();
+    } else if (!['pending', 'seen'].includes(status)) return 'unconfirmed';
+    steering.state.followUp = true;
     return await sendText(repo, sessionID, turnID, entry.userId, entry.items[0].text,
-      entry.timestamp, undefined, entry.inputConfig.inputBlocks.filter(block => block.type !== 'text'));
+      entry.timestamp, undefined, entry.inputConfig.inputBlocks.filter(block => block.type !== 'text'), steering);
   }
   return 'unconfirmed';
 }

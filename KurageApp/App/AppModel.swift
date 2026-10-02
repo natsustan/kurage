@@ -23,6 +23,7 @@ final class AppModel {
     private var imagePreviewScopes: [String: UUID] = [:]
     private var imagePreviews = SessionImagePreviewCache()
     private var supersededMessages: [String: [String: Set<String>]] = [:]
+    private var rejectedTurnIDsByWorkspace: [String: [String: Set<String>]] = [:]
     var supportsSessionTabs: Bool { client.supportsSessionTabs }
 
     func sessionSummary(_ id: String) -> SessionSummary? {
@@ -216,6 +217,7 @@ final class AppModel {
             workspaces = cache.workspaces
             selectedWorkspaceID = cache.selectedWorkspaceID
             sessionsByWorkspace = cache.sessionsByWorkspace
+            rejectedTurnIDsByWorkspace = cache.rejectedTurnIDsByWorkspace
             sessions = cache.selectedWorkspaceID.flatMap { cache.sessionsByWorkspace[$0] } ?? []
         }
     }
@@ -348,6 +350,7 @@ final class AppModel {
         imagePreviewScopes = [:]
         imagePreviews = SessionImagePreviewCache()
         supersededMessages = [:]
+        rejectedTurnIDsByWorkspace = [:]
         tabsByWorkspace = [:]
         activeTabsByWorkspace = [:]
         archiveOperations = [:]
@@ -396,6 +399,7 @@ final class AppModel {
             imagePreviewScopes = imagePreviewScopes.filter { workspaceIDs.contains($0.key) }
             imagePreviews.retainWorkspaces(workspaceIDs)
             supersededMessages = supersededMessages.filter { workspaceIDs.contains($0.key) }
+            rejectedTurnIDsByWorkspace = rejectedTurnIDsByWorkspace.filter { workspaceIDs.contains($0.key) }
             searchBodies = searchBodies.filter { workspaceIDs.contains($0.key) }
             failedSearchBodies = failedSearchBodies.filter { workspaceIDs.contains($0.key) }
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
@@ -786,7 +790,7 @@ final class AppModel {
             outgoingStartsByWorkspace[workspaceID]?[sessionID] = nil
             if let parentID = start.summary.parentSessionID { pendingTabs[workspaceID]?[parentID] = nil }
         }
-        if !message.canRetry {
+        if !message.canRetry && !message.isDeliveryRejected {
             supersededMessages[workspaceID, default: [:]][sessionID, default: []].insert(message.id)
             if let cached = conversationCache[workspaceID]?[sessionID] {
                 _ = storeConversation(cached, workspaceID: workspaceID)
@@ -796,8 +800,9 @@ final class AppModel {
     }
 
     func displayedTurns(_ turns: [ConversationTurn], sessionID: String) -> [ConversationTurn] {
-        let turns = selectedWorkspaceID.map {
-            imagePreviews.applying(to: Conversation(sessionID: sessionID, turns: turns), workspaceID: $0).turns
+        let turns = selectedWorkspaceID.map { workspaceID in
+            let previews = imagePreviews.applying(to: Conversation(sessionID: sessionID, turns: turns), workspaceID: workspaceID)
+            return applyingDeliveryRejections(previews.turns, sessionID: sessionID, workspaceID: workspaceID)
         } ?? turns
         guard let outgoing = outgoingMessage(sessionID: sessionID) else { return turns }
         if turns.contains(where: { $0.id == outgoing.id }) {
@@ -833,6 +838,22 @@ final class AppModel {
         } catch {
             guard isCurrentAuthentication(generation),
                   outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+            if start == nil, error as? LodyClientError == .sendNotDelivered ||
+                outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected == true {
+                rejectOutgoingMessage(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
+                throw LodyClientError.sendNotDelivered
+            }
+            // The machine may confirm through synchronization after the RPC
+            // times out, including while this send is still unwinding.
+            if start == nil, conversationCache[workspaceID]?[sessionID]?.turns.contains(where: {
+                $0.id == message.id && $0.author == .user && $0.isDeliveryConfirmed
+            }) == true {
+                outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sent
+                if let cached = conversationCache[workspaceID]?[sessionID] {
+                    _ = storeConversation(cached, workspaceID: workspaceID)
+                }
+                return message.runConfig
+            }
             let hasPendingStart = start.map { start in
                 if let parentID = start.summary.parentSessionID { return pendingTabs[workspaceID]?[parentID] != nil }
                 return client.pendingSessionStarts(workspaceID: workspaceID).contains { $0.id == sessionID }
@@ -860,6 +881,9 @@ final class AppModel {
         }
         guard isCurrentAuthentication(generation),
               outgoingByWorkspace[workspaceID]?[sessionID]?.id == message.id else { throw CancellationError() }
+        if outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected == true {
+            throw LodyClientError.sendNotDelivered
+        }
         outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .sent
         if let cached = conversationCache[workspaceID]?[sessionID] {
             _ = storeConversation(cached, workspaceID: workspaceID)
@@ -930,8 +954,12 @@ final class AppModel {
     private func storeConversation(_ value: Conversation, workspaceID: String) -> Conversation {
         let sessionID = value.sessionID
         var conversation = value.removingLocalImageData()
+        rememberRejectedTurns(Set(conversation.turns.filter { $0.author == .user && $0.isDeliveryRejected }.map(\.id)),
+                              sessionID: sessionID, workspaceID: workspaceID)
+        conversation.turns = applyingDeliveryRejections(conversation.turns, sessionID: sessionID, workspaceID: workspaceID)
         if let ids = supersededMessages[workspaceID]?[sessionID] {
-            for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) {
+            for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) &&
+                !conversation.turns[index].isDeliveryRejected {
                 conversation.turns[index].delivery = .superseded
             }
         }
@@ -939,7 +967,13 @@ final class AppModel {
            let index = conversation.turns.firstIndex(where: { $0.id == message.id }) {
             imagePreviews.store(message.preservingPreviews(in: conversation.turns[index]),
                                 sessionID: sessionID, workspaceID: workspaceID)
-            if message.delivery == .sent {
+            let accepted = conversation.turns[index].author == .user &&
+                conversation.turns[index].isDeliveryConfirmed &&
+                outgoingStartsByWorkspace[workspaceID]?[sessionID] == nil
+            if conversation.turns[index].author == .user && conversation.turns[index].isDeliveryRejected {
+                rejectOutgoingMessage(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
+            } else if message.delivery == .sent || (message.delivery != .sending && accepted) {
+                client.finishTextSend(turnID: message.id, sessionID: sessionID, workspaceID: workspaceID)
                 outgoingByWorkspace[workspaceID]?[sessionID] = nil
                 if let start = outgoingStartsByWorkspace[workspaceID]?[sessionID], start.isConfirmed,
                    start.summary.parentSessionID == nil ||
@@ -954,6 +988,35 @@ final class AppModel {
                 conversation.fileChanges?.first(where: { $0.id == key.turnID })?.files.first(where: { $0.path == key.path }) == entry.file
         }
         return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
+    }
+
+    private func rejectOutgoingMessage(turnID: String, sessionID: String, workspaceID: String) {
+        guard outgoingByWorkspace[workspaceID]?[sessionID]?.id == turnID else { return }
+        rememberRejectedTurns([turnID], sessionID: sessionID, workspaceID: workspaceID)
+        client.finishTextSend(turnID: turnID, sessionID: sessionID, workspaceID: workspaceID)
+        outgoingByWorkspace[workspaceID]?[sessionID]?.delivery = .failed("Not delivered. Edit to send again.")
+        outgoingByWorkspace[workspaceID]?[sessionID]?.canRetry = false
+        outgoingByWorkspace[workspaceID]?[sessionID]?.isDeliveryRejected = true
+    }
+
+    private func rememberRejectedTurns(_ turnIDs: Set<String>, sessionID: String, workspaceID: String) {
+        let previous = rejectedTurnIDsByWorkspace[workspaceID]?[sessionID] ?? []
+        guard !turnIDs.isSubset(of: previous) else { return }
+        rejectedTurnIDsByWorkspace[workspaceID, default: [:]][sessionID] = previous.union(turnIDs)
+        persistSession()
+    }
+
+    private func applyingDeliveryRejections(_ turns: [ConversationTurn], sessionID: String,
+                                           workspaceID: String) -> [ConversationTurn] {
+        guard let ids = rejectedTurnIDsByWorkspace[workspaceID]?[sessionID], !ids.isEmpty else { return turns }
+        return turns.map { turn in
+            guard turn.author == .user, ids.contains(turn.id) else { return turn }
+            var turn = turn
+            turn.isDeliveryRejected = true
+            turn.isDeliveryConfirmed = false
+            turn.delivery = .notDelivered
+            return turn
+        }
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction,
@@ -1250,6 +1313,8 @@ final class AppModel {
             archivedSessions.removeAll { $0.id == sessionID }
             tabsByWorkspace[workspaceID]?.removeValue(forKey: sessionID)
             pendingTabs[workspaceID]?.removeValue(forKey: sessionID)
+            rejectedTurnIDsByWorkspace[workspaceID]?.removeValue(forKey: sessionID)
+            persistSession()
             await refreshArchivedSessions()
         } catch is CancellationError {
             return
@@ -1298,7 +1363,8 @@ final class AppModel {
             account: account,
             workspaces: workspaces,
             selectedWorkspaceID: selectedWorkspaceID,
-            sessionsByWorkspace: sessionsByWorkspace
+            sessionsByWorkspace: sessionsByWorkspace,
+            rejectedTurnIDsByWorkspace: rejectedTurnIDsByWorkspace
         ))
     }
 

@@ -48,6 +48,42 @@ function harness({ waitFor, meta = { status: { type: 'running' } }, flock, rootS
     releases: () => releases };
 }
 
+test('a late steer metadata ACK patches unchanged history and preserves turn identity', async () => {
+  const meta = { status: { type: 'running' } };
+  const h = harness({ meta });
+  h.doc.getList('history').push({ id: 'guide', role: 'user', status: 'pending_apply',
+    items: [{ type: 'text', text: 'Guide' }] });
+  h.doc.commit();
+  await h.start();
+  await h.flush();
+  assert.equal(h.updates.at(-1).changed[0].isDeliveryConfirmed, undefined);
+  meta.steerTurnStatuses = { guide: 'processing' };
+  h.metadataChanged('session-abc', { steerTurnStatuses: meta.steerTurnStatuses });
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).order, ['guide']);
+  assert.equal(h.updates.at(-1).changed[0].id, 'guide');
+  assert.equal(h.updates.at(-1).changed[0].isDeliveryConfirmed, true);
+  h.controller.abort();
+});
+
+test('a missing-history negative ACK patches unchanged history and removes positive confirmation', async () => {
+  const meta = { status: { type: 'running' }, lastHandledUserMsgId: 'guide' };
+  const h = harness({ meta });
+  h.doc.getList('history').push({ id: 'guide', role: 'user', status: 'pending',
+    items: [{ type: 'text', text: 'Guide' }] });
+  h.doc.commit();
+  await h.start();
+  await h.flush();
+  assert.equal(h.updates.at(-1).changed[0].isDeliveryConfirmed, true);
+  meta.lastMissingHistoryUserMsgId = 'guide';
+  h.metadataChanged('session-abc', { lastMissingHistoryUserMsgId: 'guide' });
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).order, ['guide']);
+  assert.equal(h.updates.at(-1).changed[0].isDeliveryRejected, true);
+  assert.equal(h.updates.at(-1).changed[0].isDeliveryConfirmed, undefined);
+  h.controller.abort();
+});
+
 for (const state of ['missing', 'deleted', 'archived', 'closed']) {
   test(`a remembered ${state} tab publishes its root before opening the transcript`, async () => {
     const h = harness({ rootSessionID: 'root' });

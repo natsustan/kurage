@@ -3,6 +3,8 @@ import Foundation
 struct Account: Codable, Equatable, Sendable {
     var email: String
     var id: String? = nil
+    var name: String? = nil
+    var image: String? = nil
 }
 
 enum SessionActivity: String, Codable, Equatable, Sendable {
@@ -290,6 +292,10 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
     /// Folded earlier work of a finished agent turn; `parts` then holds its answer.
     var work: ConversationWork?
     var timing: ConversationTiming?
+    /// Explicit machine acceptance projected from history or session metadata.
+    var isDeliveryConfirmed = false
+    /// This exact ID was permanently rejected by missing-history recovery.
+    var isDeliveryRejected = false
     /// A local presentation state, excluded from the wire representation.
     var delivery: MessageDelivery? = nil
 
@@ -324,6 +330,8 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         parts = try container.decodeIfPresent([PartBox].self, forKey: .parts)?.compactMap(\.part) ?? []
         work = try? container.decodeIfPresent(ConversationWork.self, forKey: .work)
         timing = try? container.decodeIfPresent(ConversationTiming.self, forKey: .timing)
+        isDeliveryConfirmed = try container.decodeIfPresent(Bool.self, forKey: .isDeliveryConfirmed) ?? false
+        isDeliveryRejected = try container.decodeIfPresent(Bool.self, forKey: .isDeliveryRejected) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -334,10 +342,12 @@ struct ConversationTurn: Identifiable, Codable, Equatable, Sendable {
         try container.encode(parts.map(PartBox.init), forKey: .parts)
         try container.encodeIfPresent(work, forKey: .work)
         try container.encodeIfPresent(timing, forKey: .timing)
+        if isDeliveryConfirmed { try container.encode(true, forKey: .isDeliveryConfirmed) }
+        if isDeliveryRejected { try container.encode(true, forKey: .isDeliveryRejected) }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, author, text, parts, work, timing
+        case id, author, text, parts, work, timing, isDeliveryConfirmed, isDeliveryRejected
     }
 }
 
@@ -490,6 +500,7 @@ enum LodyClientError: Error, Equatable {
     case deliveryUnconfirmed
     case previousSendPending(String)
     case sendSuperseded
+    case sendNotDelivered
     case sessionBusy
     case notConnected
     case unreachable
@@ -687,6 +698,26 @@ struct SessionCache: Codable, Equatable, Sendable {
     var workspaces: [WorkspaceSummary] = []
     var selectedWorkspaceID: String?
     var sessionsByWorkspace: [String: [SessionSummary]] = [:]
+    /// Locally observed negative ACKs, scoped by workspace, session, then turn.
+    var rejectedTurnIDsByWorkspace: [String: [String: Set<String>]] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case account, workspaces, selectedWorkspaceID, sessionsByWorkspace, rejectedTurnIDsByWorkspace
+    }
+}
+
+extension SessionCache {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            account: try container.decode(Account.self, forKey: .account),
+            workspaces: try container.decodeIfPresent([WorkspaceSummary].self, forKey: .workspaces) ?? [],
+            selectedWorkspaceID: try container.decodeIfPresent(String.self, forKey: .selectedWorkspaceID),
+            sessionsByWorkspace: try container.decodeIfPresent([String: [SessionSummary]].self, forKey: .sessionsByWorkspace) ?? [:],
+            rejectedTurnIDsByWorkspace: try container.decodeIfPresent([String: [String: Set<String>]].self,
+                                                                      forKey: .rejectedTurnIDsByWorkspace) ?? [:]
+        )
+    }
 }
 
 /// Confirmed archive targets use document IDs, matching the active session list.

@@ -2,6 +2,34 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectConversation } from './conversation-projection.mjs';
 
+test('delivery confirmation needs explicit same-turn acceptance, never history visibility alone', () => {
+  const entry = { id: 'guide', role: 'user', status: 'pending_apply', items: [{ type: 'text', text: 'Guide' }] };
+  const confirmed = (status, meta = {}) => projectConversation('chat', [{ ...entry, status }], meta)
+    .turns[0].isDeliveryConfirmed === true;
+  for (const status of ['pending_apply', 'pending', 'seen', undefined, 'delivery_unknown']) {
+    assert.equal(confirmed(status), false, status);
+  }
+  for (const status of ['processing', 'handled', 'canceled', 'failed', 'completed', 'cancelled']) {
+    assert.equal(confirmed(status), true, status);
+  }
+  for (const status of ['pending', 'processing', 'handled', 'failed', 'canceled']) {
+    assert.equal(confirmed('pending_apply', { steerTurnStatuses: { guide: status } }), true);
+    assert.equal(confirmed('pending_apply', { steerTurnStatuses: { other: status } }), false);
+  }
+  assert.equal(confirmed('pending_apply', { lastHandledUserMsgId: 'guide' }), true);
+  assert.equal(confirmed('pending_apply', { lastHandledUserMsgId: 'other' }), false);
+  assert.equal(confirmed('delivery_unknown', { lastHandledUserMsgId: 'guide' }), false);
+  assert.equal(confirmed('pending_apply', { steerTurnStatuses: { guide: 'delivery_unknown' } }), false);
+  assert.equal(confirmed('handled', { lastMissingHistoryUserMsgId: 'guide' }), false);
+  const rejected = projectConversation('chat', [entry], {
+    lastMissingHistoryUserMsgId: 'guide', lastHandledUserMsgId: 'guide', steerTurnStatuses: { guide: 'pending' },
+  }).turns[0];
+  assert.equal(rejected.isDeliveryRejected, true);
+  assert.equal(rejected.isDeliveryConfirmed, undefined);
+  assert.equal(projectConversation('chat', [entry], { lastMissingHistoryUserMsgId: 'other' })
+    .turns[0].isDeliveryRejected, undefined);
+});
+
 test('file-only turns survive long or missing display names', () => {
   for (const fileName of ['a'.repeat(251) + '.txt', '', undefined, '\0']) {
     const result = projectConversation('chat', [{ id: 'file-turn', role: 'user', items: [

@@ -699,6 +699,10 @@ private struct MessageDeliveryView: View {
                         Image(systemName: "exclamationmark.circle")
                             .frame(width: 44, height: 44)
                             .accessibilityLabel("Not run: replaced by a newer message")
+                    case .notDelivered:
+                        Image(systemName: "exclamationmark.circle")
+                            .frame(width: 44, height: 44)
+                            .accessibilityLabel("Not delivered")
                     case .sent:
                         EmptyView()
                     }

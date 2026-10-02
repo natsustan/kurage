@@ -2,6 +2,7 @@ import { projectQuestions } from './conversation-questions.mjs';
 import { projectSubtasks } from './conversation-subtasks.mjs';
 import { projectFileChanges } from './file-changes.mjs';
 import { projectAssistantBlocks } from './conversation-work.mjs';
+import { deliveryOutcome } from './conversation-delivery.mjs';
 
 // Project ordinary chat text, session images, and file metadata. Tool calls are
 // summarized as explicit activity parts; thoughts and other item types need
@@ -67,7 +68,7 @@ function projectItemParts(item) {
   return [];
 }
 
-export function projectConversation(sessionID, history) {
+export function projectConversation(sessionID, history, meta = {}) {
   const turns = [];
   const questions = projectQuestions(history);
   const fileChanges = projectFileChanges(history);
@@ -97,6 +98,8 @@ export function projectConversation(sessionID, history) {
       author: entry.role === 'user' ? 'user' : 'agent',
       text,
       parts,
+      ...(deliveryOutcome(entry, meta) === 'sent' ? { isDeliveryConfirmed: true } : {}),
+      ...(deliveryOutcome(entry, meta) === 'rejected' ? { isDeliveryRejected: true } : {}),
       ...(work ? { work } : {}),
       ...(timing ? { timing } : {}),
     });
