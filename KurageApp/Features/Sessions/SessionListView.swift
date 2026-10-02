@@ -501,8 +501,10 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         didSet { applyBottomContentInset() }
     }
     private var rows: [String: SessionBrowserRow] = [:]
+    private var orderedRowIDs: [String] = []
+    private var projectHeaders: [String: SessionBrowserRow] = [:]
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private var dataSource: UITableViewDiffableDataSource<Int, String>!
+    private var dataSource: UITableViewDiffableDataSource<String, String>!
 
     override func loadView() {
         tableView.backgroundColor = .clear
@@ -510,6 +512,8 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         tableView.sectionHeaderTopPadding = 0
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 52
+        tableView.sectionHeaderHeight = UITableView.automaticDimension
+        tableView.estimatedSectionHeaderHeight = 52
         tableView.keyboardDismissMode = .interactive
         // The list fills the home-indicator area. Hide the pocket that would paint a
         // system background over the rows scrolling through it.
@@ -520,10 +524,10 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         tableView.refreshControl = refreshControl
         tableView.alwaysBounceVertical = true
         tableView.register(SessionBrowserCell.self, forCellReuseIdentifier: "row")
+        tableView.register(SessionProjectHeader.self, forHeaderFooterViewReuseIdentifier: "project")
         dataSource = UITableViewDiffableDataSource(tableView: tableView) { [weak self] tableView, indexPath, itemID in
             let cell = tableView.dequeueReusableCell(withIdentifier: "row", for: indexPath) as! SessionBrowserCell
             cell.configure(self?.rows[itemID])
-            cell.onNewSession = { [weak self] projectID in self?.onNewSession?(projectID) }
             return cell
         }
         dataSource.defaultRowAnimation = .fade
@@ -560,21 +564,59 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         self.opensSessions = opensSessions
         let previousRows = self.rows
         let nextRows = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
-        let previousIDs = dataSource.snapshot().itemIdentifiers
         let nextIDs = rows.map(\.id)
-        guard previousIDs != nextIDs || previousRows != nextRows else { return }
+        guard orderedRowIDs != nextIDs || previousRows != nextRows else { return }
+        orderedRowIDs = nextIDs
+        let previousSnapshot = dataSource.snapshot()
+        var snapshot = NSDiffableDataSourceSnapshot<String, String>()
+        var sectionID = "sessions"
+        snapshot.appendSections([sectionID])
+        var nextHeaders: [String: SessionBrowserRow] = [:]
+        for row in rows {
+            if case .project = row {
+                // Plain-table section headers pin natively until the next project
+                // pushes them away, including their collapse and creation controls.
+                sectionID = row.id
+                snapshot.appendSections([sectionID])
+                nextHeaders[sectionID] = row
+            } else {
+                snapshot.appendItems([row.id], toSection: sectionID)
+            }
+        }
         self.rows = nextRows
-        var snapshot = NSDiffableDataSourceSnapshot<Int, String>()
-        snapshot.appendSections([0])
-        snapshot.appendItems(nextIDs, toSection: 0)
+        projectHeaders = nextHeaders
         // Update only changed, retained rows. One snapshot preserves swipe deletion
         // animations without a second animated pass over every visible cell.
-        snapshot.reconfigureItems(nextIDs.filter { id in
+        snapshot.reconfigureItems(snapshot.itemIdentifiers.filter { id in
             previousRows[id] != nil && previousRows[id] != nextRows[id]
+        })
+        snapshot.reloadSections(snapshot.sectionIdentifiers.filter { id in
+            nextHeaders[id] != nil && previousRows[id] != nil &&
+                previousRows[id] != nextHeaders[id]
         })
         let interacting = tableView.isDragging || tableView.isDecelerating ||
             tableView.refreshControl?.isRefreshing == true
-        dataSource.apply(snapshot, animatingDifferences: !previousIDs.isEmpty && !interacting)
+        dataSource.apply(snapshot, animatingDifferences: !previousSnapshot.itemIdentifiers.isEmpty && !interacting)
+    }
+
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        let sectionID = dataSource.snapshot().sectionIdentifiers[section]
+        guard let row = projectHeaders[sectionID],
+              let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: "project") as? SessionProjectHeader
+        else { return nil }
+        header.configure(row)
+        header.onToggleProject = { [weak self] id in self?.onToggleProject?(id) }
+        header.onNewSession = { [weak self] id in self?.onNewSession?(id) }
+        return header
+    }
+
+    func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+        let sectionID = dataSource.snapshot().sectionIdentifiers[section]
+        return projectHeaders[sectionID] == nil ? 0 : UITableView.automaticDimension
+    }
+
+    func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
+        0
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
@@ -583,8 +625,6 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         switch row {
         case let .session(session, _, _):
             if opensSessions { onOpen?(session.id) }
-        case let .project(id, _, _, _, _):
-            onToggleProject?(id)
         default:
             break
         }
@@ -650,8 +690,103 @@ private final class ProjectNewSessionButton: UIButton {
     }
 }
 
-private final class SessionBrowserCell: UITableViewCell {
+private final class SessionProjectHeader: UITableViewHeaderFooterView {
+    private let toggleButton = UIButton(type: .custom)
     private let icon = UIImageView()
+    private let titleLabel = UILabel()
+    private let newSessionButton = ProjectNewSessionButton(configuration: .plain())
+    private lazy var toggleTrailingToNewSession = toggleButton.trailingAnchor.constraint(
+        equalTo: newSessionButton.leadingAnchor, constant: -8
+    )
+    private lazy var toggleTrailingToContent = toggleButton.trailingAnchor.constraint(
+        equalTo: contentView.trailingAnchor, constant: -16
+    )
+    private var projectID: String?
+    var onToggleProject: ((String) -> Void)?
+    var onNewSession: ((String) -> Void)?
+
+    override init(reuseIdentifier: String?) {
+        super.init(reuseIdentifier: reuseIdentifier)
+        var background = UIBackgroundConfiguration.clear()
+        background.backgroundColor = .systemBackground
+        backgroundConfiguration = background
+        isAccessibilityElement = false
+        toggleButton.isAccessibilityElement = true
+        toggleButton.accessibilityTraits.insert(.header)
+        toggleButton.translatesAutoresizingMaskIntoConstraints = false
+        toggleButton.addAction(UIAction { [weak self] _ in
+            guard let self, let projectID else { return }
+            onToggleProject?(projectID)
+        }, for: .primaryActionTriggered)
+        icon.contentMode = .scaleAspectFit
+        icon.tintColor = .label
+        icon.isAccessibilityElement = false
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = .preferredFont(forTextStyle: .body)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.numberOfLines = 1
+        titleLabel.isAccessibilityElement = false
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        toggleButton.addSubview(icon)
+        toggleButton.addSubview(titleLabel)
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(systemName: "square.and.pencil")
+        configuration.baseForegroundColor = .secondaryLabel
+        configuration.contentInsets = .zero
+        newSessionButton.configuration = configuration
+        newSessionButton.translatesAutoresizingMaskIntoConstraints = false
+        newSessionButton.addAction(UIAction { [weak self] _ in
+            guard let self, let projectID else { return }
+            onNewSession?(projectID)
+        }, for: .primaryActionTriggered)
+        contentView.addSubview(toggleButton)
+        contentView.addSubview(newSessionButton)
+        NSLayoutConstraint.activate([
+            toggleButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            toggleButton.topAnchor.constraint(equalTo: contentView.topAnchor),
+            toggleButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            toggleTrailingToContent,
+            icon.leadingAnchor.constraint(equalTo: toggleButton.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 20),
+            icon.heightAnchor.constraint(equalToConstant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(equalTo: toggleButton.trailingAnchor),
+            titleLabel.topAnchor.constraint(equalTo: toggleButton.topAnchor, constant: 18),
+            titleLabel.bottomAnchor.constraint(equalTo: toggleButton.bottomAnchor, constant: -8),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            newSessionButton.widthAnchor.constraint(equalToConstant: 44),
+            newSessionButton.heightAnchor.constraint(equalTo: titleLabel.heightAnchor),
+            newSessionButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            newSessionButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    func configure(_ row: SessionBrowserRow) {
+        guard case let .project(id, name, collapsed, unassigned, canCreate) = row else { return }
+        projectID = id
+        titleLabel.text = name
+        icon.image = unassigned
+            ? UIImage(systemName: collapsed ? "bubble.left" : "bubble.left.fill")
+            : UIImage(named: collapsed ? "folder-closed" : "folder-open")?.withRenderingMode(.alwaysTemplate)
+        toggleButton.accessibilityIdentifier = "project-header-\(id)"
+        toggleButton.accessibilityLabel = name
+        toggleButton.accessibilityValue = collapsed ? "Collapsed" : "Expanded"
+        toggleButton.accessibilityHint = "Collapses or expands this project's sessions"
+        newSessionButton.isHidden = !canCreate
+        accessibilityElements = canCreate ? [toggleButton, newSessionButton] : [toggleButton]
+        toggleTrailingToNewSession.isActive = false
+        toggleTrailingToContent.isActive = false
+        (canCreate ? toggleTrailingToNewSession : toggleTrailingToContent).isActive = true
+        newSessionButton.accessibilityLabel = "New session in \(name)"
+        newSessionButton.accessibilityIdentifier = "new-session-\(id)"
+    }
+}
+
+private final class SessionBrowserCell: UITableViewCell {
     private let leadingSlot = UIView()
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let unreadDot = UIView()
@@ -659,29 +794,11 @@ private final class SessionBrowserCell: UITableViewCell {
     private let snippetLabel = UILabel()
     private let textStack = UIStackView()
     private let rowStack = UIStackView()
-    private let newSessionButton = ProjectNewSessionButton(configuration: .plain())
-    private var projectID: String?
-    var onNewSession: ((String) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
-        var buttonConfiguration = UIButton.Configuration.plain()
-        buttonConfiguration.image = UIImage(systemName: "square.and.pencil")
-        buttonConfiguration.baseForegroundColor = .secondaryLabel
-        buttonConfiguration.contentInsets = .zero
-        newSessionButton.configuration = buttonConfiguration
-        newSessionButton.setContentHuggingPriority(.required, for: .horizontal)
-        newSessionButton.setContentHuggingPriority(.defaultLow, for: .vertical)
-        newSessionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        newSessionButton.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        newSessionButton.addAction(UIAction { [weak self] _ in
-            guard let self, let projectID else { return }
-            onNewSession?(projectID)
-        }, for: .primaryActionTriggered)
         backgroundColor = .clear
         selectionStyle = .none
-        icon.contentMode = .scaleAspectFit
-        icon.setContentHuggingPriority(.required, for: .horizontal)
         spinner.hidesWhenStopped = true
         spinner.isAccessibilityElement = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -708,9 +825,7 @@ private final class SessionBrowserCell: UITableViewCell {
         rowStack.spacing = 8
         rowStack.translatesAutoresizingMaskIntoConstraints = false
         rowStack.addArrangedSubview(leadingSlot)
-        rowStack.addArrangedSubview(icon)
         rowStack.addArrangedSubview(textStack)
-        rowStack.addArrangedSubview(newSessionButton)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
             unreadDot.widthAnchor.constraint(equalToConstant: 8),
@@ -721,10 +836,6 @@ private final class SessionBrowserCell: UITableViewCell {
             leadingSlot.heightAnchor.constraint(equalToConstant: 20),
             spinner.centerXAnchor.constraint(equalTo: leadingSlot.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: leadingSlot.centerYAnchor),
-            icon.widthAnchor.constraint(equalTo: leadingSlot.widthAnchor),
-            icon.heightAnchor.constraint(equalTo: leadingSlot.heightAnchor),
-            newSessionButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            newSessionButton.heightAnchor.constraint(equalTo: textStack.heightAnchor),
             rowStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             rowStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             rowStack.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -742,9 +853,6 @@ private final class SessionBrowserCell: UITableViewCell {
         spinner.stopAnimating()
         unreadDot.isHidden = true
         leadingSlot.isHidden = true
-        icon.isHidden = true
-        newSessionButton.isHidden = true
-        projectID = nil
         snippetLabel.isHidden = true
         titleLabel.textColor = .label
         titleLabel.font = .preferredFont(forTextStyle: .body)
@@ -774,27 +882,9 @@ private final class SessionBrowserCell: UITableViewCell {
             rowStack.directionalLayoutMargins.top = 20
             rowStack.directionalLayoutMargins.bottom = 18
             accessibilityLabel = text
-        case let .project(id, name, collapsed, unassigned, canCreate):
-            titleLabel.text = name
-            projectID = id
-            newSessionButton.isHidden = !canCreate
-            newSessionButton.accessibilityLabel = "New session in \(name)"
-            newSessionButton.accessibilityIdentifier = "new-session-\(id)"
-            titleLabel.font = .preferredFont(forTextStyle: .body)
-            icon.isHidden = false
-            if unassigned {
-                icon.image = UIImage(systemName: collapsed ? "bubble.left" : "bubble.left.fill")
-                icon.tintColor = .label
-            } else {
-                icon.image = UIImage(named: collapsed ? "folder-closed" : "folder-open")?.withRenderingMode(.alwaysTemplate)
-                icon.tintColor = .label
-            }
-            rowStack.directionalLayoutMargins.top = 18
-            rowStack.directionalLayoutMargins.bottom = 8
-            accessibilityIdentifier = "project-header-\(id)"
-            accessibilityLabel = name
-            accessibilityValue = collapsed ? "Collapsed" : "Expanded"
-            accessibilityHint = "Collapses or expands this project's sessions"
+        case .project:
+            // Projects are rendered as section headers, never as cells.
+            break
         case let .session(session, snippet, dimmed):
             titleLabel.text = session.title
             if let snippet {
