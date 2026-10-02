@@ -190,14 +190,15 @@ struct ConversationContent: View {
             ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id })
         }
         .sheet(item: $changesSelection) { selection in
+            let loadPreview: FilePreviewLoader = { group, file in
+                guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
+                return try await model.filePreview(sessionID: sessionID, turnID: group.id,
+                                                   file: file, workspaceID: workspaceID)
+            }
             ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
                                     latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
                                     initialTurnNumber: selection.turnNumber,
-                                    loadPreview: model.supportsHistoricalFilePreviews ? { group, file in
-                                        guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
-                                        return try await model.filePreview(sessionID: sessionID, turnID: group.id,
-                                                                            file: file, workspaceID: workspaceID)
-                                    } : nil)
+                                    loadPreview: model.supportsHistoricalFilePreviews ? loadPreview : nil)
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: {
             if let onArchived { onArchived() } else { dismiss() }
