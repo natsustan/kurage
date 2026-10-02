@@ -433,9 +433,6 @@ private struct SessionList: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Detail input keeps the list fixed. The search overlay still receives the
-        // keyboard safe area, and sidebar search keeps a scrollable viewport.
-        .ignoresSafeArea(.keyboard, edges: keepsListHeight ? .bottom : [])
         // The list fills the screen, including the home-indicator area. The search field
         // keeps its own safe-area padding so it floats above that area.
         .overlay(alignment: .bottom) {
@@ -469,7 +466,10 @@ private struct SessionList: View {
                 .padding(.bottom, 8)
                 .safeAreaPadding(.bottom)
         }
-        .ignoresSafeArea(.container, edges: .bottom)
+        // Only the detail column avoids the keyboard during detail input, so the list
+        // and floating search stay in place; sidebar search still avoids the keyboard.
+        // Both regions are ignored together so the list still reaches the screen edge.
+        .ignoresSafeArea(keepsListHeight ? [.container, .keyboard] : .container, edges: .bottom)
         .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemBackground))
     }
@@ -666,19 +666,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
             return cell
         }
         dataSource.defaultRowAnimation = .fade
-        let containerView = UIView()
-        containerView.addSubview(tableView)
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.keyboardLayoutGuide.usesBottomSafeArea = false
-        NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor),
-        ])
-        // Keep the column fixed while its scrollable viewport ends above the
-        // keyboard, so even the final rows remain reachable during detail input.
-        view = containerView
+        view = tableView
         applyBottomContentInset()
     }
 

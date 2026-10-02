@@ -367,10 +367,7 @@ struct SessionComposer: View {
         let sessions = query.trigger == .combined ? mentionSessions.filter {
             term.isEmpty || $0.title.localizedStandardContains(term)
         }.prefix(25) : []
-        let skills = mentionSkills.filter {
-            term.isEmpty || $0.token.localizedStandardContains(term) ||
-                $0.name.localizedStandardContains(term) || $0.description.localizedStandardContains(term)
-        }.prefix(25)
+        let skills = query.skillCandidates(in: mentionSkills).prefix(25)
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(sessions) { session in

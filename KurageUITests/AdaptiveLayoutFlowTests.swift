@@ -20,21 +20,25 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
         let projectFrame = project.frame
         let rowFrame = row.frame
         let listFrame = list.frame
+        let search = app.textFields["session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        let searchFrame = search.frame
+        func assertSidebarSteady(file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertEqual(account.frame.minY, accountFrame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(project.frame.minY, projectFrame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(row.frame.minY, rowFrame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(list.frame.minY, listFrame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(list.frame.maxY, listFrame.maxY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(search.frame.minY, searchFrame.minY, accuracy: 1, file: file, line: line)
+        }
         tap(app.buttons["new-session-local:machine-1:prism"])
         let field = app.descendants(matching: .any)["new-session-field"].firstMatch
         tap(field)
         field.typeText("Keep the sidebar steady")
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-        XCTAssertEqual(account.frame.minY, accountFrame.minY, accuracy: 1)
-        XCTAssertEqual(project.frame.minY, projectFrame.minY, accuracy: 1)
-        XCTAssertEqual(row.frame.minY, rowFrame.minY, accuracy: 1)
-        XCTAssertEqual(list.frame.minY, listFrame.minY, accuracy: 1)
-        XCTAssertLessThanOrEqual(list.frame.maxY, keyboard.frame.minY + 1)
+        assertSidebarSteady()
         XCTAssertLessThanOrEqual(app.buttons["new-session-send"].frame.maxY, keyboard.frame.minY + 1)
-        let search = app.textFields["session-search"]
-        XCTAssertLessThanOrEqual(search.frame.maxY, keyboard.frame.minY + 1)
-        XCTAssertTrue(search.isHittable)
         attach(app, "New session keyboard with a steady sidebar")
 
         tap(row)
@@ -42,22 +46,10 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
         let reply = app.descendants(matching: .any)["follow-up-field"].firstMatch
         tap(reply)
         reply.typeText("Existing conversation keyboard")
-        XCTAssertEqual(account.frame.minY, accountFrame.minY, accuracy: 1)
-        XCTAssertEqual(project.frame.minY, projectFrame.minY, accuracy: 1)
-        XCTAssertEqual(row.frame.minY, rowFrame.minY, accuracy: 1)
-        XCTAssertEqual(list.frame.minY, listFrame.minY, accuracy: 1)
-        XCTAssertLessThanOrEqual(list.frame.maxY, keyboard.frame.minY + 1)
-        XCTAssertLessThanOrEqual(search.frame.maxY, keyboard.frame.minY + 1)
-        XCTAssertTrue(search.isHittable)
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        assertSidebarSteady()
+        XCTAssertLessThanOrEqual(app.buttons["send-follow-up"].frame.maxY, keyboard.frame.minY + 1)
         attach(app, "Selected session pill and column divider")
-
-        list.swipeUp()
-        let last = session("session-pr", in: app)
-        XCTAssertTrue(last.wait(for: \.isHittable, toEqual: true, timeout: 5))
-        XCTAssertLessThan(last.frame.midY, search.frame.minY)
-        attach(app, "Last sidebar row above floating search")
-        tap(last)
-        XCTAssertTrue(last.wait(for: \.isSelected, toEqual: true, timeout: 5))
     }
 
     @MainActor

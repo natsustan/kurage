@@ -54,6 +54,7 @@ struct ConversationContent: View {
     @State private var scrollRequestID = 0
     @Binding var banner: String?
     @State private var connectionStatus: String?
+    @State private var suppressesInitialTabConnection = false
     @State private var showsConnectionIndicator = false
     @State private var showsConnectionMessage = false
     @Binding var runConfigState: ConversationRunConfigState
@@ -93,6 +94,9 @@ struct ConversationContent: View {
 
     private var outgoingMessage: OutgoingMessage? { model.outgoingMessage(sessionID: sessionID) }
     private var isStarting: Bool { model.isSessionStartPending(sessionID: sessionID) }
+    private var visibleConnectionStatus: String? {
+        suppressesInitialTabConnection ? nil : connectionStatus
+    }
     private var isSending: Bool { outgoingMessage?.delivery == .sending }
     private var canRetryMessage: Bool {
         guard !isReadOnly, isCurrentWorkspace, scenePhase == .active, !isCancelling,
@@ -152,7 +156,7 @@ struct ConversationContent: View {
                 isCancelling: isCancelling,
                 isSessionRunning: isRunning,
                 banner: banner,
-                connectionMessage: showsConnectionMessage ? connectionStatus : nil,
+                connectionMessage: showsConnectionMessage ? visibleConnectionStatus : nil,
                 supportsTextSending: !isReadOnly && model.supportsTextSending,
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
                 supportsSessionCancellation: !isReadOnly && !isStarting && model.supportsSessionCancellation,
@@ -243,7 +247,7 @@ struct ConversationContent: View {
                 ConversationNavigationTitle(
                     title: session?.title ?? title, projectName: session?.projectName,
                     machineName: session?.machineName,
-                    connectionStatus: showsConnectionIndicator ? connectionStatus : nil
+                    connectionStatus: showsConnectionIndicator ? visibleConnectionStatus : nil
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -280,10 +284,19 @@ struct ConversationContent: View {
         }
         .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
                                  active: scenePhase == .active && !isStarting, refreshID: refreshID)) {
-            guard scenePhase == .active, !isStarting else { return }
+            guard scenePhase == .active else {
+                suppressesInitialTabConnection = false
+                return
+            }
+            if isStarting {
+                // The first turn already provides progress while this new tab
+                // is created. Its first subscription is not a reconnection.
+                suppressesInitialTabConnection = sessionID != rootSessionID
+                return
+            }
             await observe()
         }
-        .task(id: scenePhase == .active ? connectionStatus : nil) {
+        .task(id: scenePhase == .active ? visibleConnectionStatus : nil) {
             await updateConnectionVisibility()
         }
     }
@@ -318,13 +331,17 @@ struct ConversationContent: View {
                     contextWindowUsage = update.contextWindowUsage
                     loadedMessageAt = update.lastMessageAt
                     connectionStatus = update.syncState == .live ? nil : "Reconnecting…"
-                    if update.syncState == .live { retryDelay = 1 }
+                    if update.syncState == .live {
+                        suppressesInitialTabConnection = false
+                        retryDelay = 1
+                    }
                 }
                 return
             } catch is CancellationError {
                 return
             } catch {
                 guard !Task.isCancelled else { return }
+                suppressesInitialTabConnection = false
                 connectionStatus = "Reconnecting…"
                 do { try await Task.sleep(for: .seconds(retryDelay)) }
                 catch { return }
@@ -334,7 +351,7 @@ struct ConversationContent: View {
     }
 
     private func updateConnectionVisibility() async {
-        guard scenePhase == .active, connectionStatus != nil else {
+        guard scenePhase == .active, visibleConnectionStatus != nil else {
             showsConnectionIndicator = false
             showsConnectionMessage = false
             return

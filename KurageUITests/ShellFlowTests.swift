@@ -163,6 +163,7 @@ final class ShellFlowTests: XCTestCase {
         let skill = app.buttons["mention-skill-review-and-simplify-changes"]
         XCTAssertTrue(skill.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["mention-session-session-pr"].exists)
+        XCTAssertFalse(app.buttons["mention-skill-swiftui-specialist"].exists)
         attachScreen(app, name: "Skill mention candidates")
         tap(skill)
         XCTAssertTrue((field.value as? String)?.contains("$review-and-simplify-changes") == true)
@@ -193,6 +194,7 @@ final class ShellFlowTests: XCTestCase {
         field.typeText("$review")
         let skill = app.buttons["mention-skill-review-and-simplify-changes"]
         XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["mention-skill-swiftui-specialist"].exists)
         tap(skill)
         field.typeText(" @review")
         let session = app.buttons["mention-session-session-pr"]
