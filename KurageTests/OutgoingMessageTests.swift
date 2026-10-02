@@ -4,6 +4,93 @@ import Testing
 
 @MainActor
 struct OutgoingMessageTests {
+    @Test func consecutiveRejectionsSurviveRefreshRelaunchAndStaleConfirmation() async throws {
+        let client = ControlledMessageClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var first = ConversationTurn(id: "first", author: .user, text: "First")
+        first.isDeliveryRejected = true
+        let second = ConversationTurn(id: "second", author: .user, text: "Second")
+        client.setHistory([first, second], workspaceID: "a")
+        #expect(try await model.conversation(sessionID: "chat").turns.first?.delivery == .notDelivered)
+
+        first.isDeliveryRejected = false
+        first.isDeliveryConfirmed = true
+        var rejectedSecond = second
+        rejectedSecond.isDeliveryRejected = true
+        client.setHistory([first, rejectedSecond], workspaceID: "a")
+        let refreshed = try await model.conversation(sessionID: "chat")
+        #expect(refreshed.turns.allSatisfy { $0.isDeliveryRejected && !$0.isDeliveryConfirmed && $0.delivery == .notDelivered })
+
+        let cache = try #require(client.cachedSession)
+        let relaunchedClient = ControlledMessageClient()
+        relaunchedClient.cachedSession = try JSONDecoder().decode(SessionCache.self, from: JSONEncoder().encode(cache))
+        var confirmedSecond = second
+        confirmedSecond.isDeliveryConfirmed = true
+        relaunchedClient.setHistory([first, confirmedSecond], workspaceID: "a")
+        let relaunched = AppModel(client: relaunchedClient)
+        await relaunched.adoptExistingAccount()
+        let history = try await relaunched.conversation(sessionID: "chat")
+        #expect(history.turns.allSatisfy { $0.isDeliveryRejected && !$0.isDeliveryConfirmed && $0.delivery == .notDelivered })
+        let stale = relaunched.displayedTurns([first, confirmedSecond], sessionID: "chat")
+        #expect(stale.allSatisfy { $0.isDeliveryRejected && !$0.isDeliveryConfirmed && $0.delivery == .notDelivered })
+    }
+
+    @Test func permanentRPCRejectionSurvivesEditingBeforeHistoryReportsIt() async throws {
+        let client = ControlledMessageClient()
+        client.rejection = .sendNotDelivered
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        let id = try #require(model.outgoingMessage(sessionID: "chat")?.id)
+        await #expect(throws: LodyClientError.sendNotDelivered) {
+            try await model.deliverOutgoingMessage(sessionID: "chat")
+        }
+        #expect(model.takeFailedOutgoingMessage(sessionID: "chat") != nil)
+        client.confirmHistory(workspaceID: "a")
+        let history = try await model.conversation(sessionID: "chat")
+        #expect(history.turns.first?.id == id)
+        #expect(history.turns.first?.isDeliveryRejected == true)
+        #expect(history.turns.first?.isDeliveryConfirmed == false)
+        #expect(history.turns.first?.delivery == .notDelivered)
+    }
+
+    @Test func rememberedRejectionsStayWithinTheirWorkspaceSessionAndAccount() async throws {
+        let client = ControlledMessageClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var rejected = ConversationTurn(id: "shared-id", author: .user, text: "Guide")
+        rejected.isDeliveryRejected = true
+        client.setHistory([rejected], workspaceID: "a")
+        _ = try await model.conversation(sessionID: "chat")
+        let cache = try #require(client.cachedSession)
+        rejected.isDeliveryRejected = false
+        rejected.isDeliveryConfirmed = true
+        client.setHistory([rejected], workspaceID: "a")
+        client.setHistory([rejected], workspaceID: "b")
+        #expect(try await model.conversation(sessionID: "other-chat").turns.first?.isDeliveryRejected == false)
+        await model.selectWorkspace("b")
+        #expect(try await model.conversation(sessionID: "chat").turns.first?.isDeliveryRejected == false)
+        await model.selectWorkspace("a")
+        #expect(try await model.conversation(sessionID: "chat").turns.first?.isDeliveryRejected == true)
+
+        let otherClient = ControlledMessageClient()
+        otherClient.account = Account(email: "other@example.com", id: "other")
+        otherClient.cachedSession = cache
+        otherClient.setHistory([rejected], workspaceID: "a")
+        let otherModel = AppModel(client: otherClient)
+        await otherModel.adoptExistingAccount()
+        #expect(try await otherModel.conversation(sessionID: "chat").turns.first?.isDeliveryRejected == false)
+
+        model.signOut()
+        #expect(client.cachedSession == nil)
+        client.account = Account(email: "fixture@example.com", id: "fixture")
+        client.setHistory([rejected], workspaceID: "a")
+        await model.adoptExistingAccount()
+        #expect(try await model.conversation(sessionID: "chat").turns.first?.isDeliveryRejected == false)
+    }
+
     @Test func missingHistoryRejectionDisablesOldIDRetryAndEditingCreatesANewTurn() async throws {
         let client = ControlledMessageClient()
         client.unconfirmed = true
@@ -521,6 +608,7 @@ private final class ControlledSessionStartClient: LodyClient {
 @MainActor
 private final class ControlledMessageClient: LodyClient {
     var account: Account? = Account(email: "fixture@example.com", id: "fixture")
+    var cachedSession: SessionCache?
     let supportsTextSending = true
     var unconfirmed = false
     var rejection: LodyClientError?
@@ -537,7 +625,11 @@ private final class ControlledMessageClient: LodyClient {
     func beginDeviceAuthorization() async throws -> DeviceAuthorization { throw LodyClientError.notConnected }
     func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws {}
     func restoreSession() async -> Account? { account }
-    func signOut() { account = nil; pending = nil; turns = [:] }
+    func signOut() { account = nil; pending = nil; turns = [:]; cachedSession = nil }
+    func saveSessionCache(_ cache: SessionCache) {
+        if cache.account == account { cachedSession = cache }
+    }
+    func setHistory(_ history: [ConversationTurn], workspaceID: String) { turns[workspaceID] = history }
     func workspaces() async throws -> [WorkspaceSummary] {
         [WorkspaceSummary(id: "a", name: "A", slug: "a"), WorkspaceSummary(id: "b", name: "B", slug: "b")]
     }

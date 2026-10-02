@@ -456,12 +456,14 @@ struct HTTPLodyClientTests {
         let row = SessionSummary(id: "chat", title: "Saved chat", agentName: "Agent", activity: .idle, preview: "Hello")
         let cache = SessionCache(account: account,
                                  workspaces: [WorkspaceSummary(id: "work", name: "Work", slug: "work")],
-                                 selectedWorkspaceID: "work", sessionsByWorkspace: ["work": [row]])
+                                 selectedWorkspaceID: "work", sessionsByWorkspace: ["work": [row]],
+                                 rejectedTurnIDsByWorkspace: ["work": ["chat": ["first", "second"]]])
         client.saveSessionCache(cache)
         await client.flushSessionCache()
 
         let relaunched = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
         let model = AppModel(client: relaunched)
+        #expect(relaunched.cachedSession == cache)
         #expect(model.isSignedIn)
         #expect(model.selectedWorkspaceID == "work")
         #expect(model.sessions == [row])
@@ -490,6 +492,9 @@ struct HTTPLodyClientTests {
         let client = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
         _ = await client.restoreSession()
         #expect(client.cachedSession != nil)
+        var cache = try #require(client.cachedSession)
+        cache.rejectedTurnIDsByWorkspace = ["work": ["chat": ["rejected"]]]
+        client.saveSessionCache(cache)
         await client.flushSessionCache()
         _ = store.write("different-token")
         let other = HTTPLodyClient(session: log.session, tokenStore: store, baseURL: log.baseURL, cacheURL: url)
@@ -498,6 +503,14 @@ struct HTTPLodyClientTests {
         client.signOut()
         await client.flushSessionCache()
         #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func legacySessionCacheDecodesWithoutRejectionRecords() throws {
+        let data = Data(#"{"account":{"email":"ada@lody.ai"},"workspaces":[],"selectedWorkspaceID":"work","sessionsByWorkspace":{}}"#.utf8)
+        let cache = try JSONDecoder().decode(SessionCache.self, from: data)
+        #expect(cache.account.email == "ada@lody.ai")
+        #expect(cache.selectedWorkspaceID == "work")
+        #expect(cache.rejectedTurnIDsByWorkspace.isEmpty)
     }
 
     @Test func queuedWritesCannotRecreateCacheAfterSignOut() async throws {

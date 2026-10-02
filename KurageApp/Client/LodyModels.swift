@@ -698,6 +698,26 @@ struct SessionCache: Codable, Equatable, Sendable {
     var workspaces: [WorkspaceSummary] = []
     var selectedWorkspaceID: String?
     var sessionsByWorkspace: [String: [SessionSummary]] = [:]
+    /// Locally observed negative ACKs, scoped by workspace, session, then turn.
+    var rejectedTurnIDsByWorkspace: [String: [String: Set<String>]] = [:]
+
+    private enum CodingKeys: String, CodingKey {
+        case account, workspaces, selectedWorkspaceID, sessionsByWorkspace, rejectedTurnIDsByWorkspace
+    }
+}
+
+extension SessionCache {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            account: try container.decode(Account.self, forKey: .account),
+            workspaces: try container.decodeIfPresent([WorkspaceSummary].self, forKey: .workspaces) ?? [],
+            selectedWorkspaceID: try container.decodeIfPresent(String.self, forKey: .selectedWorkspaceID),
+            sessionsByWorkspace: try container.decodeIfPresent([String: [SessionSummary]].self, forKey: .sessionsByWorkspace) ?? [:],
+            rejectedTurnIDsByWorkspace: try container.decodeIfPresent([String: [String: Set<String>]].self,
+                                                                      forKey: .rejectedTurnIDsByWorkspace) ?? [:]
+        )
+    }
 }
 
 /// Confirmed archive targets use document IDs, matching the active session list.
