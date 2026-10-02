@@ -1,5 +1,11 @@
 # Kurage 会话功能
 
+## Session 列表吸顶标题外观修正（2026-10-02）
+
+- 可复用项目分组标题通过动态颜色提供器将 `systemBackground` 解析为具体颜色分量，避免 UIKit 将语义背景转换成吸顶模糊材质后出现灰色横条；标题背景继续与列表保持一致，并随浅色、深色与系统对比度设置更新。
+- 标题上下留白由 18／8 pt 改为 13／13 pt，保持原有总高度，使文件夹图标、项目名称与新建按钮在标题栏内垂直居中。项目名称与会话标题继续共用 44 pt 起始位置，收起／展开与新建按钮的点击范围保持原有行为。
+- 本轮已移除临时视图诊断代码后，在 iOS 27 Simulator 通过浅色 3 项、深色 accessibility-large 2 项 fixture UI 回归，覆盖跨项目吸顶、新建会话、收起／展开、无新建能力标题的全宽点击与标题／正文搜索。正式截图确认浅色标题、列表及导航背景均为 RGB 255，深色均为 RGB 0，图标、名称和按钮居中且无重叠；模拟器外观与字号已恢复，`git diff --check` 通过。真实账号、iOS 26 及真机尚未验证。
+
 ## Session 列表项目标题吸顶（2026-10-02）
 
 - By Project 将项目标题改为原生 plain table 的分组标题；滚动到项目内时，标题固定在导航栏下方，下一项目进入时替换。标题使用系统背景，保留文件夹图标、收起／展开和右侧新建会话入口。
@@ -524,3 +530,9 @@
 - App Store Connect 应用名称为 Kurage for Lody，Bundle ID 为 `com.spike.kurage`；设备上的显示名称仍为 Kurage。
 - 在应用目标显式设置 `TARGETED_DEVICE_FAMILY: "1"` 并重新生成工程，防止 XcodeGen 的目标默认值覆盖项目级 iPhone 设置。原归档被 Apple 以 iPad 多任务方向配置不完整拒绝；修正后的归档已确认 `UIDeviceFamily` 为 `[1]`。
 - 本轮 Release 归档和 App Store Connect 上传成功，版本为 0.1.0（1），Apple 正在处理。TestFlight 审核登录信息已保存；凭据不记录在仓库中。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.2.0 发布（2026-10-02）
+
+- 将应用版本更新为 0.2.0，构建号更新为 2，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.2.0（2），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1]`、最低 iOS 为 26.0。
+- 归档有一条 `ConversationView.swift` 非 Sendable 函数转为 `@MainActor @Sendable` 的并发警告。本轮未运行单元／UI 测试或真实账号回归。
