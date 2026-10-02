@@ -68,7 +68,7 @@ struct ComposerMentionsTests {
             supportsTextSending: true, supportsTextSendingWhileRunning: false,
             supportsSessionCancellation: false, runConfig: nil,
             placeholder: LocalizedStringResource(stringLiteral: placeholder),
-            onSend: {}, onCancel: {}, onChooseRunConfig: { _, _ in }))
+            onSend: { false }, onCancel: {}, onChooseRunConfig: { _, _ in }))
         let window = UIWindow(windowScene: scene)
         window.rootViewController = host
         window.makeKeyAndVisible()
@@ -309,7 +309,7 @@ private struct MentionLifecycleHarness: View {
                         supportsSessionCancellation: false, runConfig: nil, focusesOnAppear: true,
                         loadMentionSessions: { try await probe.load(isSkill: false); return [] },
                         loadMentionSkills: { try await probe.load(isSkill: true); return [] },
-                        onSend: {}, onCancel: {}, onChooseRunConfig: { _, _ in })
+                        onSend: { false }, onCancel: {}, onChooseRunConfig: { _, _ in })
             .environment(\.scenePhase, probe.phase)
     }
 }

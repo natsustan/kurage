@@ -288,9 +288,9 @@ struct NewSessionView: View {
         }
     }
 
-    private func start() {
+    private func start() -> Bool {
         guard isCurrentWorkspace, scenePhase == .active, pendingStart == nil, let options, !isLoading, !loadFailed, !isStarting,
-              (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return }
+              (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) else { return false }
         do {
             let id = try model.stageSessionStart(mentions.expanded(draft), composerText: draft, mentions: mentions,
                 attachments: attachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
@@ -301,8 +301,10 @@ struct NewSessionView: View {
             attachments = []
             showConversation(id)
             deliverStart(id)
+            return true
         } catch {
             banner = "Could not prepare the new session. Try again."
+            return false
         }
     }
 
