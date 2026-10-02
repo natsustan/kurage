@@ -5,6 +5,49 @@ import UIKit
 
 @MainActor
 struct ConversationLayoutTests {
+    @Test func wideTranscriptAndComposerShareACenteredReadableWidth() async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        update(controller, turns: sampleTurns())
+        controller.view.frame.size.width = 1200
+        await settle(controller)
+        let content = try #require(controller.view.subviews.first)
+        let table = try transcript(in: controller.view)
+        let footer = try #require(content.subviews.compactMap { $0 as? UIScrollView }
+            .first { !($0 is UITableView) })
+        #expect(abs(content.frame.width - ConversationMetrics.maximumContentWidth) < 1)
+        #expect(abs(content.frame.midX - controller.view.safeAreaLayoutGuide.layoutFrame.midX) < 1)
+        #expect(abs(table.frame.width - footer.frame.width) < 1)
+        expectAtBottom(table)
+
+        controller.view.frame.size.width = 360
+        await settle(controller)
+        #expect(abs(content.frame.width - controller.view.safeAreaLayoutGuide.layoutFrame.width) < 1)
+        expectAtBottom(table)
+    }
+
+    @Test func readingAnchorSurvivesWidthChangesThatReflowMessages() async throws {
+        let (controller, window) = try makeController()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let turns = sampleTurns().map { turn in
+            ConversationTurn(id: turn.id, author: .user, text: String(repeating: "A message that wraps as the window changes. ", count: 6))
+        }
+        update(controller, turns: turns)
+        await settle(controller)
+        let table = try transcript(in: controller.view)
+        controller.scrollViewWillBeginDragging(table)
+        table.contentOffset.y = 500
+        table.layoutIfNeeded()
+        controller.scrollViewDidEndDragging(table, willDecelerate: false)
+        let row = try #require(table.indexPathsForVisibleRows?.first)
+        let position = table.rectForRow(at: row).minY - table.contentOffset.y
+        for width in [CGFloat(1100), CGFloat(360)] {
+            controller.view.frame.size.width = width
+            await settle(controller)
+            #expect(abs(table.rectForRow(at: row).minY - table.contentOffset.y - position) < 1)
+        }
+    }
+
     @Test func streamingGrowthAndDeletionKeepBottomVisible() throws {
         let (controller, window) = try makeController()
         defer {

@@ -6,10 +6,13 @@ struct ConversationView: View {
     let title: String
     let model: AppModel
     var isReadOnly = false
+    var draftStore: ConversationDraftStore? = nil
+    var onArchived: (() -> Void)? = nil
 
     var body: some View {
         ConversationTabsContent(rootID: sessionID, title: title, model: model,
-                                    workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly)
+                                    workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly,
+                                    draftStore: draftStore, onArchived: onArchived)
             .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly))
     }
 }
@@ -55,6 +58,7 @@ struct ConversationContent: View {
     @State private var showsConnectionMessage = false
     @Binding var runConfigState: ConversationRunConfigState
     let rootSessionID: SessionSummary.ID
+    var onArchived: (() -> Void)? = nil
     var onNewTab: (() -> Void)? = nil
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
@@ -195,7 +199,9 @@ struct ConversationContent: View {
                                                                             file: file, workspaceID: workspaceID)
                                     } : nil)
         }
-        .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: { dismiss() }))
+        .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: {
+            if let onArchived { onArchived() } else { dismiss() }
+        }))
         .toolbar {
             if !isReadOnly, let session {
                 ToolbarItemGroup(placement: .topBarTrailing) {

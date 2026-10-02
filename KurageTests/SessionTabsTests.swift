@@ -4,6 +4,19 @@ import Testing
 
 @MainActor
 struct SessionTabsTests {
+    @Test func composerDraftsAreIsolatedBySessionAndWorkspaceGeneration() {
+        let store = ConversationDraftStore()
+        store[sessionID: "root", workspaceGeneration: 1].text = "First workspace draft"
+        store[sessionID: "tab", workspaceGeneration: 1].text = "Separate tab draft"
+        store[sessionID: "root", workspaceGeneration: 1].banner = "Unconfirmed send"
+        #expect(store[sessionID: "root", workspaceGeneration: 2].text.isEmpty)
+        #expect(store[sessionID: "root", workspaceGeneration: 2].banner == nil)
+        store[sessionID: "root", workspaceGeneration: 2].text = "Other workspace draft"
+        #expect(store[sessionID: "root", workspaceGeneration: 1].text == "First workspace draft")
+        #expect(store[sessionID: "tab", workspaceGeneration: 1].text == "Separate tab draft")
+        #expect(store[sessionID: "root", workspaceGeneration: 2].text == "Other workspace draft")
+    }
+
     @Test func tabCreationReadingClosingAndSendingRemainSeparateFromRoot() async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
         let model = AppModel(client: client)
