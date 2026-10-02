@@ -722,7 +722,7 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(connect.waitForExistence(timeout: 5))
         tap(connect)
 
-        let projectHeading = app.staticTexts["kurage"]
+        let projectHeading = app.buttons["project-header-local:machine-1:kurage"]
         XCTAssertTrue(projectHeading.waitForExistence(timeout: 5))
 
         let more = app.buttons["more-options"]
@@ -742,6 +742,71 @@ final class ShellFlowTests: XCTestCase {
         let account = app.buttons["account-menu"]
         tap(account)
         XCTAssertTrue(app.buttons["Sign out"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
+    func testProjectHeadersStayPinnedAndKeepTheirActions() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-long-session-list"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let table = app.tables.firstMatch
+        let kurage = app.buttons["project-header-local:machine-1:kurage"]
+        let prism = app.buttons["project-header-local:machine-1:prism"]
+        XCTAssertTrue(kurage.waitForExistence(timeout: 5))
+        let start = table.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+        let end = table.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertEqual(app.buttons.matching(identifier: "project-header-local:machine-1:kurage").count, 1)
+        let pinnedY = kurage.frame.minY
+        XCTAssertEqual(pinnedY, table.frame.minY, accuracy: 2)
+        start.press(forDuration: 0.1, thenDragTo: end)
+        XCTAssertEqual(kurage.frame.minY, pinnedY, accuracy: 2)
+        XCTAssertEqual(app.buttons.matching(identifier: "new-session-local:machine-1:kurage").count, 1)
+        attachScreen(app, name: "kurage-project-pinned")
+        tap(app.buttons["new-session-local:machine-1:kurage"])
+        XCTAssertTrue(app.descendants(matching: .any)["new-session-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["kurage"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(kurage.waitForExistence(timeout: 5))
+
+        for _ in 0..<10 {
+            if prism.isHittable && abs(prism.frame.minY - pinnedY) < 2 { break }
+            table.swipeUp()
+        }
+        XCTAssertTrue(prism.isHittable)
+        XCTAssertEqual(prism.frame.minY, pinnedY, accuracy: 2)
+        XCTAssertFalse(kurage.isHittable)
+        attachScreen(app, name: "prism-project-pinned")
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        XCTAssertTrue(app.descendants(matching: .any)["new-session-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["prism"].exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(prism.waitForExistence(timeout: 5))
+        tap(prism)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Collapsed"), object: prism
+        )], timeout: 3), .completed)
+        XCTAssertFalse(app.descendants(matching: .any)["session-list-prism-12"].exists)
+        attachScreen(app, name: "project-collapsed-after-pinning")
+        // Collapsing a long section can adjust the content offset and move its
+        // header below the viewport, especially with accessibility text sizes.
+        for _ in 0..<3 {
+            if prism.exists && prism.isHittable { break }
+            table.swipeUp()
+        }
+        XCTAssertTrue(prism.waitForExistence(timeout: 3))
+        tap(prism)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Expanded"), object: prism
+        )], timeout: 3), .completed)
+        let restoredSession = app.descendants(matching: .any)["session-list-prism-12"]
+        for _ in 0..<3 {
+            if restoredSession.exists { break }
+            table.swipeUp()
+        }
+        XCTAssertTrue(restoredSession.waitForExistence(timeout: 5))
+        attachScreen(app, name: "project-expanded-after-pinning")
     }
 
     @MainActor
@@ -1431,8 +1496,8 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(tests.label.contains("fix flaky tests"))
         XCTAssertFalse(app.descendants(matching: .any)["session-session-long"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["session-session-pr"].exists)
-        XCTAssertTrue(app.staticTexts["kurage"].exists)
-        XCTAssertFalse(app.staticTexts["prism"].exists)
+        XCTAssertTrue(app.buttons["project-header-local:machine-1:kurage"].exists)
+        XCTAssertFalse(app.buttons["project-header-local:machine-1:prism"].exists)
         attachScreen(app, name: "search-title")
 
         tap(app.buttons["session-search-clear"])

@@ -1031,6 +1031,21 @@ extension ConversationFileChangeGroup {
 
 
 extension SessionRecord {
+    static var samplesWithLongSessionList: [SessionRecord] {
+        samples + ["kurage", "prism"].flatMap { (project: String) in
+            (1...24).map { number in
+                SessionRecord(
+                    summary: SessionSummary(
+                        id: "list-\(project)-\(number)", title: "\(project) session \(number)",
+                        agentName: "codex", activity: .idle, preview: "",
+                        projectID: "local:machine-1:\(project)", projectName: project, machineName: "spike@mac"
+                    ),
+                    turns: [], permission: nil
+                )
+            }
+        }
+    }
+
     static var samplesWithRunningTab: [SessionRecord] {
         samples + [SessionRecord(summary: SessionSummary(id: "fixture-running-tab", title: "Working tab",
             agentName: "codex", activity: .running, preview: "", parentSessionID: "session-long"),

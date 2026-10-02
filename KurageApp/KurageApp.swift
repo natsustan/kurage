@@ -11,7 +11,9 @@ struct KurageApp: App {
                 : ProcessInfo.processInfo.arguments.contains("--fixture-questions")
                     ? [SessionRecord.questionSample] + SessionRecord.samples
                     : ProcessInfo.processInfo.arguments.contains("--fixture-running-tab")
-                        ? SessionRecord.samplesWithRunningTab : SessionRecord.samples,
+                        ? SessionRecord.samplesWithRunningTab
+                        : ProcessInfo.processInfo.arguments.contains("--fixture-long-session-list")
+                            ? SessionRecord.samplesWithLongSessionList : SessionRecord.samples,
                 failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
