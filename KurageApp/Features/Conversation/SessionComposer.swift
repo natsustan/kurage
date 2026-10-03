@@ -173,6 +173,8 @@ struct SessionComposer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
+    private var isExpanded: Bool { isFocused || showsRunConfig || showsAdvanced }
+
     private var editableDraft: Binding<String> {
         Binding(
             get: { draft },
@@ -230,28 +232,39 @@ struct SessionComposer: View {
                     .accessibilityIdentifier("mention-retry")
             }
             VStack(spacing: 0) {
-                if !attachments.isEmpty || isLoadingAttachments {
+                if isExpanded && (!attachments.isEmpty || isLoadingAttachments) {
                     ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: blocksEditing)
                 }
                 ZStack(alignment: .topLeading) {
                     MentionEditor(text: editableDraft, selection: $selection,
                                   isFocused: $isFocused,
+                                  visibleLineLimit: isExpanded ? (dynamicTypeSize.isAccessibilitySize ? 3 : 5) : 1,
                                   selectionRequest: selectionRequest,
                                   ranges: mentions.ranges, isEnabled: !blocksEditing, identifier: identifiers.field,
                                   accessibilityLabel: placeholder)
+                        .clipped()
                     if draft.isEmpty {
                         Text(placeholder)
+                            .lineLimit(isExpanded ? nil : 1)
                             .foregroundStyle(.tertiary)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
                     }
                 }
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
-                    .padding(.bottom, 4)
-                actionRow
+                    .frame(minHeight: isExpanded ? nil : 44)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !blocksEditing { isFocused = true }
+                    }
+                    .padding(.leading, isExpanded ? 12 : 50)
+                    .padding(.trailing, isExpanded ? 12 : 54)
+                    .padding(.top, isExpanded ? 10 : 0)
+                    .padding(.bottom, isExpanded ? 48 : 0)
             }
+            // Keep the native editor and attachment importer in place as focus
+            // changes. The compact editor occupies the gap between the buttons.
+            .overlay(alignment: .bottom) { actionRow }
             .padding(8)
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .accessibilityElement(children: .contain)
@@ -492,29 +505,32 @@ struct SessionComposer: View {
         HStack(spacing: 6) {
             HStack(spacing: 0) {
                 ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
-                                    error: $attachmentError, disabled: blocksEditing)
-                Button(action: startMention) {
-                    Image("at")
-                        .renderingMode(.template)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 24, height: 24)
-                        .foregroundStyle(.primary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                                    error: $attachmentError, disabled: blocksEditing,
+                                    showsSummary: !isExpanded)
+                if isExpanded {
+                    Button(action: startMention) {
+                        Image("at")
+                            .renderingMode(.template)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 24, height: 24)
+                            .foregroundStyle(.primary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(blocksEditing)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Mention")
+                    .accessibilityHint("Insert @ to mention a session or skill")
+                    .accessibilityIdentifier("add-mention")
                 }
-                .disabled(blocksEditing)
-                .buttonStyle(.plain)
-                .accessibilityLabel("Mention")
-                .accessibilityHint("Insert @ to mention a session or skill")
-                .accessibilityIdentifier("add-mention")
             }
             Spacer(minLength: 0)
             HStack(spacing: 0) {
-                if let contextWindowUsage, contextWindowUsage.isValid {
+                if isExpanded, let contextWindowUsage, contextWindowUsage.isValid {
                     ContextWindowButton(usage: contextWindowUsage)
                 }
-                if let runConfig {
+                if isExpanded, let runConfig {
                     Button {
                         showsRunConfig = true
                     } label: {

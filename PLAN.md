@@ -1,5 +1,17 @@
 # Kurage 会话功能
 
+## 输入区聚焦展开（2026-10-03）
+
+- 共用输入区在未聚焦时收为单行，加号、输入预览与发送／停止按钮位于同一行；聚焦后恢复多行编辑、附件预览、提及、上下文用量与运行配置。编辑视口普通字号最多五行、辅助大字号最多三行，其余内容可在编辑器中滚动，避免挤占正文空间。设置浮层或 Advanced 打开期间保持展开，关闭后按输入焦点恢复；新建 Session／Tab 沿用进入时自动聚焦。
+- 收起时原生编辑器使用单行截断布局，保留完整草稿、提及与光标；展开后恢复多行滚动。加号在收起时显示附件数量或导入进度，附件导入器不会随布局切换被移除。
+- 本轮 iOS 27 Simulator 构建通过，浅色默认字号的 6 项相关 fixture UI 回归通过，覆盖配置、提及、新建 Session 与运行中停止／steer。修正长草稿单行文字溢出后，浅色多行回归再次通过；辅助大字号三行视口与实际可见正文滑动适配后，深色 accessibility-large 的多行与提及回归、20 项 ComposerMentions Swift 测试通过。最后一轮多行回归检查完整草稿恢复、键盘避让及发送后文字区域可见性，通过且未跳过。
+- 已核对浅色与深色大字号的收起／展开截图，长草稿收起时没有相邻行残片，按钮与输入文字居中。`git diff --check` 通过；iOS 26、iPad、真机与真实账号本轮未验证。
+
+## 回复 Markdown 表格字号（2026-10-03）
+
+- 表格正文与表头均使用 subheadline（默认 15 pt），表头使用半粗体；随系统文字大小设置调整。
+- 本轮 iOS Simulator 构建与 `git diff --check` 通过；尚未检查表格的 Simulator 外观、辅助大字号与真机显示。
+
 ## 回复 Markdown 标题字号（2026-10-03）
 
 - 回复标题采用紧凑的系统文字样式：H1 使用 title2 半粗体（默认 22 pt），H2 使用 title3 半粗体（20 pt），H3–H6 使用 17 pt 的 headline／body，通过字重区分层级；随系统文字大小设置调整。正文与代码块字体沿用现有设置。
@@ -464,7 +476,7 @@
 
 ## Session 列表图标与搜索字重（2026-10-01）
 
-- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 统一改用 MingCute pencil，见后文）。
+- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 改用 MingCute Cute Regular `edit_3` 方框铅笔，见后文）。
 - 搜索框文字从 regular 提高一级至 medium，包含占位文字和输入内容。
 - 本轮浅色项目创建与搜索两项 fixture UI 测试通过；深色 accessibility-large 下搜索测试通过。仅涉及列表样式，未修改同步协议。
 
@@ -664,11 +676,19 @@
 ## MingCute 活动与编辑图标（2026-10-03）
 
 - 从本机 MingCute Icon System Pro v1.50 的 SVG/cute regular 导入活动图标：命令使用 `terminal_box`，读取使用 `document_2`，编辑使用 `pencil`，搜索使用 `search`，网络获取使用 `earth`，其他工具使用 `tool`；活动摘要与展开步骤共用映射。活动组及 Worked for 展开箭头使用 `right`，保留旋转动画与减少动态效果设置。
-- 消息失败后的 Edit、会话／子会话重命名菜单、列表底部 New chat 和项目 New Session 统一使用相同 pencil 资源，覆盖 SwiftUI 与 UIKit。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
+- 消息失败后的 Edit、会话／子会话重命名菜单使用 pencil 资源，覆盖 SwiftUI 与 UIKit。列表底部 New chat 和项目 New Session 改用 MingCute Cute Regular `edit_3_cute_re.svg`（`pencil-square` 资源），显示带方框的铅笔。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
 - 本轮最终 iOS Simulator 构建通过；只有未依赖 AppIntents.framework 的元数据提取跳过提示。未运行单元／UI 测试。iPhone 17／iOS 27 可启动 fixture，但设备交互工具缺失且 CUA 无法打开 Simulator，停在欢迎页，未能检查活动区和菜单的实际图标、深色模式或大字号；真机与真实账号亦未验证。
+
+- 方框铅笔修正本轮 iOS Simulator 构建通过；已核对原始图标样式，未运行 UI 测试或检查应用中的深色／大字号显示。
 
 ## TestFlight 0.4.0 发布（2026-10-03）
 
 - 将应用版本更新为 0.4.0，构建号更新为 7，并通过 XcodeGen 重新生成工程。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.0（7），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.4.1 发布（2026-10-03）
+
+- 将应用版本更新为 0.4.1，构建号更新为 8，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.1（8），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。

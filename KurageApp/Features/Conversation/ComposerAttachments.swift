@@ -10,6 +10,7 @@ struct ComposerAttachments: View {
     private var isLoading: Bool { !pending.isEmpty }
     @Binding var error: String?
     let disabled: Bool
+    var showsSummary = false
     @State private var showsPhotos = false
     @State private var showsFiles = false
     @State private var showsCamera = false
@@ -41,11 +42,25 @@ struct ComposerAttachments: View {
                     .font(.system(size: 22))
                     .foregroundStyle(Color.primary)
                     .frame(width: 44, height: 44)
+                    .overlay(alignment: .topTrailing) {
+                        if showsSummary && isLoading {
+                            ProgressView().controlSize(.mini)
+                                .allowsHitTesting(false)
+                        } else if showsSummary && !attachments.isEmpty {
+                            Text(attachments.count, format: .number)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 4)
+                                .background(Color.accentColor, in: Capsule())
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
             .tint(Color.primary)
             .menuOrder(.fixed)
             .disabled(disabled || isLoading || attachments.count >= 8)
             .accessibilityLabel("Add attachment")
+            .accessibilityValue(attachments.isEmpty ? "" : "\(attachments.count) attachments")
             .accessibilityIdentifier("add-attachment")
         }
         .photosPicker(isPresented: $showsPhotos, selection: $photos,
