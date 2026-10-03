@@ -176,7 +176,7 @@ private struct SessionSidebarView: View {
             canCopyURL: model.canCopySessionURL,
             onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
             mode: listMode,
-            keepsListHeight: !isCompactWindow && !isSearchFocused,
+            keepsListHeight: !isSearchFocused,
             selectedSessionID: isCompactWindow ? nil : selectedSessionID,
             supportsConversations: model.supportsConversations,
             canArchive: model.supportsSessionArchiving,
@@ -469,8 +469,8 @@ private struct SessionList: View {
                 .padding(.bottom, 8)
                 .safeAreaPadding(.bottom)
         }
-        // Only the detail column avoids the keyboard during detail input, so the list
-        // and floating search stay in place; sidebar search still avoids the keyboard.
+        // Keep the list full height during detail input, including compact navigation
+        // transitions. Only the list's own search field needs keyboard avoidance.
         // Both regions are ignored together so the list still reaches the screen edge.
         .ignoresSafeArea(keepsListHeight ? [.container, .keyboard] : .container, edges: .bottom)
         .scrollDismissesKeyboard(.interactively)
