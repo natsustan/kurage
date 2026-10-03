@@ -60,7 +60,7 @@ struct ComposerAttachments: View {
             .menuOrder(.fixed)
             .disabled(disabled || isLoading || attachments.count >= 8)
             .accessibilityLabel("Add attachment")
-            .accessibilityValue(attachments.isEmpty ? "" : "\(attachments.count) attachments")
+            .accessibilityValue(isLoading ? "Loading attachments" : attachments.isEmpty ? "" : "\(attachments.count) attachments")
             .accessibilityIdentifier("add-attachment")
         }
         .photosPicker(isPresented: $showsPhotos, selection: $photos,
@@ -207,7 +207,7 @@ struct ComposerAttachmentStrip: View {
     @Binding var attachments: [ComposerAttachment]
     let pending: [PendingComposerAttachment]
     let disabled: Bool
-    @State private var previewAttachment: ComposerAttachment?
+    let onPreview: (ComposerAttachment) -> Void
 
     private var containsImage: Bool {
         attachments.contains(where: \.isImage) || pending.contains(where: \.isImage)
@@ -223,7 +223,7 @@ struct ComposerAttachmentStrip: View {
                         thumbnailData: attachment.thumbnailData,
                         isLoading: disabled,
                         onRemove: { attachments.removeAll { $0.id == attachment.id } },
-                        onPreview: attachment.isImage ? { previewAttachment = attachment } : nil
+                        onPreview: attachment.isImage ? { onPreview(attachment) } : nil
                     )
                 }
                 ForEach(pending) { item in
@@ -237,15 +237,6 @@ struct ComposerAttachmentStrip: View {
         .frame(height: containsImage ? 122 : nil)
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("composer-attachments")
-        .fullScreenCover(item: $previewAttachment) { attachment in
-            AttachmentImagePreview(
-                name: attachment.fileName,
-                previewIdentifier: "composer-image-preview",
-                closeIdentifier: "composer-image-close"
-            ) {
-                attachment.data
-            }
-        }
     }
 }
 

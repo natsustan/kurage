@@ -1891,18 +1891,14 @@ extension ShellFlowTests {
         tap(session)
         let field = app.descendants(matching: .any)["follow-up-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        tap(field)
-        field.typeText("Photo above the keyboard")
-        let keyboard = app.keyboards.firstMatch
-        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-        try XCTSkipIf(!app.frame.intersects(keyboard.frame) || !keyboard.isHittable,
-                      "This regression requires the simulator software keyboard to be visible.")
         let composer = app.otherElements["follow-up-composer"]
         let send = app.buttons["send-follow-up"]
-        XCTAssertTrue(send.isHittable)
-        let initialFrame = composer.frame
+        let add = app.buttons["add-attachment"]
+        assertCompactComposer(app, field: field, action: send)
+        let compactHeight = composer.frame.height
+        let keyboard = app.keyboards.firstMatch
 
-        tap(app.buttons["add-attachment"])
+        tap(add)
         tap(app.buttons["Photos"])
         XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Loading…"].waitForNonExistence(timeout: 30))
@@ -1914,13 +1910,36 @@ extension ShellFlowTests {
         }
         tap(photos.element(boundBy: photos.count - 1))
         tap(app.buttons["Done"])
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1 attachments"), object: add
+        )], timeout: 10), .completed)
+        assertCompactComposer(app, field: field, action: send)
+        XCTAssertEqual(composer.frame.height, compactHeight, accuracy: 1)
+        XCTAssertFalse(app.otherElements["composer-attachments"].exists)
+        XCTAssertTrue(send.isEnabled)
+        attachScreen(app, name: "photo-imported-while-compact")
+        tap(field)
+        field.typeText("Photo above the keyboard")
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        try XCTSkipIf(!app.frame.intersects(keyboard.frame) || !keyboard.isHittable,
+                      "This regression requires the simulator software keyboard to be visible.")
         let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 10))
-        tap(field)
         XCTAssertTrue(keyboard.wait(for: \.isHittable, toEqual: true, timeout: 5))
-        XCTAssertGreaterThan(composer.frame.height, initialFrame.height + 100)
+        XCTAssertGreaterThan(composer.frame.height, compactHeight + 100)
         assertComposerAboveKeyboard(app, composer: composer, send: send)
         attachScreen(app, name: "existing-photo-above-keyboard")
+        dismissComposerKeyboard(app, composer: composer)
+        XCTAssertTrue(app.buttons["add-mention"].waitForNonExistence(timeout: 5))
+        assertCompactComposer(app, field: field, action: send)
+        XCTAssertEqual(add.value as? String, "1 attachments")
+        XCTAssertEqual(field.value as? String, "Photo above the keyboard")
+        XCTAssertFalse(remove.exists)
+        XCTAssertTrue(send.isEnabled)
+        attachScreen(app, name: "photo-and-draft-preserved-while-compact")
+        tap(field)
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Photo above the keyboard")
 
         let changes = app.buttons["conversation-changes-hud"]
         if changes.frame.minY < app.navigationBars.firstMatch.frame.maxY {
@@ -1935,8 +1954,7 @@ extension ShellFlowTests {
             assertComposerAboveKeyboard(app, composer: composer, send: send)
         }
 
-        verifyComposerImagePreview(app, name: "existing-photo-preview-with-keyboard")
-        tap(field)
+        verifyComposerImagePreview(app, field: field, name: "existing-photo-preview-with-keyboard")
         XCTAssertTrue(keyboard.wait(for: \.isHittable, toEqual: true, timeout: 5))
         attachScreen(app, name: "existing-photo-after-preview-above-keyboard")
         assertComposerAboveKeyboard(app, composer: composer, send: send)
@@ -1989,6 +2007,9 @@ extension ShellFlowTests {
         let add = app.buttons["add-attachment"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let composer = app.otherElements["new-session-composer"]
+        let field = app.descendants(matching: .any)["new-session-field"]
+        tap(field)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let initialFrame = composer.frame
         for shouldSend in [false, true] {
             tap(add)
@@ -2004,6 +2025,7 @@ extension ShellFlowTests {
             // Run only on an isolated simulator whose library contains test sample photos.
             tap(photos.element(boundBy: photos.count - 1))
             tap(app.buttons["Done"])
+            tap(field)
             let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
             XCTAssertTrue(remove.waitForExistence(timeout: 10))
             let send = app.buttons["new-session-send"]
@@ -2013,7 +2035,7 @@ extension ShellFlowTests {
             XCTAssertEqual(composer.frame.maxY, initialFrame.maxY, accuracy: 2)
             XCTAssertTrue(composer.frame.contains(send.frame))
             attachScreen(app, name: "photo-attachment-preview")
-            verifyComposerImagePreview(app, name: "new-session-photo-full-preview")
+            verifyComposerImagePreview(app, field: field, name: "new-session-photo-full-preview")
             XCTAssertTrue(remove.exists)
             XCTAssertTrue(send.isEnabled)
             if shouldSend {
@@ -2038,9 +2060,11 @@ extension ShellFlowTests {
         XCTAssertTrue(photos.firstMatch.waitForExistence(timeout: 30))
         tap(photos.element(boundBy: photos.count - 1))
         tap(app.buttons["Done"])
+        let followUpField = app.descendants(matching: .any)["follow-up-field"]
+        tap(followUpField)
         let remove = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Remove Photo.'")).firstMatch
         XCTAssertTrue(remove.waitForExistence(timeout: 10))
-        verifyComposerImagePreview(app, name: "follow-up-photo-full-preview")
+        verifyComposerImagePreview(app, field: followUpField, name: "follow-up-photo-full-preview")
         XCTAssertTrue(remove.exists)
         tap(remove)
         XCTAssertTrue(remove.waitForNonExistence(timeout: 5))
@@ -2049,18 +2073,24 @@ extension ShellFlowTests {
     }
 
     @MainActor
-    private func verifyComposerImagePreview(_ app: XCUIApplication, name: String) {
+    private func verifyComposerImagePreview(_ app: XCUIApplication, field: XCUIElement, name: String) {
         let thumbnail = app.buttons["composer-image-thumbnail"].firstMatch
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
+        let imageName = thumbnail.label
         tap(thumbnail)
         let preview = app.descendants(matching: .any)["composer-image-preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.navigationBars.staticTexts[thumbnail.label].isHittable)
+        // Preview deliberately releases input focus. Its presentation must
+        // survive the attachment strip being removed from the composer.
+        XCTAssertTrue(app.buttons["add-mention"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(preview.exists)
+        XCTAssertFalse(app.navigationBars.staticTexts[imageName].isHittable)
         attachScreen(app, name: name)
         let close = app.buttons["composer-image-close"]
         XCTAssertTrue(close.isHittable)
         tap(close)
         XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
+        tap(field)
         XCTAssertTrue(thumbnail.waitForExistence(timeout: 5))
     }
 }

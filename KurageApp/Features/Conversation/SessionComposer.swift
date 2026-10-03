@@ -129,6 +129,7 @@ struct SessionComposer: View {
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
     @State private var attachmentError: String?
+    @State private var previewAttachment: ComposerAttachment?
     let isSending: Bool
     var allowsEditingWhileSending = false
     private var blocksEditing: Bool { isSending && !allowsEditingWhileSending }
@@ -233,7 +234,11 @@ struct SessionComposer: View {
             }
             VStack(spacing: 0) {
                 if isExpanded && (!attachments.isEmpty || isLoadingAttachments) {
-                    ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: blocksEditing)
+                    ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: blocksEditing,
+                                            onPreview: {
+                                                isFocused = false
+                                                previewAttachment = $0
+                                            })
                 }
                 ZStack(alignment: .topLeading) {
                     MentionEditor(text: editableDraft, selection: $selection,
@@ -283,6 +288,17 @@ struct SessionComposer: View {
             )) {
                 Button("OK", role: .cancel) { attachmentError = nil }
             } message: { Text(attachmentError ?? "") }
+            // The attachment strip disappears when the editor loses focus.
+            // Keep image presentation on the composer's stable host.
+            .fullScreenCover(item: $previewAttachment) { attachment in
+                AttachmentImagePreview(
+                    name: attachment.fileName,
+                    previewIdentifier: "composer-image-preview",
+                    closeIdentifier: "composer-image-close"
+                ) {
+                    attachment.data
+                }
+            }
             .onAppear {
                 if sendFeedbackView == nil { sendFeedbackView = ComposerSendFeedbackView() }
                 targetGaugeProgress = runConfig?.reasoningProgress ?? 1
