@@ -34,6 +34,39 @@ final class SessionTabsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingFirstTabShowsConnectionIndicatorAfterReturningFromBackground() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-slow-start", "--fixture-slow-conversation"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"].firstMatch)
+        tap(app.buttons["new-session-tab"])
+        let field = app.descendants(matching: .any)["new-session-field"].firstMatch
+        tap(field)
+        field.typeText("Resume this first tab")
+        tap(app.buttons["new-session-send"])
+        let bubble = app.tables["conversation-transcript"].staticTexts["Resume this first tab"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 2))
+        XCTAssertFalse(app.buttons["new-session-tab"].isEnabled)
+        let connection = app.descendants(matching: .any)["conversation-connection-status"].firstMatch
+        XCTAssertFalse(connection.exists)
+        attachScreen(name: "Pending first tab before background")
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        app.activate()
+        guard connection.waitForExistence(timeout: 15) else {
+            XCTFail("Returning from the background should show the first tab's connection indicator")
+            return
+        }
+        XCTAssertEqual(connection.label, "Connecting…")
+        attachScreen(name: "First tab connection indicator after returning from background")
+        XCTAssertTrue(connection.waitForNonExistence(timeout: 8))
+        XCTAssertTrue(bubble.exists)
+        XCTAssertTrue(app.buttons["send-follow-up"].wait(for: \.label, toEqual: "Send", timeout: 8))
+    }
+
+    @MainActor
     private func verifyFirstTurn(isTab: Bool) {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-slow-start", "--fixture-slow-conversation"]

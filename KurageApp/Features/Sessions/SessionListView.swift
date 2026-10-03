@@ -176,7 +176,7 @@ private struct SessionSidebarView: View {
             canCopyURL: model.canCopySessionURL,
             onAction: { session, action in actionRequest = SessionActionRequest(session: session, action: action) },
             mode: listMode,
-            keepsListHeight: !isCompactWindow && !isSearchFocused,
+            keepsListHeight: !isSearchFocused,
             selectedSessionID: isCompactWindow ? nil : selectedSessionID,
             supportsConversations: model.supportsConversations,
             canArchive: model.supportsSessionArchiving,
@@ -384,6 +384,7 @@ private struct SessionList: View {
     let canChat: Bool
     let onNewSession: (String) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
+    @ScaledMetric(relativeTo: .title3) private var newChatIconWidth = 24.0
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -433,9 +434,6 @@ private struct SessionList: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Detail input keeps the list fixed. The search overlay still receives the
-        // keyboard safe area, and sidebar search keeps a scrollable viewport.
-        .ignoresSafeArea(.keyboard, edges: keepsListHeight ? .bottom : [])
         // The list fills the screen, including the home-indicator area. The search field
         // keeps its own safe-area padding so it floats above that area.
         .overlay(alignment: .bottom) {
@@ -444,8 +442,10 @@ private struct SessionList: View {
                     SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty,
                                        isFocused: $isSearchFocused)
                     Button(action: onChat) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.title3)
+                        Image("pencil")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: min(newChatIconWidth, 32), height: min(newChatIconWidth, 32))
                             .frame(width: 50, height: 50)
                     }
                     .buttonStyle(.plain)
@@ -469,7 +469,10 @@ private struct SessionList: View {
                 .padding(.bottom, 8)
                 .safeAreaPadding(.bottom)
         }
-        .ignoresSafeArea(.container, edges: .bottom)
+        // Keep the list full height during detail input, including compact navigation
+        // transitions. Only the list's own search field needs keyboard avoidance.
+        // Both regions are ignored together so the list still reaches the screen edge.
+        .ignoresSafeArea(keepsListHeight ? [.container, .keyboard] : .container, edges: .bottom)
         .scrollDismissesKeyboard(.interactively)
         .background(Color(.systemBackground))
     }
@@ -666,19 +669,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
             return cell
         }
         dataSource.defaultRowAnimation = .fade
-        let containerView = UIView()
-        containerView.addSubview(tableView)
-        tableView.translatesAutoresizingMaskIntoConstraints = false
-        containerView.keyboardLayoutGuide.usesBottomSafeArea = false
-        NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            tableView.bottomAnchor.constraint(equalTo: containerView.keyboardLayoutGuide.topAnchor),
-        ])
-        // Keep the column fixed while its scrollable viewport ends above the
-        // keyboard, so even the final rows remain reachable during detail input.
-        view = containerView
+        view = tableView
         applyBottomContentInset()
     }
 
@@ -811,7 +802,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
                                         image: UIImage(systemName: session.isPinned == true ? "pin.slash" : "pin")) { [weak self] _ in
                     self?.onAction?(session, .pin)
                 })
-                actions.append(UIAction(title: "Rename session", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                actions.append(UIAction(title: "Rename session", image: UIImage(named: "pencil")) { [weak self] _ in
                     self?.onAction?(session, .rename)
                 })
             }
@@ -886,7 +877,7 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         toggleButton.addSubview(icon)
         toggleButton.addSubview(titleLabel)
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(systemName: "square.and.pencil")
+        configuration.image = UIImage(named: "pencil")
         configuration.baseForegroundColor = .secondaryLabel
         configuration.contentInsets = .zero
         newSessionButton.configuration = configuration

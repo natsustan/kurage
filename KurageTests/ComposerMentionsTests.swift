@@ -5,6 +5,59 @@ import UIKit
 @testable import Kurage
 
 struct ComposerMentionsTests {
+    @Test(arguments: ["$review", "@review", "还有一个 bug $REVIEW"])
+    func skillSearchIgnoresDescriptionsAndRanksNames(draft: String) throws {
+        let query = try #require(ComposerMentionQuery.active(in: draft, selection: nil))
+        let skills = [
+            MentionSkill(token: "app-intents-specialist", name: "App Intents Specialist",
+                         description: "Consult for any correctness review", path: "/skills/intents"),
+            MentionSkill(token: "code-review", name: "Code Review",
+                         description: "", path: "/skills/code-review"),
+            MentionSkill(token: "review-agent", name: "Review Agent",
+                         description: "", path: "/skills/review-agent"),
+            MentionSkill(token: "swiftui-specialist", name: "SwiftUI Specialist",
+                         description: "Review SwiftUI code", path: "/review-project/skills/swiftui"),
+            MentionSkill(token: "review", name: "Review",
+                         description: "", path: "/skills/review"),
+            MentionSkill(token: "review-and-simplify-changes", name: "Review and Simplify Changes",
+                         description: "", path: "/skills/simplify"),
+            MentionSkill(token: "inspect", name: "Review Changes",
+                         description: "", path: "/skills/inspect"),
+        ]
+        #expect(query.skillCandidates(in: skills).map(\.token) == [
+            "review", "review-agent", "review-and-simplify-changes", "inspect", "code-review",
+        ])
+    }
+
+    @Test func skillSearchRanksBeforeTheCandidateLimit() throws {
+        let skills = (0..<30).map {
+            MentionSkill(token: "code-review-\($0)", name: "Code Review \($0)",
+                         description: "", path: "/skills/\($0)")
+        } + [MentionSkill(token: "review-agent", name: "Review Agent",
+                          description: "", path: "/skills/review-agent")]
+        let query = try #require(ComposerMentionQuery.active(in: "$review", selection: nil))
+        let candidates = Array(query.skillCandidates(in: skills).prefix(25))
+        #expect(candidates.count == 25)
+        #expect(candidates.first?.token == "review-agent")
+        #expect(candidates.last?.token == "code-review-23")
+    }
+
+    @Test func skillSearchKeepsEmptyQueryAndHandlesNoMatches() throws {
+        let skills = [MentionSkill(token: "swiftui", name: "SwiftUI",
+                                   description: "Review code", path: "/skills/swiftui")]
+        let empty = try #require(ComposerMentionQuery.active(in: "$", selection: nil))
+        #expect(empty.skillCandidates(in: skills) == skills)
+        let missing = try #require(ComposerMentionQuery.active(in: "$review", selection: nil))
+        #expect(missing.skillCandidates(in: skills).isEmpty)
+    }
+
+    @Test func skillSearchMatchesNamesCaseAndDiacriticInsensitively() throws {
+        let skill = MentionSkill(token: "inspect", name: "Réview Agent",
+                                 description: "", path: "/skills/inspect")
+        let query = try #require(ComposerMentionQuery.active(in: "$REVIEW", selection: nil))
+        #expect(query.skillCandidates(in: [skill]) == [skill])
+    }
+
     @MainActor
     @Test func nativeTypingDoesNotReplayItsPublishedCaret() {
         var text = "Im"

@@ -1,5 +1,24 @@
 # Kurage 会话功能
 
+## 分支审查修复（2026-10-03）
+
+- `@` 快捷入口按光标／选区替换文本时，直接更新引用范围和草稿，避免替换已有会话引用时被原生整段删除逻辑误判，导致新插入的 `@` 消失。保留原有编辑限制、UTF-16 光标定位和普通退格的整段引用删除行为。
+- 新 tab 首轮连接提示通过独立的 `scenePhase` 变化在离开前台时结束隐藏；即使首轮仍未确认、订阅任务的组合 key 没有变化，回到前台也能正常显示连接提示。
+- 新增两项 fixture UI 回归，覆盖选中会话引用后插入 `@`、重新选择并发送，以及首轮未确认时进入后台后恢复连接提示并完成同步。
+- 本轮 iPhone 17／iOS 27 Simulator 构建、33 项 ComposerMentions／SessionTabs Swift 测试与 7 项 fixture UI 回归通过，无跳过；UI 同时覆盖已有会话、New Session、New Tab 的 `@` 按钮以及普通新建会话／tab 的首条气泡与后续草稿。已检查两项新增回归的 5 张截图，候选、输入框和键盘没有相互遮挡，返回前台后的导航连接指示器可见；`git diff --check` 通过。真实账号、iOS 26 和真机尚未验证。
+
+## iPhone 返回会话列表的键盘布局修复（2026-10-03）
+
+- 列表在搜索框未聚焦时保持完整高度，覆盖 iPhone 紧凑导航与 iPad 分栏；避免详情键盘影响返回转场中的列表视口，造成下方会话短暂消失后恢复。列表搜索框聚焦时仍正常避让键盘。
+- 新增长列表 fixture UI 回归，覆盖带键盘通过返回按钮／边缘滑动返回、可见行位置与输入草稿保留，以及返回后搜索框避让自身键盘。
+- 本轮 Simulator 构建、浅色默认字号的 2 项 fixture UI 回归及深色 accessibility-large 的 1 项返回回归通过，均未跳过；新增返回回归要求实际可见的软件键盘。录屏确认按钮返回、慢速滑动返回及停留期间，详情键盘仍可见时，列表下方会话持续显示；返回后的行位置、草稿及搜索键盘避让均通过断言。已检查截图并恢复模拟器外观和字号；`git diff --check` 通过。真实账号、iOS 26 与真机转场尚未验证。
+
+## 新建 tab 首轮连接提示（2026-10-03）
+
+- 新建 tab 显示本地首条消息后，首次订阅期间不展示连接 spinner 和 Connecting／Reconnecting 文案；首次 live 更新后恢复正常连接提示。首次订阅报错或回到后台时结束隐藏，后续重连继续显示。
+- 只调整当前页面的提示可见性，保留真实同步状态与已读回执门槛；已有 tab、Main 和普通新建 Session 保持原有连接提示。
+- 本轮 Simulator 构建与 2 项现有首轮 fixture UI 回归通过，覆盖新 tab／普通新建 Session 的首条气泡、下一条草稿及切 tab 后的保留；新 tab 用例遇到 XCTest 动画 idle 等待超时后继续执行并通过。fixture 未模拟 live room 的连接状态变化，真实账号首次同步与断线恢复尚未实测。
+
 ## New Session 分支读取延迟优化（2026-10-02）
 
 - 分支读取复用当前工作区／gateway 的已同步 metadata，以及现有选项缓存中 30 秒内的机器项目目录快照；通常从会话列表进入时可直接发起 Git-state RPC，省去重新创建副本及 metadata／Flock 两段同步。目录缓存过期或缺失时，仍用可取消的独立副本同步，并更新目录缓存。
@@ -98,11 +117,11 @@
 - 协议参考本机 Lody `ea3d599e` 的 `shared/src/code-collab.ts`、`loro-streams-rpc/src/rpc.ts`／`machine-rpc-server.ts`、`components/src/lib/code-collab-session-file-provider.ts` 和 CLI `code-collab-v2-service.ts`／`code-collab-v2-diff-store.ts`。本轮不包含 All Files、当前 Git 差异、完整文件打开或语法高亮。真实账号快照覆盖率、运行机器版本兼容、断网恢复和真机仍待验证。
 - 首版验证：frozen lockfile 安装、282 项 JavaScript 测试及 bundle 重建通过，项目已用 XcodeGen 重新生成。最终应用构建、200 项 Swift 测试与浅色默认字号 3 项 fixture UI 回归通过；深色 accessibility-large 的 30 项定向 Swift 测试和 2 项 UI 回归通过。追加的 WebKit 专项套件 5 项测试通过，其中新增用例在实际 bundled file:// 页面验证 SHA-256、AES-GCM、gzip 解压与中文／CRLF。截图已检查真实行号、增删与分段、失败重试、抽屉缩放、软件键盘收起和草稿保留。首次 UI 检查发现容器标识覆盖代码段按钮，以及大字号下键盘占用阅读空间；修正辅助功能分组、焦点关闭和测试滚动目标后复跑通过。`git diff --check` 通过；上述 fixture／WebKit 测试不代表真实账号历史 RPC 已实测。
 
-## 输入区 Full access 标记（2026-10-01）
+## 输入区 @ 快捷入口（2026-10-03）
 
-- 已有会话、New Session 与 New Tab 的共用输入框在附件加号右侧显示红色盾牌感叹号，使用提供的 `safe_alert_cute_re.svg` 矢量图标。图标为 24pt，点击区域为 44pt；点击显示原生 “Full access” 浮层，进入后台收起。
-- 标记说明当前首版的 bypass 使用范围，不提供权限模式切换；发送和授权协议没有变化。VoiceOver 可读出 Permission mode / Full access。
-- 本轮 Simulator 构建通过；新增 fixture UI 用例在浅色默认字号与深色最大辅助字号各通过 1 次，覆盖已有会话与新建会话的标记位置、44pt 点击区域、浮层文案、关闭后草稿和键盘保留。深色首轮因几何浮点舍入及测试点击被大字号浮层覆盖失败，调整测试容差与关闭位置后复跑通过。两种外观下已有会话与新建会话的 8 张截图均已检查，图标红色、文案完整，操作行位于键盘上方且无重叠；真机、VoiceOver 实际朗读及 New Tab 专项交互未验证。
+- 已有会话、New Session 与 New Tab 的共用输入框在附件加号右侧显示 MingCute Cute Regular `at_cute_re.svg` 图标，替换 Full access 标记及其说明浮层；图标为 24pt，点击区域为 44pt，颜色随系统外观变化。
+- 点击在当前光标／选区处插入 `@`，前一个字符不是空白时先补一个空格；空草稿、行首或已有空白不重复补空格。随后将光标放在 `@` 后并聚焦输入框，复用现有会话／技能建议面板、引用绑定与加载逻辑。发送时沿用输入框的编辑限制，VoiceOver 名称为 Mention。
+- 本轮 Simulator 构建、浅色默认字号 5 项 fixture UI 与深色 accessibility-extra-large 3 项按钮 UI 用例通过，覆盖已有会话、New Session、New Tab、空输入、文字／emoji 后补空格、已有空白／换行及已选技能引用保留；浅色另覆盖技能／会话引用选择与发送。深色早期测试误点单行候选面板外的技能，滚动修订也越过目标，最终改为输入关键词使目标候选可见后复跑通过；没有因此修改产品逻辑。浅色 14 张、深色 9 张成功截图已检查，图标随外观呈黑／白色，候选面板、输入和操作行无重叠并位于键盘上方；`git diff --check` 通过。真机和 VoiceOver 实际朗读仍待验证。
 
 ## 分支审查修复（2026-10-01）
 
@@ -169,6 +188,7 @@
 - 已选择的 skill／session 引用在输入框中使用蓝色名称与类型图标，替代 `$`／`@`；输入和气泡中的引用字重与正文一致，不额外加粗。普通输入触发字符仍显示原样。使用原生 UITextView 保留多行、选区与 IME，图标替换恰好一个 UTF-16 字符，草稿与发送绑定的路径／会话 ID 不变。删除触及引用仍整段移除，完整复制保留原始文本。
 - 我方气泡识别 Lody 的 `use /token [Skill Path](path)` 和 `[@Title](session://id)` 两种明确引用格式，显示图标与可换行名称，隐藏协议包装；普通 Markdown 链接和未绑定的 `@`／`$` 词不转换。气泡完整 Copy／全选复制保留原文及引用目标，继续提供原生文字选择。
 - 候选在聚焦时并行预读 skills／当前项目会话，搜索与 `@`／`$` 切换使用当前来源的内存结果；后台取消、来源切换丢弃旧结果、provider 变更后的 skill 校验保持。bridge 读取复用同工作区已同步 metadata，减少重复目录同步；机器 skill scan 仍经现有 RPC，不跨账号／工作区保存结果。加载、空结果、错误和正常列表共用输入区宽度；常规字号保持三行视口，辅助字号使用单行可滚动视口，避免长引用使候选被导航栏裁掉，候选图标宽度随正文缩放。
+- 2026-10-03 skill 搜索修复：`$`／`@` 的技能候选只匹配名称和调用 token，移除描述全文匹配，避免 `$review` 命中仅在说明中提到 review 的无关技能。完全匹配优先于前缀匹配和包含匹配，同级保持来源顺序，排序后再取最多 25 项；空查询保持原有列表。参考本机 Lody `selectSkillMentionCandidates` 的名称／token 前缀优先规则；本客户端不搜索路径，避免机器绝对路径中的项目名误命中。本轮 Simulator 构建、20 项 ComposerMentions Swift 测试与 2 项 fixture UI 测试通过，覆盖名称／token 排序、描述误命中、候选数量限制、大小写／重音符号及已有／新建会话选择和发送。真实账号尚未复测。
 - 协议／表现参考：本机 Lody `components/src/components/mentions/mention-chips.tsx`、`message-text-chips.tsx`、`mention-skill-source.tsx` 与 `mention-session-source.ts`。本次没有扩展其它引用类别或修改发送协议。
 - 本轮已按 frozen lockfile 安装并重建 bridge，当前工作树 251 项 JS 测试通过（含目录复用、工作区隔离和取消）；Simulator 构建及 13 项 ComposerMentions Swift 测试通过。iOS 27 Simulator 的 12 个相关浅色 fixture UI 场景均有本轮通过结果，覆盖引用发送、整段删除、loading 同宽、长列表、provider 刷新／重试、子 agent 返回草稿和文字复制／选择；深色 accessibility-extra-large 的 5 个相关场景通过。截图发现并修复候选顶部裁切后，引用发送、loading、长列表与新建引用 4 项已重新通过；候选图标缩放修正后，引用发送单项再次通过并完成截图检查。真实账号的机器扫描延迟、真机拼音输入及弱网／后台恢复尚未实测。
 
@@ -424,7 +444,7 @@
 
 ## Session 列表图标与搜索字重（2026-10-01）
 
-- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识。
+- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 统一改用 MingCute pencil，见后文）。
 - 搜索框文字从 regular 提高一级至 medium，包含占位文字和输入内容。
 - 本轮浅色项目创建与搜索两项 fixture UI 测试通过；深色 accessibility-large 下搜索测试通过。仅涉及列表样式，未修改同步协议。
 
@@ -593,7 +613,7 @@
 
 - 侧栏理想宽度调整为 360pt，最小 280pt、最大 400pt；实际宽度由系统根据窗口空间调整。此次宽度调整尚未在模拟器验证。
 
-- 两栏下详情输入的键盘不再调整侧栏外层的高度和顶部位置；原生列表的滚动视口通过 `keyboardLayoutGuide` 约束到键盘上方，底部搜索栏独立避让键盘，保持末行可滚动访问。搜索获得焦点时与窄窗口仍沿用 SwiftUI 键盘避让。
+- 两栏下详情输入的键盘只顶起右侧详情栏：侧栏整体（列表视口与底部浮动搜索栏）忽略键盘、保持原位，软件键盘可能遮住侧栏底部。侧栏搜索获得焦点时与窄窗口仍沿用 SwiftUI 键盘避让。（2026-10-03 起取代此前列表视口经 `keyboardLayoutGuide` 收缩、搜索栏独立避让的做法，该做法会在外接键盘快捷栏出现时把侧栏底部顶起并露出灰底。）iPad Pro 13-inch (M5) 模拟器横屏下 3 项相关 fixture UI 回归通过，断言新建页／聊天页输入时侧栏列表顶部、底部与搜索栏位置不变；真机外接键盘快捷栏、深色与大字号未复测。
 - 侧栏与详情之间增加随系统外观变化的一像素分隔线，延伸到上下安全区。侧栏折叠按钮移至账号头像右侧，隐藏后由详情左上角的按钮恢复，保持同一导航与草稿状态。
 - 当前会话使用左右留白的灰色胶囊背景，关闭表格行的默认焦点效果；保留选中状态的辅助功能语义、稳定行 ID、滑动归档和长按菜单。
 - 补充新建页／聊天页键盘开合时侧栏位置、按钮顺序及折叠恢复后的草稿回归；继续运行已有自适应导航、搜索和归档用例。
@@ -617,3 +637,9 @@
 - 将应用版本更新为 0.3.2，构建号更新为 6，并通过 XcodeGen 重新生成工程；包内包含工作区已有的文件预览加载闭包并发警告修复。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.3.2（6），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 本轮归档未再出现此前的 `ConversationView.swift` Sendable 转换警告；仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## MingCute 活动与编辑图标（2026-10-03）
+
+- 从本机 MingCute Icon System Pro v1.50 的 SVG/cute regular 导入活动图标：命令使用 `terminal_box`，读取使用 `document_2`，编辑使用 `pencil`，搜索使用 `search`，网络获取使用 `earth`，其他工具使用 `tool`；活动摘要与展开步骤共用映射。活动组及 Worked for 展开箭头使用 `right`，保留旋转动画与减少动态效果设置。
+- 消息失败后的 Edit、会话／子会话重命名菜单、列表底部 New chat 和项目 New Session 统一使用相同 pencil 资源，覆盖 SwiftUI 与 UIKit。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
+- 本轮最终 iOS Simulator 构建通过；只有未依赖 AppIntents.framework 的元数据提取跳过提示。未运行单元／UI 测试。iPhone 17／iOS 27 可启动 fixture，但设备交互工具缺失且 CUA 无法打开 Simulator，停在欢迎页，未能检查活动区和菜单的实际图标、深色模式或大字号；真机与真实账号亦未验证。

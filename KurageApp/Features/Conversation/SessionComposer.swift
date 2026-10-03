@@ -367,10 +367,7 @@ struct SessionComposer: View {
         let sessions = query.trigger == .combined ? mentionSessions.filter {
             term.isEmpty || $0.title.localizedStandardContains(term)
         }.prefix(25) : []
-        let skills = mentionSkills.filter {
-            term.isEmpty || $0.token.localizedStandardContains(term) ||
-                $0.name.localizedStandardContains(term) || $0.description.localizedStandardContains(term)
-        }.prefix(25)
+        let skills = query.skillCandidates(in: mentionSkills).prefix(25)
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(sessions) { session in
@@ -463,6 +460,28 @@ struct SessionComposer: View {
         isFocused = true
     }
 
+    private func startMention() {
+        guard !blocksEditing else { return }
+        var replacement = draft.endIndex..<draft.endIndex
+        if let selection, case .selection(let range) = selection.indices,
+           (range.lowerBound == draft.endIndex || draft.indices.contains(range.lowerBound)),
+           (range.upperBound == draft.endIndex || draft.indices.contains(range.upperBound)) {
+            replacement = range
+        }
+        let needsSpace = replacement.lowerBound > draft.startIndex &&
+            !draft[draft.index(before: replacement.lowerBound)].isWhitespace
+        let inserted = needsSpace ? " @" : "@"
+        let caret = replacement.lowerBound.utf16Offset(in: draft) + inserted.utf16.count
+        var text = draft
+        text.replaceSubrange(replacement, with: inserted)
+        mentions.reconcile(draft)
+        mentions.reconcile(text)
+        draft = text
+        selection = TextSelection(insertionPoint: String.Index(utf16Offset: caret, in: text))
+        selectionRequest = .init(caret: caret)
+        isFocused = true
+    }
+
     private func updateGauge() {
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.45)) {
             gaugeProgress = targetGaugeProgress
@@ -474,7 +493,21 @@ struct SessionComposer: View {
             HStack(spacing: 0) {
                 ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
                                     error: $attachmentError, disabled: blocksEditing)
-                FullAccessButton()
+                Button(action: startMention) {
+                    Image("at")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(.primary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .disabled(blocksEditing)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Mention")
+                .accessibilityHint("Insert @ to mention a session or skill")
+                .accessibilityIdentifier("add-mention")
             }
             Spacer(minLength: 0)
             HStack(spacing: 0) {
@@ -546,41 +579,6 @@ private struct ComposerSendFeedbackAnchor: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ComposerSendFeedbackView { view }
     func updateUIView(_ uiView: ComposerSendFeedbackView, context: Context) {}
-}
-
-private struct FullAccessButton: View {
-    @State private var showsDetails = false
-    @Environment(\.scenePhase) private var scenePhase
-
-    var body: some View {
-        Button {
-            showsDetails = true
-        } label: {
-            Image("full-access")
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: 24, height: 24)
-                .foregroundStyle(.red)
-                .frame(width: 44, height: 44)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Permission mode")
-        .accessibilityValue("Full access")
-        .accessibilityHint("Show current permission mode")
-        .accessibilityIdentifier("full-access-mode")
-        .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-            Text("Full access")
-                .font(.subheadline.weight(.semibold))
-                .padding(14)
-                .accessibilityIdentifier("full-access-detail")
-                .presentationCompactAdaptation(.popover)
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase != .active { showsDetails = false }
-        }
-    }
 }
 
 private struct ContextWindowButton: View {

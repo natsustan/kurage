@@ -227,7 +227,7 @@ final class FixtureLodyClient: LodyClient {
                          description: "Review code quality and simplify changes",
                          path: ".agents/skills/review-and-simplify-changes/SKILL.md"),
             MentionSkill(token: "swiftui-specialist", name: "SwiftUI Specialist",
-                         description: "Apple SwiftUI best practices",
+                         description: "Review SwiftUI code using Apple best practices",
                          path: ".agents/skills/swiftui-specialist/SKILL.md"),
         ] + (1...12).map { number in
             MentionSkill(token: "sample-skill-\(number)", name: "Sample Skill \(number)",
