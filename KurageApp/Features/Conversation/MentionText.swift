@@ -207,8 +207,7 @@ struct MentionEditor: UIViewRepresentable {
         label.locale = locale
         view.accessibilityLabel = String(localized: label)
         view.accessibilityValue = text
-        if isFocused && isEnabled && !view.isFirstResponder { view.becomeFirstResponder() }
-        else if !isFocused && view.isFirstResponder { view.resignFirstResponder() }
+        coordinator.scheduleFocusSync(view)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
@@ -228,8 +227,27 @@ struct MentionEditor: UIViewRepresentable {
         var renderedStyle: UIUserInterfaceStyle = .unspecified
         var appliedSelectionRequest: SelectionRequest?
         private var hasDeferredEdit = false
+        private var hasScheduledFocusSync = false
 
         init(_ parent: MentionEditor) { self.parent = parent }
+
+        private func needsFocusChange(_ view: UITextView) -> Bool {
+            parent.isFocused && parent.isEnabled ? !view.isFirstResponder : !parent.isFocused && view.isFirstResponder
+        }
+
+        func scheduleFocusSync(_ view: UITextView) {
+            guard !hasScheduledFocusSync, needsFocusChange(view) else { return }
+            // Changing the first responder inside updateUIView makes the hosting
+            // view reread SwiftUI's responder graph mid-update, which hangs the
+            // main thread on iPad. Apply the latest focus after the update.
+            hasScheduledFocusSync = true
+            Task { @MainActor [weak self, weak view] in
+                guard let self else { return }
+                hasScheduledFocusSync = false
+                guard let view, needsFocusChange(view) else { return }
+                if parent.isFocused { view.becomeFirstResponder() } else { view.resignFirstResponder() }
+            }
+        }
 
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             return parent.isEnabled
