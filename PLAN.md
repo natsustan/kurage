@@ -1,5 +1,10 @@
 # Kurage 会话功能
 
+## 回复 Markdown 标题字号（2026-10-03）
+
+- 回复标题采用紧凑的系统文字样式：H1 使用 title2 半粗体（默认 22 pt），H2 使用 title3 半粗体（20 pt），H3–H6 使用 17 pt 的 headline／body，通过字重区分层级；随系统文字大小设置调整。正文与代码块字体沿用现有设置。
+- 本轮 iOS Simulator 构建与 `git diff --check` 通过；尚未验证 Simulator 外观、较大文字大小及真机显示。
+
 ## PR #32 重命名测试键盘兼容性（2026-10-03）
 
 - 重命名回归等待标题文本框可交互，保存时等待 Save 可用且位置稳定；软件键盘可见时才检查其位置，键盘出现或消失会重新计算稳定时间。保留按按钮当前中心、扣除窗口原点后的坐标点击，以及保存后弹窗关闭和标题更新断言。
@@ -661,3 +666,9 @@
 - 从本机 MingCute Icon System Pro v1.50 的 SVG/cute regular 导入活动图标：命令使用 `terminal_box`，读取使用 `document_2`，编辑使用 `pencil`，搜索使用 `search`，网络获取使用 `earth`，其他工具使用 `tool`；活动摘要与展开步骤共用映射。活动组及 Worked for 展开箭头使用 `right`，保留旋转动画与减少动态效果设置。
 - 消息失败后的 Edit、会话／子会话重命名菜单、列表底部 New chat 和项目 New Session 统一使用相同 pencil 资源，覆盖 SwiftUI 与 UIKit。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
 - 本轮最终 iOS Simulator 构建通过；只有未依赖 AppIntents.framework 的元数据提取跳过提示。未运行单元／UI 测试。iPhone 17／iOS 27 可启动 fixture，但设备交互工具缺失且 CUA 无法打开 Simulator，停在欢迎页，未能检查活动区和菜单的实际图标、深色模式或大字号；真机与真实账号亦未验证。
+
+## TestFlight 0.4.0 发布（2026-10-03）
+
+- 将应用版本更新为 0.4.0，构建号更新为 7，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.0（7），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
