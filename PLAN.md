@@ -110,11 +110,11 @@
 - 协议参考本机 Lody `ea3d599e` 的 `shared/src/code-collab.ts`、`loro-streams-rpc/src/rpc.ts`／`machine-rpc-server.ts`、`components/src/lib/code-collab-session-file-provider.ts` 和 CLI `code-collab-v2-service.ts`／`code-collab-v2-diff-store.ts`。本轮不包含 All Files、当前 Git 差异、完整文件打开或语法高亮。真实账号快照覆盖率、运行机器版本兼容、断网恢复和真机仍待验证。
 - 首版验证：frozen lockfile 安装、282 项 JavaScript 测试及 bundle 重建通过，项目已用 XcodeGen 重新生成。最终应用构建、200 项 Swift 测试与浅色默认字号 3 项 fixture UI 回归通过；深色 accessibility-large 的 30 项定向 Swift 测试和 2 项 UI 回归通过。追加的 WebKit 专项套件 5 项测试通过，其中新增用例在实际 bundled file:// 页面验证 SHA-256、AES-GCM、gzip 解压与中文／CRLF。截图已检查真实行号、增删与分段、失败重试、抽屉缩放、软件键盘收起和草稿保留。首次 UI 检查发现容器标识覆盖代码段按钮，以及大字号下键盘占用阅读空间；修正辅助功能分组、焦点关闭和测试滚动目标后复跑通过。`git diff --check` 通过；上述 fixture／WebKit 测试不代表真实账号历史 RPC 已实测。
 
-## 输入区 Full access 标记（2026-10-01）
+## 输入区 @ 快捷入口（2026-10-03）
 
-- 已有会话、New Session 与 New Tab 的共用输入框在附件加号右侧显示红色盾牌感叹号，使用提供的 `safe_alert_cute_re.svg` 矢量图标。图标为 24pt，点击区域为 44pt；点击显示原生 “Full access” 浮层，进入后台收起。
-- 标记说明当前首版的 bypass 使用范围，不提供权限模式切换；发送和授权协议没有变化。VoiceOver 可读出 Permission mode / Full access。
-- 本轮 Simulator 构建通过；新增 fixture UI 用例在浅色默认字号与深色最大辅助字号各通过 1 次，覆盖已有会话与新建会话的标记位置、44pt 点击区域、浮层文案、关闭后草稿和键盘保留。深色首轮因几何浮点舍入及测试点击被大字号浮层覆盖失败，调整测试容差与关闭位置后复跑通过。两种外观下已有会话与新建会话的 8 张截图均已检查，图标红色、文案完整，操作行位于键盘上方且无重叠；真机、VoiceOver 实际朗读及 New Tab 专项交互未验证。
+- 已有会话、New Session 与 New Tab 的共用输入框在附件加号右侧显示 MingCute Cute Regular `at_cute_re.svg` 图标，替换 Full access 标记及其说明浮层；图标为 24pt，点击区域为 44pt，颜色随系统外观变化。
+- 点击在当前光标／选区处插入 `@`，前一个字符不是空白时先补一个空格；空草稿、行首或已有空白不重复补空格。随后将光标放在 `@` 后并聚焦输入框，复用现有会话／技能建议面板、引用绑定与加载逻辑。发送时沿用输入框的编辑限制，VoiceOver 名称为 Mention。
+- 本轮 Simulator 构建、浅色默认字号 5 项 fixture UI 与深色 accessibility-extra-large 3 项按钮 UI 用例通过，覆盖已有会话、New Session、New Tab、空输入、文字／emoji 后补空格、已有空白／换行及已选技能引用保留；浅色另覆盖技能／会话引用选择与发送。深色早期测试误点单行候选面板外的技能，滚动修订也越过目标，最终改为输入关键词使目标候选可见后复跑通过；没有因此修改产品逻辑。浅色 14 张、深色 9 张成功截图已检查，图标随外观呈黑／白色，候选面板、输入和操作行无重叠并位于键盘上方；`git diff --check` 通过。真机和 VoiceOver 实际朗读仍待验证。
 
 ## 分支审查修复（2026-10-01）
 

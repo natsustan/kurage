@@ -1047,47 +1047,77 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testFullAccessIndicatorShowsDetailsAndPreservesDraft() {
+    func testMentionButtonInsertsTriggerAndPreservesDraft() {
+        verifyMentionButton(newSession: false)
+    }
+
+    @MainActor
+    func testNewSessionMentionButtonInsertsTriggerAndPreservesDraft() {
+        verifyMentionButton(newSession: true)
+    }
+
+    @MainActor
+    func testNewTabMentionButtonInsertsTriggerAndPreservesDraft() {
+        verifyMentionButton(newSession: false, newTab: true)
+    }
+
+    @MainActor
+    private func verifyMentionButton(newSession: Bool, newTab: Bool = false) {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
         app.launch()
         tap(app.buttons["sign-in-button"])
-        let session = app.descendants(matching: .any)["session-session-long"]
-        XCTAssertTrue(session.waitForExistence(timeout: 5))
-        tap(session)
-
-        func checkIndicator(fieldID: String, name: String) {
-            let field = app.descendants(matching: .any)[fieldID]
-            XCTAssertTrue(field.waitForExistence(timeout: 5))
-            tap(field)
-            field.typeText("Keep this draft")
-            let indicator = app.buttons["full-access-mode"]
-            XCTAssertTrue(indicator.waitForExistence(timeout: 5))
-            XCTAssertTrue(indicator.isHittable)
-            XCTAssertEqual(indicator.frame.width, 44, accuracy: 0.5)
-            XCTAssertEqual(indicator.frame.height, 44, accuracy: 0.5)
-            XCTAssertGreaterThanOrEqual(indicator.frame.minX, app.buttons["add-attachment"].frame.maxX)
-            XCTAssertEqual(indicator.label, "Permission mode")
-            XCTAssertEqual(indicator.value as? String, "Full access")
-            attachScreen(app, name: "\(name)-full-access-row")
-            tap(indicator)
-            let detail = app.staticTexts["full-access-detail"]
-            XCTAssertTrue(detail.waitForExistence(timeout: 5))
-            XCTAssertEqual(detail.label, "Full access")
-            attachScreen(app, name: "\(name)-full-access-detail")
-            // At accessibility sizes the popover covers the field's center.
-            app.navigationBars.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            XCTAssertTrue(detail.wait(for: \.exists, toEqual: false, timeout: 5))
-            XCTAssertEqual(field.value as? String, "Keep this draft")
-            XCTAssertTrue(app.keyboards.firstMatch.exists)
+        if newSession {
+            tap(app.buttons["new-session-local:machine-1:prism"])
+        } else {
+            tap(app.descendants(matching: .any)["session-session-long"])
+            if newTab { tap(app.buttons["new-session-tab"]) }
         }
+        let isNew = newSession || newTab
+        let field = app.descendants(matching: .any)[isNew ? "new-session-field" : "follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let mention = app.buttons["add-mention"]
+        XCTAssertTrue(mention.waitForExistence(timeout: 5))
+        XCTAssertTrue(mention.isHittable)
+        XCTAssertEqual(mention.frame.width, 44, accuracy: 0.5)
+        XCTAssertEqual(mention.frame.height, 44, accuracy: 0.5)
+        XCTAssertGreaterThanOrEqual(mention.frame.minX, app.buttons["add-attachment"].frame.maxX)
+        XCTAssertEqual(mention.label, "Mention")
+        XCTAssertFalse(app.buttons["full-access-mode"].exists)
 
-        checkIndicator(fieldID: "follow-up-field", name: "follow-up")
-        app.navigationBars.buttons.firstMatch.tap()
-        let newSession = app.buttons["new-session-local:machine-1:prism"]
-        XCTAssertTrue(newSession.waitForExistence(timeout: 5))
-        tap(newSession)
-        checkIndicator(fieldID: "new-session-field", name: "new-session")
+        tap(mention)
+        XCTAssertEqual(field.value as? String, "@")
+        let menu = app.scrollViews["mention-suggestions"]
+        let skill = app.buttons["mention-skill-review-and-simplify-changes"]
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: isNew)
+        attachScreen(app, name: "Mention button empty draft \(newSession)-\(newTab)")
+
+        field.typeText(XCUIKeyboardKey.delete.rawValue + "Keep this draft🙂")
+        tap(mention)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 @")
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: isNew)
+        attachScreen(app, name: "Mention button after text \(newSession)-\(newTab)")
+
+        field.typeText(XCUIKeyboardKey.delete.rawValue)
+        tap(mention)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 @")
+        field.typeText(XCUIKeyboardKey.delete.rawValue + "\n")
+        tap(mention)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n@")
+        // Filter to the skill before selecting it: accessibility sizes show
+        // one candidate row, with sessions first for an empty @ query.
+        field.typeText("review-and")
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        XCTAssertTrue(skill.isHittable)
+        tap(skill)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n$review-and-simplify-changes ")
+        tap(mention)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n$review-and-simplify-changes @")
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: isNew)
+        attachScreen(app, name: "Mention button preserves selected skill \(newSession)-\(newTab)")
     }
 
     @MainActor
