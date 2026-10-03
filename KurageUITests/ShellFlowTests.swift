@@ -2077,7 +2077,7 @@ extension ShellFlowTests {
         tap(app.buttons["Rename session"])
         let title = app.alerts.textFields["Session title"]
         XCTAssertTrue(title.waitForExistence(timeout: 3))
-        replaceSessionTitle(title, with: "Renamed fixture session", in: app)
+        replaceSessionTitle(title, with: "Renamed fixture session")
         attachScreen(app, name: "Rename session prompt")
         saveSessionTitle(in: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
@@ -2141,7 +2141,7 @@ extension ShellFlowTests {
         tap(app.buttons["Rename session"])
         let title = app.alerts.textFields["Session title"]
         XCTAssertTrue(title.waitForExistence(timeout: 3))
-        replaceSessionTitle(title, with: "Renamed in detail", in: app)
+        replaceSessionTitle(title, with: "Renamed in detail")
         saveSessionTitle(in: app)
         XCTAssertTrue(app.staticTexts["Renamed in detail"].waitForExistence(timeout: 5))
         XCTAssertTrue(options.exists)
@@ -2162,10 +2162,9 @@ extension ShellFlowTests {
 
 extension ShellFlowTests {
     @MainActor
-    private func replaceSessionTitle(_ field: XCUIElement, with title: String, in app: XCUIApplication) {
-        // Wait for the alert's keyboard before editing the focused field.
+    private func replaceSessionTitle(_ field: XCUIElement, with title: String) {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "hittable == true"), object: app.keyboards.firstMatch
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: field
         )], timeout: 10), .completed)
         // The alert focuses the initial title. Keep that selection/caret position;
         // tapping long text can move the caret into the middle at accessibility sizes.
@@ -2183,9 +2182,9 @@ extension ShellFlowTests {
         var lastKeyboardFrame = CGRect.null
         var stableSince = Date()
         let settled = NSPredicate { _, _ in
-            guard save.isEnabled, save.isHittable, keyboard.isHittable else { return false }
+            guard save.isEnabled, save.isHittable else { return false }
             let frame = save.frame
-            let keyboardFrame = keyboard.frame
+            let keyboardFrame = keyboard.exists && keyboard.isHittable ? keyboard.frame : CGRect.null
             if frame != lastFrame || keyboardFrame != lastKeyboardFrame {
                 lastFrame = frame
                 lastKeyboardFrame = keyboardFrame
