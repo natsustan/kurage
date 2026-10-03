@@ -1062,6 +1062,42 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMentionButtonReplacesSelectedSessionReferenceWithTrigger() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"].firstMatch
+        tap(field)
+        field.typeText("@fix")
+        let candidate = app.buttons["mention-session-session-tests"]
+        XCTAssertTrue(candidate.waitForExistence(timeout: 5))
+        tap(candidate)
+        XCTAssertEqual(field.value as? String, "@fix-flaky-tests ")
+
+        field.press(forDuration: 1)
+        let selectAll = app.descendants(matching: .any).matching(NSPredicate(
+            format: "label == %@ AND (elementType == %d OR elementType == %d)",
+            "Select All", XCUIElement.ElementType.menuItem.rawValue,
+            XCUIElement.ElementType.button.rawValue)).firstMatch
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+        tap(selectAll)
+        attachScreen(app, name: "Selected session reference before mention replacement")
+        tap(app.buttons["add-mention"])
+        XCTAssertEqual(field.value as? String, "@")
+        XCTAssertTrue(app.scrollViews["mention-suggestions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(candidate.exists)
+        attachScreen(app, name: "Mention trigger and suggestions after selected reference replacement")
+        field.typeText("fix")
+        tap(candidate)
+        XCTAssertEqual(field.value as? String, "@fix-flaky-tests ")
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(app.textViews["fix flaky tests"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Mention button replaces a selected session reference")
+    }
+
+    @MainActor
     private func verifyMentionButton(newSession: Bool, newTab: Bool = false) {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]

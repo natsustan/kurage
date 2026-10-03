@@ -474,7 +474,9 @@ struct SessionComposer: View {
         let caret = replacement.lowerBound.utf16Offset(in: draft) + inserted.utf16.count
         var text = draft
         text.replaceSubrange(replacement, with: inserted)
-        editableDraft.wrappedValue = text
+        mentions.reconcile(draft)
+        mentions.reconcile(text)
+        draft = text
         selection = TextSelection(insertionPoint: String.Index(utf16Offset: caret, in: text))
         selectionRequest = .init(caret: caret)
         isFocused = true

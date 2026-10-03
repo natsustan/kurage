@@ -256,6 +256,9 @@ struct ConversationContent: View {
         }
         .onAppear { isVisible = true }
         .onDisappear { isVisible = false }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { suppressesInitialTabConnection = false }
+        }
         .onChange(of: isSending) { _, sending in
             // A send may finish in the previous view after this tab was rebuilt.
             if !sending, isCurrentWorkspace, let latest = model.cachedConversation(sessionID: sessionID) {
@@ -286,10 +289,7 @@ struct ConversationContent: View {
         }
         .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
                                  active: scenePhase == .active && !isStarting, refreshID: refreshID)) {
-            guard scenePhase == .active else {
-                suppressesInitialTabConnection = false
-                return
-            }
+            guard scenePhase == .active else { return }
             if isStarting {
                 // The first turn already provides progress while this new tab
                 // is created. Its first subscription is not a reconnection.
