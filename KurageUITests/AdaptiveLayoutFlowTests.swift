@@ -71,8 +71,7 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
         let row = session("session-tests", in: app)
         let list = app.tables["session-browser"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(toggle.frame.minX, account.frame.minX)
-        XCTAssertLessThan(toggle.frame.maxX, app.buttons["more-options"].frame.minX)
+        XCTAssertGreaterThan(toggle.frame.minX, list.frame.maxX)
         let accountFrame = account.frame
         let projectFrame = project.frame
         let rowFrame = row.frame
@@ -116,16 +115,36 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = launch()
         tap(session("session-tests", in: app))
+        let toggle = app.buttons["toggle-session-sidebar"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        let toggleFrame = toggle.frame
+        let sidebar = app.tables["session-browser"]
+        let leadingOffset = toggleFrame.minX - sidebar.frame.maxX
+        XCTAssertGreaterThan(leadingOffset, 0)
+        XCTAssertEqual(toggle.label, "Hide sidebar")
+        let title = app.staticTexts["conversation-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let titleOffset = title.frame.minX - toggleFrame.maxX
+        XCTAssertGreaterThanOrEqual(titleOffset, 0)
+        XCTAssertLessThan(titleOffset, 40)
         let field = app.descendants(matching: .any)["follow-up-field"].firstMatch
         tap(field)
         field.typeText("Draft with sidebar hidden")
         app.tables["conversation-transcript"].swipeDown()
         tap(app.buttons["toggle-session-sidebar"])
         XCTAssertTrue(app.buttons["account-menu"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(toggle.frame.minX - app.frame.minX, leadingOffset, accuracy: 1)
+        XCTAssertEqual(toggle.frame.midY, toggleFrame.midY, accuracy: 1)
+        XCTAssertEqual(toggle.label, "Show sidebar")
+        XCTAssertEqual(title.frame.minX - toggle.frame.maxX, titleOffset, accuracy: 1)
         XCTAssertEqual(field.value as? String, "Draft with sidebar hidden")
         attach(app, "Conversation with sidebar hidden")
         tap(app.buttons["toggle-session-sidebar"])
         XCTAssertTrue(app.buttons["account-menu"].waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.frame.minX - sidebar.frame.maxX, leadingOffset, accuracy: 1)
+        XCTAssertEqual(toggle.frame.midY, toggleFrame.midY, accuracy: 1)
+        XCTAssertEqual(toggle.label, "Hide sidebar")
+        XCTAssertEqual(title.frame.minX - toggle.frame.maxX, titleOffset, accuracy: 1)
         XCTAssertTrue(session("session-tests", in: app).isSelected)
         XCTAssertEqual(field.value as? String, "Draft with sidebar hidden")
         attach(app, "Sidebar restored beside conversation")

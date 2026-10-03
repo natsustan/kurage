@@ -48,8 +48,7 @@ struct SessionListView: View {
                     }
                 },
                 onNewSession: startNewSession,
-                onOpenPending: { navigation.open(.newSession($0)) },
-                onToggleSidebar: toggleSidebar
+                onOpenPending: { navigation.open(.newSession($0)) }
             )
             .overlay(alignment: .trailing) {
                 if horizontalSizeClass != .compact {
@@ -75,12 +74,19 @@ struct SessionListView: View {
                     navigation = SessionNavigation()
                 })
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarRole(horizontalSizeClass == .compact ? .automatic : .editor)
                 .toolbar(removing: horizontalSizeClass == .compact ? nil : .sidebarToggle)
                 .toolbar {
-                    if horizontalSizeClass != .compact && columnVisibility == .detailOnly {
+                    if horizontalSizeClass != .compact {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("Show sidebar", systemImage: "sidebar.left", action: toggleSidebar)
-                                .accessibilityIdentifier("toggle-session-sidebar")
+                            Button(action: toggleSidebar) {
+                                Image(columnVisibility == .detailOnly ? "sidebar-open" : "sidebar-close")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 24, height: 24)
+                            }
+                            .accessibilityLabel(columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar")
+                            .accessibilityIdentifier("toggle-session-sidebar")
                         }
                     }
                 }
@@ -143,7 +149,6 @@ private struct SessionSidebarView: View {
     let onOpen: (SessionSummary.ID) -> Void
     let onNewSession: (String) -> Void
     let onOpenPending: (NewSessionRoute) -> Void
-    let onToggleSidebar: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
@@ -273,12 +278,6 @@ private struct SessionSidebarView: View {
                 }
                 .accessibilityIdentifier("account-menu")
             }
-            if !isCompactWindow {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Hide sidebar", systemImage: "sidebar.left", action: onToggleSidebar)
-                        .accessibilityIdentifier("toggle-session-sidebar")
-                }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Picker("List view", selection: $listMode) {
@@ -384,6 +383,7 @@ private struct SessionList: View {
     let canChat: Bool
     let onNewSession: (String) -> Void
     @State private var collapsedProjectIDs: Set<String> = []
+    @State private var isPinnedCollapsed = false
     @ScaledMetric(relativeTo: .title3) private var newChatIconWidth = 24.0
 
     private var trimmedQuery: String {
@@ -427,6 +427,7 @@ private struct SessionList: View {
                     selectedSessionID: selectedSessionID,
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
                     onOpen: onOpen,
+                    onTogglePinned: togglePinned,
                     onToggleProject: toggleProject,
                     onNewSession: onNewSession
                 )
@@ -498,8 +499,11 @@ private struct SessionList: View {
             }
         }
         if !pinned.isEmpty {
-            rows.append(.title("Pinned"))
-            rows.append(contentsOf: sessionRows(pinned))
+            let collapsed = trimmedQuery.isEmpty && isPinnedCollapsed
+            rows.append(.pinned(collapsed: collapsed, canToggle: trimmedQuery.isEmpty))
+            if !collapsed {
+                rows.append(contentsOf: sessionRows(pinned))
+            }
         }
         if mode == .byProject || !unpinned.isEmpty {
             rows.append(.title(mode == .byProject ? "Projects" : "Recent"))
@@ -537,6 +541,13 @@ private struct SessionList: View {
         }
     }
 
+    private func togglePinned() {
+        guard trimmedQuery.isEmpty else { return }
+        withAnimation(.snappy) {
+            isPinnedCollapsed.toggle()
+        }
+    }
+
     private func toggleProject(_ id: String) {
         withAnimation(.snappy) {
             if collapsedProjectIDs.contains(id) {
@@ -570,6 +581,7 @@ private enum SessionBrowserRow: Hashable {
     case note(text: String, failure: Bool)
     case banner(String)
     case title(String)
+    case pinned(collapsed: Bool, canToggle: Bool)
     case project(id: String, name: String, collapsed: Bool, unassigned: Bool, canCreate: Bool)
     case session(SessionSummary, snippet: String?, dimmed: Bool)
 
@@ -578,6 +590,7 @@ private enum SessionBrowserRow: Hashable {
         case .note: "note"
         case .banner: "banner"
         case .title(let title): "title-\(title)"
+        case .pinned: "title-Pinned"
         case let .project(id, _, _, _, _): "project-\(id)"
         case let .session(session, _, _): "session-\(session.id)"
         }
@@ -594,6 +607,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
     var selectedSessionID: SessionSummary.ID?
     var bottomContentInset: CGFloat
     var onOpen: (SessionSummary.ID) -> Void
+    var onTogglePinned: () -> Void
     var onToggleProject: (String) -> Void
     var onNewSession: (String) -> Void
 
@@ -607,6 +621,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.canCopyURL = canCopyURL
         controller.onAction = onAction
         controller.onOpen = onOpen
+        controller.onTogglePinned = onTogglePinned
         controller.onToggleProject = onToggleProject
         controller.onNewSession = onNewSession
         controller.bottomContentInset = bottomContentInset
@@ -629,6 +644,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     var refreshAction: RefreshAction?
     private var refreshTask: Task<Void, Never>?
     var onOpen: ((SessionSummary.ID) -> Void)?
+    var onTogglePinned: (() -> Void)?
     var onToggleProject: ((String) -> Void)?
     var onNewSession: ((String) -> Void)?
     private var canArchive = false
@@ -766,6 +782,8 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
         tableView.deselectRow(at: indexPath, animated: true)
         guard let id = dataSource.itemIdentifier(for: indexPath), let row = rows[id] else { return }
         switch row {
+        case let .pinned(_, canToggle):
+            if canToggle { onTogglePinned?() }
         case let .session(session, _, _):
             if opensSessions { onOpen?(session.id) }
         default:
@@ -942,6 +960,7 @@ private final class SessionBrowserCell: UITableViewCell {
     private let snippetLabel = UILabel()
     private let textStack = UIStackView()
     private let rowStack = UIStackView()
+    private let collapseIndicator = UIImageView()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -984,6 +1003,12 @@ private final class SessionBrowserCell: UITableViewCell {
         rowStack.translatesAutoresizingMaskIntoConstraints = false
         rowStack.addArrangedSubview(leadingSlot)
         rowStack.addArrangedSubview(textStack)
+        collapseIndicator.tintColor = .secondaryLabel
+        collapseIndicator.contentMode = .scaleAspectFit
+        collapseIndicator.isAccessibilityElement = false
+        collapseIndicator.setContentHuggingPriority(.required, for: .horizontal)
+        collapseIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+        rowStack.addArrangedSubview(collapseIndicator)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
             currentBackground.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
@@ -1023,6 +1048,7 @@ private final class SessionBrowserCell: UITableViewCell {
         unreadDot.isHidden = true
         leadingSlot.isHidden = true
         snippetLabel.isHidden = true
+        collapseIndicator.isHidden = true
         titleLabel.textColor = .label
         titleLabel.font = .preferredFont(forTextStyle: .body)
         contentView.alpha = 1
@@ -1051,6 +1077,23 @@ private final class SessionBrowserCell: UITableViewCell {
             rowStack.directionalLayoutMargins.top = 20
             rowStack.directionalLayoutMargins.bottom = 18
             accessibilityLabel = text
+        case let .pinned(collapsed, canToggle):
+            titleLabel.text = "Pinned"
+            titleLabel.font = UIFont.sessionTitle()
+            rowStack.directionalLayoutMargins.top = 20
+            rowStack.directionalLayoutMargins.bottom = 18
+            collapseIndicator.isHidden = false
+            collapseIndicator.image = UIImage(
+                systemName: collapsed ? "chevron.right" : "chevron.down",
+                withConfiguration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
+            )
+            accessibilityIdentifier = "pinned-header"
+            accessibilityLabel = "Pinned"
+            accessibilityTraits = canToggle ? [.button, .header] : [.button, .header, .notEnabled]
+            accessibilityValue = collapsed ? "Collapsed" : "Expanded"
+            accessibilityHint = canToggle
+                ? "Collapses or expands pinned sessions"
+                : "Matching pinned sessions stay expanded during search"
         case .project:
             // Projects are rendered as section headers, never as cells.
             break
