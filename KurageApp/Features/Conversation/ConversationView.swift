@@ -235,7 +235,7 @@ struct ConversationContent: View {
                             Button {
                                 actionRequest = SessionActionRequest(session: session, action: .rename)
                             } label: {
-                                Label("Rename session", image: "pencil")
+                                Label("Rename session", systemImage: "pencil")
                             }
                         }
                     } label: {

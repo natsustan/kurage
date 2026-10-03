@@ -13,7 +13,6 @@ struct ProjectBranchRow: View {
     @State private var isLoading = true
     @State private var attempt = 0
     @State private var loadID = UUID()
-    @ScaledMetric(relativeTo: .body) private var iconWidth = 28
 
     private var isCurrent: Bool { model.workspaceGeneration == workspaceGeneration }
     private var title: String {
@@ -32,7 +31,7 @@ struct ProjectBranchRow: View {
             attempt += 1
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: "arrow.triangle.branch").frame(width: iconWidth)
+                NewSessionIcon(imageName: "git-branch")
                 Text(title).lineLimit(3)
                 if isLoading { ProgressView() }
                 else { Image(systemName: "arrow.clockwise").font(.caption) }

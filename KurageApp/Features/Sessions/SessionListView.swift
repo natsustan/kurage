@@ -80,7 +80,7 @@ struct SessionListView: View {
                     if horizontalSizeClass != .compact {
                         ToolbarItem(placement: .topBarLeading) {
                             Button(action: toggleSidebar) {
-                                Image(columnVisibility == .detailOnly ? "sidebar-open" : "sidebar-close")
+                                Image("sidebar")
                                     .resizable()
                                     .scaledToFit()
                                     .frame(width: 24, height: 24)
@@ -247,37 +247,53 @@ private struct SessionSidebarView: View {
                 }
             }
             ToolbarItem(placement: .topBarLeading) {
-                Menu {
-                    if let email = model.account?.email {
-                        Label(email, systemImage: "person.crop.circle")
-                        Divider()
-                    }
-                    if model.workspaces.count > 1 {
-                        Menu {
-                            ForEach(model.workspaces) { workspace in
-                                Button {
-                                    Task { await model.selectWorkspace(workspace.id) }
-                                } label: {
-                                    if workspace.id == model.selectedWorkspaceID {
-                                        Label(workspace.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(workspace.name)
+                ZStack {
+                    // Keep the glass outside the menu's press and preview animations.
+                    Circle()
+                        .fill(Color.clear)
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular, in: .circle)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+
+                    Menu {
+                        if let email = model.account?.email {
+                            Label(email, systemImage: "person.crop.circle")
+                            Divider()
+                        }
+                        if model.workspaces.count > 1 {
+                            Menu {
+                                ForEach(model.workspaces) { workspace in
+                                    Button {
+                                        Task { await model.selectWorkspace(workspace.id) }
+                                    } label: {
+                                        if workspace.id == model.selectedWorkspaceID {
+                                            Label(workspace.name, systemImage: "checkmark")
+                                        } else {
+                                            Text(workspace.name)
+                                        }
                                     }
                                 }
+                            } label: {
+                                Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
                             }
-                        } label: {
-                            Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
                         }
+                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                            model.signOut()
+                        }
+                        .accessibilityIdentifier("sign-out-button")
+                    } label: {
+                        AccountAvatar(account: model.account)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
                     }
-                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                        model.signOut()
-                    }
-                    .accessibilityIdentifier("sign-out-button")
-                } label: {
-                    AccountAvatar(account: model.account)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("account-menu")
                 }
-                .accessibilityIdentifier("account-menu")
+                .frame(width: 44, height: 44)
             }
+            .sharedBackgroundVisibility(.hidden)
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Picker("List view", selection: $listMode) {
@@ -820,7 +836,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
                                         image: UIImage(systemName: session.isPinned == true ? "pin.slash" : "pin")) { [weak self] _ in
                     self?.onAction?(session, .pin)
                 })
-                actions.append(UIAction(title: "Rename session", image: UIImage(named: "pencil")) { [weak self] _ in
+                actions.append(UIAction(title: "Rename session", image: UIImage(systemName: "pencil")) { [weak self] _ in
                     self?.onAction?(session, .rename)
                 })
             }
@@ -961,6 +977,9 @@ private final class SessionBrowserCell: UITableViewCell {
     private let textStack = UIStackView()
     private let rowStack = UIStackView()
     private let collapseIndicator = UIImageView()
+    private let trailingSpacer = UIView()
+    private var collapseIndicatorWidth: NSLayoutConstraint!
+    private var collapseIndicatorHeight: NSLayoutConstraint!
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1009,8 +1028,16 @@ private final class SessionBrowserCell: UITableViewCell {
         collapseIndicator.setContentHuggingPriority(.required, for: .horizontal)
         collapseIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
         rowStack.addArrangedSubview(collapseIndicator)
+        trailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        trailingSpacer.isAccessibilityElement = false
+        rowStack.addArrangedSubview(trailingSpacer)
+        collapseIndicatorWidth = collapseIndicator.widthAnchor.constraint(equalToConstant: 18)
+        collapseIndicatorWidth.priority = .defaultHigh
+        collapseIndicatorHeight = collapseIndicator.heightAnchor.constraint(equalToConstant: 18)
         contentView.addSubview(rowStack)
         NSLayoutConstraint.activate([
+            collapseIndicatorWidth,
+            collapseIndicatorHeight,
             currentBackground.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             currentBackground.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
             currentBackground.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
@@ -1049,6 +1076,8 @@ private final class SessionBrowserCell: UITableViewCell {
         leadingSlot.isHidden = true
         snippetLabel.isHidden = true
         collapseIndicator.isHidden = true
+        trailingSpacer.isHidden = true
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         titleLabel.textColor = .label
         titleLabel.font = .preferredFont(forTextStyle: .body)
         contentView.alpha = 1
@@ -1083,10 +1112,13 @@ private final class SessionBrowserCell: UITableViewCell {
             rowStack.directionalLayoutMargins.top = 20
             rowStack.directionalLayoutMargins.bottom = 18
             collapseIndicator.isHidden = false
-            collapseIndicator.image = UIImage(
-                systemName: collapsed ? "chevron.right" : "chevron.down",
-                withConfiguration: UIImage.SymbolConfiguration(textStyle: .body, scale: .small)
-            )
+            trailingSpacer.isHidden = false
+            textStack.setContentHuggingPriority(.required, for: .horizontal)
+            let indicatorSize = UIFontMetrics(forTextStyle: .body).scaledValue(for: 18)
+            collapseIndicatorWidth.constant = indicatorSize
+            collapseIndicatorHeight.constant = indicatorSize
+            collapseIndicator.image = UIImage(named: "disclosure-right")?.withRenderingMode(.alwaysTemplate)
+            collapseIndicator.transform = collapsed ? .identity : CGAffineTransform(rotationAngle: .pi / 2)
             accessibilityIdentifier = "pinned-header"
             accessibilityLabel = "Pinned"
             accessibilityTraits = canToggle ? [.button, .header] : [.button, .header, .notEnabled]

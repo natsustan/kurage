@@ -39,9 +39,10 @@ struct ComposerAttachments: View {
                     .accessibilityIdentifier("attach-photos")
             } label: {
                 Image(systemName: "plus")
-                    .font(.system(size: 22))
+                    .font(.system(size: ComposerControlMetrics.iconSize))
                     .foregroundStyle(Color.primary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
+                    .contentShape(Rectangle())
                     .overlay(alignment: .topTrailing) {
                         if showsSummary && isLoading {
                             ProgressView().controlSize(.mini)
