@@ -1,5 +1,18 @@
 # Kurage 会话功能
 
+## iPad 唤起键盘卡死修复（2026-10-04）
+
+- 真机 iPad（外接键盘）0.4.2 (10) 与 0.3.2 (6) 的 watchdog 日志均卡在 `MentionEditor.updateUIView` 内同步调用 `becomeFirstResponder`：宿主视图在 SwiftUI 更新中途重读 responder 图，主线程持续占满 CPU 直至被系统终止。与侧栏键盘布局改动无关。
+- 输入框的成为／放弃第一响应者改为在本次更新结束后的主线程任务中执行，执行前按最新的聚焦与可编辑状态重新判断，同一时刻只排队一次；文本、选区与提及处理不变。
+- 本轮 iPad Pro 13-inch 模拟器 `AdaptiveLayoutFlowTests` 8 项执行、0 失败（1 项按设计跳过）；iPhone 17 上 ShellFlowTests 中与输入聚焦、发送、steer、提及相关的用例单独复跑通过。全量 ShellFlowTests 因主机负载过高出现大量超时，未能完整跑完；三项提及按钮用例仍断言 44pt（按钮已统一为 36pt），`testUnconfirmedBubbleSurvivesReopeningAndPreservesNewDraft` 在修改前的 HEAD 上同样失败，均与本修复无关。
+- 模拟器无法复现外接键盘场景；修复需在真机 iPad 上确认。
+## Session 列表项目新建图标缩小（2026-10-04）
+
+- 项目标题右侧的新建 Session 图标由资源的原始 24 pt 改为独立的 20×20 pt 模板图像视图，与左侧文件夹图标同尺寸；继续使用 secondaryLabel 并在项目标题内居中。
+- 原有 44 pt 宽、覆盖整行高度的点击范围、新建入口条件与辅助功能标识保持不变。
+- 本轮 iOS 27 Simulator 构建通过；独立 iPad Pro 13-inch 横屏、深色 accessibility-large 下，现有 `testIPadNewSessionKeyboardKeepsSidebarPosition` fixture UI 用例通过（1 项、0 失败）。已检查浅色普通字号及深色大字号截图，图标居中、与文件夹比例协调且无裁切，新建入口可打开会话，键盘出现后侧栏位置稳定；临时模拟器已关闭并删除。
+- 首轮共享 iPad 上的 `testProjectHeadersStayPinnedAndKeepTheirActions` 在返回后折叠／列表定位断言失败（2 处）；期间另一任务同时使用该模拟器，无法排除交互干扰，也不能将该失败归因于图标调整。真机、iOS 26、真实账号与 iPhone 本轮尚未验证。
+
 ## Pinned 箭头动态字号审查修复（2026-10-04）
 
 - 降低 Pinned SVG 箭头的水平 hugging／compression resistance，让动态宽度约束覆盖资源的 24 pt 固有宽度；宽度约束继续使用非 required 优先级，兼容隐藏时的归零布局。
@@ -675,7 +688,7 @@
 
 - 侧栏理想宽度调整为 360pt，最小 280pt、最大 400pt；实际宽度由系统根据窗口空间调整。此次宽度调整尚未在模拟器验证。
 
-- 两栏下详情输入的键盘只顶起右侧详情栏：侧栏整体（列表视口与底部浮动搜索栏）忽略键盘、保持原位，软件键盘可能遮住侧栏底部。侧栏搜索获得焦点时与窄窗口仍沿用 SwiftUI 键盘避让。（2026-10-03 起取代此前列表视口经 `keyboardLayoutGuide` 收缩、搜索栏独立避让的做法，该做法会在外接键盘快捷栏出现时把侧栏底部顶起并露出灰底。）iPad Pro 13-inch (M5) 模拟器横屏下 3 项相关 fixture UI 回归通过，断言新建页／聊天页输入时侧栏列表顶部、底部与搜索栏位置不变；真机外接键盘快捷栏、深色与大字号未复测。
+- 两栏下详情输入的键盘只顶起右侧详情栏：侧栏整体（列表视口与底部浮动搜索栏）忽略键盘、保持原位，软件键盘可能遮住侧栏底部。侧栏搜索获得焦点时与窄窗口仍沿用 SwiftUI 键盘避让。（2026-10-03 起取代此前列表视口经 `keyboardLayoutGuide` 收缩、搜索栏独立避让的做法，该做法会在外接键盘快捷栏出现时把侧栏底部顶起并露出灰底。）iPad Pro 13-inch (M5) 模拟器横屏下 3 项相关 fixture UI 回归通过，断言新建页／聊天页输入时侧栏列表顶部、底部与搜索栏位置不变；真机外接键盘快捷栏、深色与大字号未复测。侧栏背景改为显式忽略全部安全区（含键盘区域）的 `systemBackground`，避免外接键盘快捷栏下方露出分栏默认的灰色底；模拟器无法呈现外接键盘快捷栏，该视觉效果待真机确认。
 - 侧栏与详情之间增加随系统外观变化的一像素分隔线，延伸到上下安全区。宽屏侧栏折叠按钮统一放在会话详情标题栏左侧，展开与折叠时保持相对于详情区域的位置；辅助功能标签随状态切换 Hide sidebar／Show sidebar，保持同一导航与草稿状态。（2026-10-03 调整按钮位置。）
 - 折叠按钮统一改用用户提供的 MingCute Cute Regular `layout_4_cute_re.svg`，展开和折叠时使用同一图标；保持 24pt、矢量与 template 渲染，随系统外观变化。辅助功能标签仍随实际动作切换 Show sidebar／Hide sidebar。（2026-10-03 取代此前左右箭头图标。） 本次 Simulator 构建及 iPad Pro 13-inch (M5)／iOS 27 的一项浅色 fixture 折叠回归通过；截图确认两种状态的图标一致，标题间距保持一致，草稿保留。模拟器保持原浅色与字号；本次未复测深色、大字号、真机或 iOS 26。
 - 宽屏会话详情使用系统 editor 工具栏布局，将标题及项目／机器副标题靠左放在折叠按钮右侧；新建会话／tab 的标题同步靠左。紧凑窗口沿用系统自动布局。（2026-10-03）本次构建、iPad Pro 13-inch (M5)／iOS 27 的两项浅色 fixture UI 回归与一项深色 accessibility-medium 折叠回归通过；截图与 AX 层级确认会话标题距按钮右缘恒为 16pt，折叠与恢复后间距一致，新建会话标题同样靠左，无重复标题或重叠。模拟器恢复原浅色与字号；真机、iOS 26、紧凑窗口与自由缩放本次未复测。
@@ -729,4 +742,10 @@
 
 - 将应用版本更新为 0.4.2，构建号更新为 9，并通过 XcodeGen 重新生成工程。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（9），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.4.2 再次发布（2026-10-04）
+
+- 保持应用版本 0.4.2，将构建号更新为 10，并通过 XcodeGen 重新生成工程；上一轮构建号 9 已上传，本轮使用新构建号。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（10），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。

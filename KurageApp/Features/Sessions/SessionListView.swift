@@ -491,7 +491,9 @@ private struct SessionList: View {
         // Both regions are ignored together so the list still reaches the screen edge.
         .ignoresSafeArea(keepsListHeight ? [.container, .keyboard] : .container, edges: .bottom)
         .scrollDismissesKeyboard(.interactively)
-        .background(Color(.systemBackground))
+        // A style background only extends into the container safe area; fill the
+        // keyboard region too so the split view's column color never shows through.
+        .background { Color(.systemBackground).ignoresSafeArea() }
     }
 
     /// Capsule height plus the gap under it, so the last row can scroll clear of the floating field.
@@ -872,6 +874,7 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
     private let icon = UIImageView()
     private let titleLabel = UILabel()
     private let newSessionButton = ProjectNewSessionButton(configuration: .plain())
+    private let newSessionIcon = UIImageView(image: UIImage(named: "pencil-square"))
     private lazy var toggleTrailingToNewSession = toggleButton.trailingAnchor.constraint(
         equalTo: newSessionButton.leadingAnchor, constant: -8
     )
@@ -911,10 +914,14 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         toggleButton.addSubview(icon)
         toggleButton.addSubview(titleLabel)
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(named: "pencil-square")
         configuration.baseForegroundColor = .secondaryLabel
         configuration.contentInsets = .zero
         newSessionButton.configuration = configuration
+        newSessionIcon.contentMode = .scaleAspectFit
+        newSessionIcon.tintColor = .secondaryLabel
+        newSessionIcon.isAccessibilityElement = false
+        newSessionIcon.translatesAutoresizingMaskIntoConstraints = false
+        newSessionButton.addSubview(newSessionIcon)
         newSessionButton.translatesAutoresizingMaskIntoConstraints = false
         newSessionButton.addAction(UIAction { [weak self] _ in
             guard let self, let projectID else { return }
@@ -940,6 +947,10 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
             newSessionButton.heightAnchor.constraint(equalTo: titleLabel.heightAnchor),
             newSessionButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             newSessionButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            newSessionIcon.widthAnchor.constraint(equalToConstant: 20),
+            newSessionIcon.heightAnchor.constraint(equalToConstant: 20),
+            newSessionIcon.centerXAnchor.constraint(equalTo: newSessionButton.centerXAnchor),
+            newSessionIcon.centerYAnchor.constraint(equalTo: newSessionButton.centerYAnchor),
         ])
     }
 
