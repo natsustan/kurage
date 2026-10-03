@@ -144,6 +144,7 @@ struct MentionEditor: UIViewRepresentable {
     @Binding var text: String
     @Binding var selection: TextSelection?
     @Binding var isFocused: Bool
+    var visibleLineLimit = 5
     var selectionRequest: SelectionRequest? = nil
     let ranges: [ComposerMentionState.Range]
     let isEnabled: Bool
@@ -172,6 +173,14 @@ struct MentionEditor: UIViewRepresentable {
         coordinator.isUpdating = true
         defer { coordinator.isUpdating = false }
         let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection)
+        // A short viewport alone can show fragments of adjacent lines after
+        // UIKit scrolls the caret. Lay out a single truncated line when compact;
+        // the backing text and selection remain intact for the next focus.
+        let isCompact = visibleLineLimit == 1
+        view.textContainer.maximumNumberOfLines = isCompact ? 1 : 0
+        view.textContainer.lineBreakMode = isCompact ? .byTruncatingTail : .byWordWrapping
+        view.isScrollEnabled = !isCompact
+        if isCompact { view.setContentOffset(.zero, animated: false) }
         if view.markedTextRange == nil {
             if coordinator.renderedText != text || coordinator.renderedRanges != ranges || coordinator.renderedFont != font ||
                 coordinator.renderedStyle != view.traitCollection.userInterfaceStyle {
@@ -206,7 +215,7 @@ struct MentionEditor: UIViewRepresentable {
         guard let width = proposal.width, width.isFinite else { return nil }
         let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: uiView.traitCollection)
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: min(max(font.lineHeight, ceil(size.height)), ceil(font.lineHeight * 5)))
+        return CGSize(width: width, height: min(max(font.lineHeight, ceil(size.height)), ceil(font.lineHeight * CGFloat(visibleLineLimit))))
     }
 
     @MainActor

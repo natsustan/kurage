@@ -10,6 +10,7 @@ struct ComposerAttachments: View {
     private var isLoading: Bool { !pending.isEmpty }
     @Binding var error: String?
     let disabled: Bool
+    var showsSummary = false
     @State private var showsPhotos = false
     @State private var showsFiles = false
     @State private var showsCamera = false
@@ -41,11 +42,25 @@ struct ComposerAttachments: View {
                     .font(.system(size: 22))
                     .foregroundStyle(Color.primary)
                     .frame(width: 44, height: 44)
+                    .overlay(alignment: .topTrailing) {
+                        if showsSummary && isLoading {
+                            ProgressView().controlSize(.mini)
+                                .allowsHitTesting(false)
+                        } else if showsSummary && !attachments.isEmpty {
+                            Text(attachments.count, format: .number)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 4)
+                                .background(Color.accentColor, in: Capsule())
+                                .allowsHitTesting(false)
+                        }
+                    }
             }
             .tint(Color.primary)
             .menuOrder(.fixed)
             .disabled(disabled || isLoading || attachments.count >= 8)
             .accessibilityLabel("Add attachment")
+            .accessibilityValue(isLoading ? "Loading attachments" : attachments.isEmpty ? "" : "\(attachments.count) attachments")
             .accessibilityIdentifier("add-attachment")
         }
         .photosPicker(isPresented: $showsPhotos, selection: $photos,
@@ -192,7 +207,7 @@ struct ComposerAttachmentStrip: View {
     @Binding var attachments: [ComposerAttachment]
     let pending: [PendingComposerAttachment]
     let disabled: Bool
-    @State private var previewAttachment: ComposerAttachment?
+    let onPreview: (ComposerAttachment) -> Void
 
     private var containsImage: Bool {
         attachments.contains(where: \.isImage) || pending.contains(where: \.isImage)
@@ -208,7 +223,7 @@ struct ComposerAttachmentStrip: View {
                         thumbnailData: attachment.thumbnailData,
                         isLoading: disabled,
                         onRemove: { attachments.removeAll { $0.id == attachment.id } },
-                        onPreview: attachment.isImage ? { previewAttachment = attachment } : nil
+                        onPreview: attachment.isImage ? { onPreview(attachment) } : nil
                     )
                 }
                 ForEach(pending) { item in
@@ -222,15 +237,6 @@ struct ComposerAttachmentStrip: View {
         .frame(height: containsImage ? 122 : nil)
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("composer-attachments")
-        .fullScreenCover(item: $previewAttachment) { attachment in
-            AttachmentImagePreview(
-                name: attachment.fileName,
-                previewIdentifier: "composer-image-preview",
-                closeIdentifier: "composer-image-close"
-            ) {
-                attachment.data
-            }
-        }
     }
 }
 

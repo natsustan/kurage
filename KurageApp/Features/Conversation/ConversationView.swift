@@ -683,6 +683,8 @@ struct TurnRow: View {
                 .font(.body.weight(.semibold), for: .h4)
                 .font(.body.weight(.medium), for: .h5)
                 .font(.body, for: .h6)
+                .font(.subheadline, for: .tableBody)
+                .font(.subheadline.weight(.semibold), for: .tableHeader)
                 .font(.system(.footnote, design: .monospaced), for: .codeBlock)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)

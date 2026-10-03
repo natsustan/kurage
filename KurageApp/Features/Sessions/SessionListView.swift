@@ -443,7 +443,7 @@ private struct SessionList: View {
                     SessionSearchField(query: $searchQuery, isIndexing: isIndexingSearch && !trimmedQuery.isEmpty,
                                        isFocused: $isSearchFocused)
                     Button(action: onChat) {
-                        Image("pencil")
+                        Image("pencil-square")
                             .resizable()
                             .scaledToFit()
                             .frame(width: min(newChatIconWidth, 32), height: min(newChatIconWidth, 32))
@@ -895,7 +895,7 @@ private final class SessionProjectHeader: UITableViewHeaderFooterView {
         toggleButton.addSubview(icon)
         toggleButton.addSubview(titleLabel)
         var configuration = UIButton.Configuration.plain()
-        configuration.image = UIImage(named: "pencil")
+        configuration.image = UIImage(named: "pencil-square")
         configuration.baseForegroundColor = .secondaryLabel
         configuration.contentInsets = .zero
         newSessionButton.configuration = configuration
