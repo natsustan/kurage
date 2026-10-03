@@ -1025,8 +1025,9 @@ private final class SessionBrowserCell: UITableViewCell {
         collapseIndicator.tintColor = .secondaryLabel
         collapseIndicator.contentMode = .scaleAspectFit
         collapseIndicator.isAccessibilityElement = false
-        collapseIndicator.setContentHuggingPriority(.required, for: .horizontal)
-        collapseIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Let the explicit width override the asset's intrinsic size.
+        collapseIndicator.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        collapseIndicator.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         rowStack.addArrangedSubview(collapseIndicator)
         trailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         trailingSpacer.isAccessibilityElement = false

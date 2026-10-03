@@ -1,5 +1,11 @@
 # Kurage 会话功能
 
+## Pinned 箭头动态字号审查修复（2026-10-04）
+
+- 降低 Pinned SVG 箭头的水平 hugging／compression resistance，让动态宽度约束覆盖资源的 24 pt 固有宽度；宽度约束继续使用非 required 优先级，兼容隐藏时的归零布局。
+- 本轮 iPhone 17e／iOS 27 Simulator 测试构建通过；现有 Pinned 折叠 fixture UI 用例在浅色 large、深色 accessibility-large 下串行执行各一次，全部通过，无失败或跳过。已核对两组展开、折叠、列表模式切换和搜索截图，箭头随大字号放大、紧邻标题且无重叠或裁切。`git diff --check` 通过；临时模拟器已关闭并删除。
+- 真机、iOS 26、iPad、真实账号及应用运行期间切换字号本轮未验证。
+
 ## 输入区上下留白收紧（2026-10-03）
 
 - 单行保留 4 pt 垂直外边距、普通字号下 44 pt 高度；展开恢复 8 pt 垂直外边距及 10 pt 文字顶部内边距。按钮行仍预留 40 pt，图标、点击区域与中心距沿用既有尺寸。
