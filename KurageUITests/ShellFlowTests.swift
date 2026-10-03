@@ -1991,6 +1991,57 @@ extension ShellFlowTests {
 
 extension ShellFlowTests {
     @MainActor
+    func testPinnedCollapsePersistsAcrossModesAndSearch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 5))
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-tests"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        session.press(forDuration: 1)
+        XCTAssertTrue(app.buttons["Pin"].waitForExistence(timeout: 3))
+        tap(app.buttons["Pin"])
+        let heading = app.descendants(matching: .any)["pinned-header"].firstMatch
+        XCTAssertTrue(heading.waitForExistence(timeout: 5))
+        XCTAssertEqual(heading.value as? String, "Expanded")
+        attachScreen(app, name: "Pinned expanded")
+
+        tap(heading)
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(heading.value as? String, "Collapsed")
+        XCTAssertTrue(app.buttons["new-session-local:machine-1:kurage"].exists)
+        attachScreen(app, name: "Pinned collapsed by project")
+        tap(app.buttons["more-options"])
+        tap(app.buttons["By Time"])
+        XCTAssertEqual(heading.value as? String, "Collapsed")
+        XCTAssertFalse(session.exists)
+        attachScreen(app, name: "Pinned collapsed by time")
+
+        let search = app.textFields["session-search"]
+        tap(search)
+        search.typeText("fix flaky tests")
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertEqual(heading.value as? String, "Expanded")
+        XCTAssertFalse(heading.isEnabled)
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
+        attachScreen(app, name: "Pinned search with keyboard")
+        tap(app.buttons["session-search-clear"])
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(heading.value as? String, "Collapsed")
+        search.typeText("\n")
+
+        tap(app.buttons["more-options"])
+        tap(app.buttons["By Project"])
+        XCTAssertEqual(heading.value as? String, "Collapsed")
+        tap(heading)
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertEqual(heading.value as? String, "Expanded")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
+        attachScreen(app, name: "Pinned expanded after search")
+    }
+
+    @MainActor
     func testSessionContextMenuPinRenameCopyAndArchive() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -2006,26 +2057,26 @@ extension ShellFlowTests {
         XCTAssertTrue(app.buttons["Archive"].exists)
         attachScreen(app, name: "Session context menu")
         tap(app.buttons["Pin"])
-        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["pinned-header"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
         attachScreen(app, name: "Pinned session group")
         tap(app.buttons["more-options"])
         tap(app.buttons["By Time"])
-        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["pinned-header"].firstMatch.waitForExistence(timeout: 3))
         XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "session-session-tests").count, 1)
         attachScreen(app, name: "Pinned session by time")
         tap(app.buttons["more-options"])
         tap(app.buttons["By Project"])
         session.press(forDuration: 1)
         tap(app.buttons["Unpin"])
-        XCTAssertTrue(app.staticTexts["Pinned"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["pinned-header"].firstMatch.waitForNonExistence(timeout: 5))
         session.press(forDuration: 1)
         tap(app.buttons["Rename session"])
         let title = app.alerts.textFields["Session title"]
         XCTAssertTrue(title.waitForExistence(timeout: 3))
-        replaceSessionTitle(title, with: "Renamed fixture session")
+        replaceSessionTitle(title, with: "Renamed fixture session", in: app)
         attachScreen(app, name: "Rename session prompt")
-        tap(app.alerts.buttons["Save"])
+        saveSessionTitle(in: app)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "Renamed fixture session"), object: session
         )], timeout: 5), .completed)
@@ -2087,13 +2138,13 @@ extension ShellFlowTests {
         tap(app.buttons["Rename session"])
         let title = app.alerts.textFields["Session title"]
         XCTAssertTrue(title.waitForExistence(timeout: 3))
-        replaceSessionTitle(title, with: "Renamed in detail")
-        tap(app.alerts.buttons["Save"])
+        replaceSessionTitle(title, with: "Renamed in detail", in: app)
+        saveSessionTitle(in: app)
         XCTAssertTrue(app.staticTexts["Renamed in detail"].waitForExistence(timeout: 5))
         XCTAssertTrue(options.exists)
         attachScreen(app, name: "Renamed conversation title")
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["Pinned"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["pinned-header"].firstMatch.waitForExistence(timeout: 5))
         tap(session)
         tap(options)
         tap(app.buttons["Archive"])
@@ -2108,13 +2159,47 @@ extension ShellFlowTests {
 
 extension ShellFlowTests {
     @MainActor
-    private func replaceSessionTitle(_ field: XCUIElement, with title: String) {
+    private func replaceSessionTitle(_ field: XCUIElement, with title: String, in app: XCUIApplication) {
+        // Wait for the alert's keyboard before editing the focused field.
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: app.keyboards.firstMatch
+        )], timeout: 10), .completed)
         // The alert focuses the initial title. Keep that selection/caret position;
         // tapping long text can move the caret into the middle at accessibility sizes.
         let count = (field.value as? String)?.count ?? 0
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count))
         field.typeText(title)
         XCTAssertEqual(field.value as? String, title)
+    }
+
+    @MainActor
+    private func saveSessionTitle(in app: XCUIApplication) {
+        let save = app.alerts.buttons["Save"]
+        let keyboard = app.keyboards.firstMatch
+        var lastFrame = CGRect.null
+        var lastKeyboardFrame = CGRect.null
+        var stableSince = Date()
+        let settled = NSPredicate { _, _ in
+            guard save.isEnabled, save.isHittable, keyboard.isHittable else { return false }
+            let frame = save.frame
+            let keyboardFrame = keyboard.frame
+            if frame != lastFrame || keyboardFrame != lastKeyboardFrame {
+                lastFrame = frame
+                lastKeyboardFrame = keyboardFrame
+                stableSince = Date()
+                return false
+            }
+            return Date().timeIntervalSince(stableSince) >= 1
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: settled, object: save
+        )], timeout: 10), .completed)
+        // XCTest can retain the button's hit point from before the keyboard moved
+        // the alert. Use its current frame to target the visible button.
+        let frame = save.frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+        XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
     }
 }
 
