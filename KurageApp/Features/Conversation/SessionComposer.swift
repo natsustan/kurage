@@ -1,5 +1,12 @@
 import SwiftUI
 
+enum ComposerControlMetrics {
+    static let iconSize: CGFloat = 20
+    static let hitSize: CGFloat = 36
+    static let actionSize: CGFloat = 28
+    static let actionSpacing: CGFloat = 4
+}
+
 /// The run configuration shown in the composer: a summary plus the pickers the
 /// agent allows for the next turn.
 struct RunConfigMenu: Equatable {
@@ -257,23 +264,27 @@ struct SessionComposer: View {
                     }
                 }
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(minHeight: isExpanded ? nil : 44)
+                    .frame(minHeight: isExpanded ? nil : ComposerControlMetrics.hitSize)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         if !blocksEditing { isFocused = true }
                     }
-                    .padding(.leading, isExpanded ? 12 : 50)
-                    .padding(.trailing, isExpanded ? 12 : 54)
+                    .padding(.leading, isExpanded ? 12 : ComposerControlMetrics.hitSize + ComposerControlMetrics.actionSpacing)
+                    .padding(.trailing, isExpanded ? 12 : ComposerControlMetrics.hitSize + ComposerControlMetrics.actionSpacing)
                     .padding(.top, isExpanded ? 10 : 0)
-                    .padding(.bottom, isExpanded ? 48 : 0)
+                    .padding(.bottom, isExpanded ? ComposerControlMetrics.hitSize + ComposerControlMetrics.actionSpacing : 0)
             }
             // Keep the native editor and attachment importer in place as focus
             // changes. The compact editor occupies the gap between the buttons.
-            .overlay(alignment: .bottom) { actionRow }
-            .padding(8)
+            .overlay(alignment: isExpanded ? .bottom : .center) { actionRow }
+            .padding(.horizontal, 8)
+            .padding(.vertical, isExpanded ? 8 : 4)
             .glassEffect(.regular, in: .rect(cornerRadius: 30))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(identifiers.container)
+            .animation(reduceMotion ? nil : .smooth(duration: 0.25)) { content in
+                content.padding(.horizontal, isExpanded ? 0 : 12)
+            }
         }
             .background {
                 if let sendFeedbackView {
@@ -518,7 +529,7 @@ struct SessionComposer: View {
     }
 
     private var actionRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: ComposerControlMetrics.actionSpacing) {
             HStack(spacing: 0) {
                 ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
                                     error: $attachmentError, disabled: blocksEditing,
@@ -529,9 +540,9 @@ struct SessionComposer: View {
                             .renderingMode(.template)
                             .resizable()
                             .scaledToFit()
-                            .frame(width: 24, height: 24)
+                            .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)
                             .foregroundStyle(.primary)
-                            .frame(width: 44, height: 44)
+                            .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
                             .contentShape(Rectangle())
                     }
                     .disabled(blocksEditing)
@@ -551,8 +562,9 @@ struct SessionComposer: View {
                         showsRunConfig = true
                     } label: {
                         ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
-                            .frame(width: 25, height: 25)
-                            .frame(width: 44, height: 44)
+                            .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)
+                            .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(runConfig.accessibilitySummary)
@@ -586,11 +598,11 @@ struct SessionComposer: View {
 
     private func composerIcon(_ name: String, enabled: Bool) -> some View {
         Image(systemName: name)
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(enabled ? Color.white : Color.secondary)
-            .frame(width: 40, height: 30)
-            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Capsule())
-            .frame(width: 48, height: 44)
+            .frame(width: ComposerControlMetrics.actionSize, height: ComposerControlMetrics.actionSize)
+            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+            .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
             .contentShape(Rectangle())
     }
 }
@@ -623,14 +635,16 @@ private struct ContextWindowButton: View {
             showsDetails = true
         } label: {
             ZStack {
-                Circle().stroke(Color.secondary.opacity(0.35), lineWidth: 2.5)
+                Circle().strokeBorder(Color.secondary.opacity(0.35), lineWidth: 2.5)
                 Circle()
+                    .inset(by: 1.25)
                     .trim(from: 0, to: usage.usedFraction)
-                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                    .stroke(Color.primary, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
             }
-            .frame(width: 22, height: 22)
-            .frame(width: 44, height: 44)
+            .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)
+            .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Context window")

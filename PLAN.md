@@ -1,5 +1,29 @@
 # Kurage 会话功能
 
+## Pinned 箭头动态字号审查修复（2026-10-04）
+
+- 降低 Pinned SVG 箭头的水平 hugging／compression resistance，让动态宽度约束覆盖资源的 24 pt 固有宽度；宽度约束继续使用非 required 优先级，兼容隐藏时的归零布局。
+- 本轮 iPhone 17e／iOS 27 Simulator 测试构建通过；现有 Pinned 折叠 fixture UI 用例在浅色 large、深色 accessibility-large 下串行执行各一次，全部通过，无失败或跳过。已核对两组展开、折叠、列表模式切换和搜索截图，箭头随大字号放大、紧邻标题且无重叠或裁切。`git diff --check` 通过；临时模拟器已关闭并删除。
+- 真机、iOS 26、iPad、真实账号及应用运行期间切换字号本轮未验证。
+
+## 输入区上下留白收紧（2026-10-03）
+
+- 单行保留 4 pt 垂直外边距、普通字号下 44 pt 高度；展开恢复 8 pt 垂直外边距及 10 pt 文字顶部内边距。按钮行仍预留 40 pt，图标、点击区域与中心距沿用既有尺寸。
+- 单行额外向两侧各收进 12 pt，总宽比展开状态缩小 24 pt；聚焦后恢复完整宽度，横向留白采用 0.25 秒 smooth 过渡，遵循系统减少动态效果设置。编辑器与附件导入器继续由同一视图持有，保留草稿、光标及配置浮层期间的展开状态。
+- 本轮 iOS 27 Simulator 构建通过，浅色的多行输入与运行配置 2 项现有 fixture UI 用例、深色 accessibility-large 的多行用例均通过，共 3 次执行，无失败。截图确认单行更窄、展开恢复原留白，草稿恢复与配置浮层期间的展开状态正常，按钮无重叠且位于键盘上方；聚焦录屏的 20 fps 抽帧包含横向留白的中间状态，按钮随容器移动。`git diff --check` 通过；多行视口边缘的文字轻微裁切观察仍存在，减少动态效果实际切换、iOS 26 与真机尚未验证。
+
+## 输入区按钮尺寸统一（2026-10-03）
+
+- 共用输入区的加号、提及、上下文用量与推理仪表统一使用 20 pt 图标尺寸与 36×36 pt 点击区域；上下文圆环的描边收在图标边界内。发送／停止使用 28 pt 圆形背景、14 pt 符号及同样的 36×36 pt 点击区域。组内相邻中心距离为 36 pt，推理到发送／停止的中心距离为 40 pt；左右组之间保留弹性留白。
+- 收起输入区两侧各预留 40 pt，按钮在输入行内垂直居中；展开编辑区的按钮行预留由 48 pt 缩为 40 pt。沿用现有按钮行为、禁用条件及辅助功能标识。
+- 本轮 36 pt 点击区域版本在 iOS 27 Simulator 构建通过，浅色运行配置与多行收起／展开的 2 项现有 fixture UI 用例通过。深色 accessibility-large 多行用例首次出现 4 条正文定位／键盘收起断言失败，测试结果文件生成也未正常结束；单独重跑同一版本后通过。首轮失败原因未确定，不能据重跑通过认定没有偶发问题。截图确认收起／展开按钮无重叠、位于键盘上方，上下文、推理与发送点击正常；模拟器已恢复浅色／large，`git diff --check` 通过。停止状态、iOS 26 与真机未单独验证。
+- 多行编辑区截图另观察到视口边缘的文字轻微裁切，本轮未修改编辑器布局，裁切原因尚未单独验证。
+
+## 账号头像圆形外观与菜单过渡（2026-10-03）
+
+- 账号菜单在固定 44×44 的 ZStack 中使用独立的圆形 regular Liquid Glass 背景；背景不响应点击，且不启用 interactive，不作为菜单标签或按钮样式参与按压／预览动画。前景保留 plain 原生菜单、34×34 圆形头像及 44×44 的点击区域；ToolbarItem 隐藏共享背景，保留账号菜单与辅助功能标识。
+- 上一版原生 glass 按钮消除了上下平切，但关闭时仍拉宽成胶囊，未满足持续圆形的要求。本轮最终版本在 iPhone 18 Pro Max／iOS 27 Simulator 构建及 1 项现有 fixture UI 回归通过，覆盖头像菜单、退出和再次登录。浅色默认字号两次、深色 accessibility-large 一次完整开关的录像按 20 fps 抽帧，确认独立 44 pt 外框始终为正圆，菜单消失后没有拉宽或上下缺弧；前景头像保留菜单快照的短暂位移动画。`git diff --check` 通过；真实账号的图片头像、iOS 26、iPad 与真机本轮尚未验证。
+
 ## 收起输入区的附件预览审查修复（2026-10-03）
 
 - 图片预览状态和全屏呈现移到始终存在的 `SessionComposer`，附件条只传递预览请求；在发起全屏呈现前释放输入焦点，附件条收起后不会移除呈现宿主，也避免在呈现动画中改变输入区布局。收起状态的附件导入进度同时通过辅助功能值表达。
@@ -30,7 +54,7 @@
 
 ## Pinned 分组折叠（2026-10-03）
 
-- Pinned 标题支持整行点击收起／展开，默认展开，右侧箭头和 VoiceOver 的 Expanded／Collapsed 表示当前状态；继续作为普通列表行显示。
+- Pinned 标题支持整行点击收起／展开，默认展开，紧邻标题的 MingCute Cute Regular `right_cute_re.svg` 箭头和 VoiceOver 的 Expanded／Collapsed 表示当前状态；箭头展开时旋转向下，随动态字号缩放，继续作为普通列表行显示。
 - By Project 与 By Time 共用当前页面的折叠状态，折叠后置顶会话不回流到项目或时间列表；项目的新建入口仍可用。搜索时自动展开匹配的置顶会话并暂停折叠，清空搜索后恢复此前状态。状态只保留在页面内，未持久化或同步到 Lody。
 - 本轮 Simulator 构建通过；新增 fixture 折叠用例在浅色默认字号与深色 accessibility-large 下均通过，覆盖折叠、模式切换、搜索与键盘，以及清空搜索后的恢复。截图已核对标题、箭头与键盘，无重叠或裁切；真实账号、iOS 26 与真机尚未验证。
 - 两项现有列表／详情菜单回归在浅色通过，详情用例在深色 accessibility-large 下也通过，保留置顶、取消置顶、重命名、复制与归档覆盖，并按固定标识查询原生 Cell 类型的 Pinned 标题。早期重命名失败经录像定位为键盘推动弹窗移动时 XCTest 点击旧位置；测试现等待键盘可交互及按钮／键盘位置稳定，再按当前按钮中心点击并断言弹窗关闭，应用保存逻辑未改。深色详情运行出现 6 次 XCTest 动画通知等待超时后继续，全部断言通过，无跳过；专用模拟器已恢复浅色／large 并关闭，`git diff --check` 通过。
@@ -482,7 +506,7 @@
 
 ## Session 列表图标与搜索字重（2026-10-01）
 
-- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 改用 MingCute Cute Regular `edit_3` 方框铅笔，见后文）。
+- 项目行的新建按钮使用与底部 New chat 相同的 `square.and.pencil` 图标，保留原有项目创建行为与辅助功能标识（2026-10-03 改用用户提供的 MingCute Cute Regular `edit_cute_re.svg` 编辑图标，见后文）。
 - 搜索框文字从 regular 提高一级至 medium，包含占位文字和输入内容。
 - 本轮浅色项目创建与搜索两项 fixture UI 测试通过；深色 accessibility-large 下搜索测试通过。仅涉及列表样式，未修改同步协议。
 
@@ -653,7 +677,7 @@
 
 - 两栏下详情输入的键盘只顶起右侧详情栏：侧栏整体（列表视口与底部浮动搜索栏）忽略键盘、保持原位，软件键盘可能遮住侧栏底部。侧栏搜索获得焦点时与窄窗口仍沿用 SwiftUI 键盘避让。（2026-10-03 起取代此前列表视口经 `keyboardLayoutGuide` 收缩、搜索栏独立避让的做法，该做法会在外接键盘快捷栏出现时把侧栏底部顶起并露出灰底。）iPad Pro 13-inch (M5) 模拟器横屏下 3 项相关 fixture UI 回归通过，断言新建页／聊天页输入时侧栏列表顶部、底部与搜索栏位置不变；真机外接键盘快捷栏、深色与大字号未复测。
 - 侧栏与详情之间增加随系统外观变化的一像素分隔线，延伸到上下安全区。宽屏侧栏折叠按钮统一放在会话详情标题栏左侧，展开与折叠时保持相对于详情区域的位置；辅助功能标签随状态切换 Hide sidebar／Show sidebar，保持同一导航与草稿状态。（2026-10-03 调整按钮位置。）
-- 折叠按钮改用本机 MingCute Cute Regular 的 `layout_leftbar_close`／`layout_leftbar_open` SVG：侧栏展开时显示左箭头用于收起，折叠时显示右箭头用于展开；两种图标均为 24pt，资源保留矢量与 template 渲染，随系统外观变化。（2026-10-03）本次独立 Simulator 构建及一项 iPad Pro 13-inch (M5)／iOS 27 浅色 fixture 折叠回归通过，截图确认两种箭头、标题间距与草稿保留正常。深色 accessibility-medium 截图确认白色模板渲染与标题布局正常；额外深色交互测试反复等待 XCTest 动画完成通知而终止，该轮未完成。真机与 iOS 26 未验证。
+- 折叠按钮统一改用用户提供的 MingCute Cute Regular `layout_4_cute_re.svg`，展开和折叠时使用同一图标；保持 24pt、矢量与 template 渲染，随系统外观变化。辅助功能标签仍随实际动作切换 Show sidebar／Hide sidebar。（2026-10-03 取代此前左右箭头图标。） 本次 Simulator 构建及 iPad Pro 13-inch (M5)／iOS 27 的一项浅色 fixture 折叠回归通过；截图确认两种状态的图标一致，标题间距保持一致，草稿保留。模拟器保持原浅色与字号；本次未复测深色、大字号、真机或 iOS 26。
 - 宽屏会话详情使用系统 editor 工具栏布局，将标题及项目／机器副标题靠左放在折叠按钮右侧；新建会话／tab 的标题同步靠左。紧凑窗口沿用系统自动布局。（2026-10-03）本次构建、iPad Pro 13-inch (M5)／iOS 27 的两项浅色 fixture UI 回归与一项深色 accessibility-medium 折叠回归通过；截图与 AX 层级确认会话标题距按钮右缘恒为 16pt，折叠与恢复后间距一致，新建会话标题同样靠左，无重复标题或重叠。模拟器恢复原浅色与字号；真机、iOS 26、紧凑窗口与自由缩放本次未复测。
 - 当前会话使用左右留白的灰色胶囊背景，关闭表格行的默认焦点效果；保留选中状态的辅助功能语义、稳定行 ID、滑动归档和长按菜单。
 - 补充新建页／聊天页键盘开合时侧栏位置、折叠按钮位置及折叠恢复后的草稿回归；继续运行已有自适应导航、搜索和归档用例。
@@ -681,8 +705,10 @@
 
 ## MingCute 活动与编辑图标（2026-10-03）
 
+- 新建会话的分支行使用用户提供的 `git_branch_cute_re.svg`（`git-branch` 资源），复用 `NewSessionIcon` 的字号缩放与对齐，保留 template 渲染、刷新行为及辅助功能标识。
+
 - 从本机 MingCute Icon System Pro v1.50 的 SVG/cute regular 导入活动图标：命令使用 `terminal_box`，读取使用 `document_2`，编辑使用 `pencil`，搜索使用 `search`，网络获取使用 `earth`，其他工具使用 `tool`；活动摘要与展开步骤共用映射。活动组及 Worked for 展开箭头使用 `right`，保留旋转动画与减少动态效果设置。
-- 消息失败后的 Edit、会话／子会话重命名菜单使用 pencil 资源，覆盖 SwiftUI 与 UIKit。列表底部 New chat 和项目 New Session 改用 MingCute Cute Regular `edit_3_cute_re.svg`（`pencil-square` 资源），显示带方框的铅笔。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
+- 消息失败后的 Edit 使用 MingCute pencil 资源；会话／子会话的 Rename session 菜单恢复原有 SF Symbol `pencil`，覆盖 SwiftUI 与 UIKit，与其他菜单项保持一致。列表底部 New chat 和项目 New Session 改用用户提供的 MingCute Cute Regular `edit_cute_re.svg`（`pencil-square` 资源）。terminal／pencil 与用户提供的 SVG 一致；资源保留矢量和 template 渲染，继承现有前景色。活动图标随字号缩放并设置文字基线对齐，固定点击区域内的编辑／新建图标限制最大尺寸，保留现有交互和 accessibility identifier。
 - 本轮最终 iOS Simulator 构建通过；只有未依赖 AppIntents.framework 的元数据提取跳过提示。未运行单元／UI 测试。iPhone 17／iOS 27 可启动 fixture，但设备交互工具缺失且 CUA 无法打开 Simulator，停在欢迎页，未能检查活动区和菜单的实际图标、深色模式或大字号；真机与真实账号亦未验证。
 
 - 方框铅笔修正本轮 iOS Simulator 构建通过；已核对原始图标样式，未运行 UI 测试或检查应用中的深色／大字号显示。
@@ -697,4 +723,10 @@
 
 - 将应用版本更新为 0.4.1，构建号更新为 8，并通过 XcodeGen 重新生成工程。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.1（8），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
+- 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.4.2 发布（2026-10-03）
+
+- 将应用版本更新为 0.4.2，构建号更新为 9，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（9），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
