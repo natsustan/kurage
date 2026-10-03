@@ -481,6 +481,7 @@ private struct ConversationNavigationTitle: View {
                 Text(title)
                     .font(.headline)
                     .lineLimit(1)
+                    .accessibilityIdentifier("conversation-title")
                 if !hasSubtitle {
                     connectionIndicator
                 }

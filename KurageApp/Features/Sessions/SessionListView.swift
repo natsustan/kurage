@@ -48,8 +48,7 @@ struct SessionListView: View {
                     }
                 },
                 onNewSession: startNewSession,
-                onOpenPending: { navigation.open(.newSession($0)) },
-                onToggleSidebar: toggleSidebar
+                onOpenPending: { navigation.open(.newSession($0)) }
             )
             .overlay(alignment: .trailing) {
                 if horizontalSizeClass != .compact {
@@ -75,11 +74,13 @@ struct SessionListView: View {
                     navigation = SessionNavigation()
                 })
                 .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarRole(horizontalSizeClass == .compact ? .automatic : .editor)
                 .toolbar(removing: horizontalSizeClass == .compact ? nil : .sidebarToggle)
                 .toolbar {
-                    if horizontalSizeClass != .compact && columnVisibility == .detailOnly {
+                    if horizontalSizeClass != .compact {
                         ToolbarItem(placement: .topBarLeading) {
-                            Button("Show sidebar", systemImage: "sidebar.left", action: toggleSidebar)
+                            Button(columnVisibility == .detailOnly ? "Show sidebar" : "Hide sidebar",
+                                   systemImage: "sidebar.left", action: toggleSidebar)
                                 .accessibilityIdentifier("toggle-session-sidebar")
                         }
                     }
@@ -143,7 +144,6 @@ private struct SessionSidebarView: View {
     let onOpen: (SessionSummary.ID) -> Void
     let onNewSession: (String) -> Void
     let onOpenPending: (NewSessionRoute) -> Void
-    let onToggleSidebar: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("sessionListMode") private var listMode: SessionListMode = .byProject
     @State private var actionRequest: SessionActionRequest?
@@ -272,12 +272,6 @@ private struct SessionSidebarView: View {
                     AccountAvatar(account: model.account)
                 }
                 .accessibilityIdentifier("account-menu")
-            }
-            if !isCompactWindow {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Hide sidebar", systemImage: "sidebar.left", action: onToggleSidebar)
-                        .accessibilityIdentifier("toggle-session-sidebar")
-                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
