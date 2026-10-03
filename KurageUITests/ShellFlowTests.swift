@@ -1999,6 +1999,9 @@ extension ShellFlowTests {
         tap(app.buttons["sign-in-button"])
         let session = app.descendants(matching: .any)["session-session-tests"].firstMatch
         XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(app.buttons["more-options"])
+        XCTAssertTrue(app.buttons["By Project"].waitForExistence(timeout: 3))
+        tap(app.buttons["By Project"])
         session.press(forDuration: 1)
         XCTAssertTrue(app.buttons["Pin"].waitForExistence(timeout: 3))
         tap(app.buttons["Pin"])
@@ -2195,10 +2198,11 @@ extension ShellFlowTests {
             predicate: settled, object: save
         )], timeout: 10), .completed)
         // XCTest can retain the button's hit point from before the keyboard moved
-        // the alert. Use its current frame to target the visible button.
+        // the alert. Convert its current screen frame to an app-relative offset.
         let frame = save.frame
+        let appFrame = app.frame
         app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+            .withOffset(CGVector(dx: frame.midX - appFrame.minX, dy: frame.midY - appFrame.minY)).tap()
         XCTAssertTrue(app.alerts.firstMatch.waitForNonExistence(timeout: 5))
     }
 }
