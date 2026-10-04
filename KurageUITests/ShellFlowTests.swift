@@ -95,6 +95,35 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testMentionSuggestionsStayOnScreenWithAMultilineDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("First line\nSecond line\nThird line\nFourth line\nFifth line\n$sample")
+        let menu = app.scrollViews["mention-suggestions"]
+        let first = app.buttons["mention-skill-sample-skill-1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        XCTAssertTrue(first.isHittable)
+        attachScreen(app, name: "Mention candidates above multiline draft")
+        let last = app.buttons["mention-skill-sample-skill-12"]
+        for _ in 0..<10 {
+            if last.isHittable && last.frame.maxY <= menu.frame.maxY { break }
+            menu.swipeUp()
+        }
+        XCTAssertTrue(last.isHittable)
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        tap(last)
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5))
+        XCTAssertTrue((field.value as? String)?.contains("Fifth line\n$sample-skill-12") == true)
+        attachScreen(app, name: "Mention inserted in multiline draft")
+    }
+
+    @MainActor
     private func verifyLongMentionMenu(newSession: Bool) {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -152,6 +181,7 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(field.isHittable, file: file, line: line)
         XCTAssertTrue(send.isHittable, file: file, line: line)
         XCTAssertGreaterThan(menu.frame.height, 0, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(menu.frame.minY, app.frame.minY, file: file, line: line)
         let row = menu.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
                                                      "mention-skill-", "mention-session-")).firstMatch
         XCTAssertGreaterThan(row.frame.height, 0, file: file, line: line)

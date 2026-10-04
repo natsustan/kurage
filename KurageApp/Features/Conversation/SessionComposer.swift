@@ -455,11 +455,9 @@ struct SessionComposer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
-        // Large accessibility text also grows the multiline composer. Reserve
-        // one candidate row so it stays reachable above the keyboard; the rest
-        // remain scrollable. Loading and results use the same viewport.
+        // The overlay supplies the available viewport height. Candidate rows
+        // keep their text size and remain scrollable when space is limited.
         .frame(maxWidth: .infinity)
-        .frame(height: mentionRowHeight * (dynamicTypeSize.isAccessibilitySize ? 1 : 3))
         .clipped()
         .background(.background, in: .rect(cornerRadius: 20))
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
@@ -961,13 +959,14 @@ private struct MentionSuggestionsAnchor<Content: View>: UIViewRepresentable {
                 close()
                 return
             }
+            let content = configuration.content()
             if window == nil {
                 let window = SuggestionsWindow(windowScene: scene)
                 window.frame = source.frame
                 window.windowLevel = .alert + 1
                 window.backgroundColor = .clear
                 let host = UIHostingController(rootView: MentionSuggestionsOverlay(
-                    panelFrame: .zero, content: configuration.content()
+                    panelFrame: .zero, content: content
                 ))
                 host.safeAreaRegions = []
                 host.view.backgroundColor = .clear
@@ -988,9 +987,8 @@ private struct MentionSuggestionsAnchor<Content: View>: UIViewRepresentable {
             position(from: anchor)
             if let host, let window {
                 host.rootView = MentionSuggestionsOverlay(panelFrame: window.panelFrame,
-                                                          content: configuration.content())
+                                                          content: content)
             }
-            window?.isHidden = false
         }
 
         func position(from anchor: UIView) {
@@ -1009,13 +1007,18 @@ private struct MentionSuggestionsAnchor<Content: View>: UIViewRepresentable {
             if window.frame != source.frame { window.frame = source.frame }
             let style = source.traitCollection.userInterfaceStyle
             if window.overrideUserInterfaceStyle != style { window.overrideUserInterfaceStyle = style }
-            let panel = CGRect(x: rect.minX, y: rect.minY - configuration.height - 8,
-                               width: rect.width, height: configuration.height)
+            let safeArea = source.bounds.inset(by: source.safeAreaInsets)
+            let bottom = max(safeArea.minY, min(rect.minY - 8, safeArea.maxY))
+            let height = min(configuration.height, bottom - safeArea.minY)
+            let panel = CGRect(x: rect.minX, y: bottom - height,
+                               width: rect.width, height: height)
             let panelFrame = source.convert(panel, to: window)
+            window.isHidden = panelFrame.isEmpty
             guard panelFrame != window.panelFrame else { return }
             window.panelFrame = panelFrame
+            // Moving the panel must not rerun query parsing or candidate search.
             host.rootView = MentionSuggestionsOverlay(panelFrame: window.panelFrame,
-                                                      content: configuration.content())
+                                                      content: host.rootView.content)
         }
 
         func close() {
