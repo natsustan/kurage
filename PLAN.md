@@ -749,3 +749,11 @@
 - 保持应用版本 0.4.2，将构建号更新为 10，并通过 XcodeGen 重新生成工程；上一轮构建号 9 已上传，本轮使用新构建号。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（10），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## TestFlight 0.4.2 构建 11（2026-10-04）
+
+- 保持应用版本 0.4.2，将构建号更新为 11，并通过 XcodeGen 重新生成工程。Release 归档成功，包内版本和 `[1, 2]` 设备支持已确认。
+- App Store Connect 上传失败：Xcode 报告团队 `V6GTS74AND` 的账号访问不可用。随后尝试本地 App Store 导出，也因缺少带私钥的 iOS Distribution 证书失败；尚未生成 IPA 或上传构建 11。需恢复 Xcode Apple 账号／分发签名后继续。归档位于 `build/testflight/0.4.2-11/Kurage.xcarchive`。
+- 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+- 用户恢复登录后再次重试上传，并在 Xcode Apple Accounts 中确认团队可见、刷新手动配置文件；两次重试仍返回 `Failed to Use Accounts`，App Store Connect 团队访问尚未恢复，构建 11 仍未上传。
