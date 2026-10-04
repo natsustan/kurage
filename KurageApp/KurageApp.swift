@@ -3,19 +3,23 @@ import SwiftUI
 @main
 struct KurageApp: App {
     @State private var model: AppModel
+    @UIApplicationDelegateAdaptor(KurageAppDelegate.self) private var appDelegate
 
     init() {
+        let usesFixtures = ProcessInfo.processInfo.arguments.contains("--fixture")
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
-            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-subtasks")
-                ? SessionRecord.samplesWithSubtasks
-                : ProcessInfo.processInfo.arguments.contains("--fixture-questions")
-                    ? [SessionRecord.questionSample] + SessionRecord.samples
-                    : ProcessInfo.processInfo.arguments.contains("--fixture-running-tab")
-                        ? SessionRecord.samplesWithRunningTab
-                        : ProcessInfo.processInfo.arguments.contains("--fixture-long-session-list")
-                            ? SessionRecord.samplesWithLongSessionList
-                            : ProcessInfo.processInfo.arguments.contains("--fixture-unassigned-session")
-                                ? SessionRecord.samplesWithUnassignedSession : SessionRecord.samples,
+            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-subtask-statuses")
+                ? SessionRecord.samplesWithSubtaskStatuses
+                : ProcessInfo.processInfo.arguments.contains("--fixture-subtasks")
+                    ? SessionRecord.samplesWithSubtasks
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-questions")
+                        ? [SessionRecord.questionSample] + SessionRecord.samples
+                        : ProcessInfo.processInfo.arguments.contains("--fixture-running-tab")
+                            ? SessionRecord.samplesWithRunningTab
+                            : ProcessInfo.processInfo.arguments.contains("--fixture-long-session-list")
+                                ? SessionRecord.samplesWithLongSessionList
+                                : ProcessInfo.processInfo.arguments.contains("--fixture-unassigned-session")
+                                    ? SessionRecord.samplesWithUnassignedSession : SessionRecord.samples,
                 failingConversationIDsOnce:
                 ProcessInfo.processInfo.arguments.contains("--fixture-search-failure") ? ["session-long"] : [],
                 conversationDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-conversation") ? .seconds(3) : nil,
@@ -41,9 +45,33 @@ struct KurageApp: App {
                 filePreviewDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-file-preview")
                     ? .seconds(3) : .milliseconds(200),
                 filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"),
-                projectGitFailureOnce: ProcessInfo.processInfo.arguments.contains("--fixture-project-git-failure") ? .accessDenied : nil)
+                projectGitFailureOnce: ProcessInfo.processInfo.arguments.contains("--fixture-project-git-failure") ? .accessDenied : nil,
+                workspaceSummaries: ProcessInfo.processInfo.arguments.contains("--fixture-empty-workspaces") ? []
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-many-workspaces")
+                        ? [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")] + (1...12).map {
+                            WorkspaceSummary(id: "ws-extra-\($0)", name: "Studio \($0) · Mobile Application Development",
+                                             slug: "mobile-studio-\($0)")
+                        }
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-settings")
+                        ? [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"),
+                           WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
+                        : [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
+                workspaceRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure") ? .seconds(1) : nil,
+                failWorkspaceRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure"),
+                accountID: ProcessInfo.processInfo.arguments.contains("--fixture-notifications") ? "fixture-user" : nil)
             : HTTPLodyClient()
-        _model = State(initialValue: AppModel(client: client))
+        let notificationService: any PushNotificationService = usesFixtures
+            ? FixturePushNotificationService(isConfigured: ProcessInfo.processInfo.arguments.contains("--fixture-notifications"))
+            : OneSignalNotificationService.shared
+        let notifications = NotificationModel(service: notificationService, defaults: usesFixtures ? nil : .standard)
+        if usesFixtures, ProcessInfo.processInfo.arguments.contains("--fixture-notification-click") {
+            let sessionID = ProcessInfo.processInfo.arguments.contains("--fixture-running-tab") ? "fixture-running-tab" : "session-long"
+            if let route = NotificationRoute("/demo/sessions/\(sessionID)") {
+                let recipient = ProcessInfo.processInfo.arguments.contains("--fixture-notification-wrong-account") ? "other-user" : "fixture-user"
+                notifications.receive(NotificationClick(id: "fixture-push", route: route, userID: recipient))
+            }
+        }
+        _model = State(initialValue: AppModel(client: client, notifications: notifications))
     }
 
     var body: some Scene {

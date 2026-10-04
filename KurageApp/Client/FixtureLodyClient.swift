@@ -15,6 +15,7 @@ final class FixtureLodyClient: LodyClient {
     let supportsSessionCreation = true
 
     private var records: [SessionRecord]
+    private let fixtureAccountID: String?
     private var archivedSessionIDs: Set<SessionSummary.ID>
     private var archivedActivity: [SessionSummary.ID: Date] = [
         "archived-newer": Date(timeIntervalSince1970: 1_700_000_000),
@@ -37,6 +38,10 @@ final class FixtureLodyClient: LodyClient {
     private var rejectSendOnce: Bool
     private var rejectMissingHistoryOnce: Bool
     private let authorizationDelay: Duration?
+    private let workspaceSummaries: [WorkspaceSummary]
+    private let workspaceRefreshDelay: Duration?
+    private var failWorkspaceRefreshOnce: Bool
+    private var workspaceRequestCount = 0
     private var pendingSends: [String: (message: PendingTextSend, runConfig: RunConfigChoice?)] = [:]
     private let streamsConversationUpdates: Bool
     private struct ConversationObserver {
@@ -109,8 +114,16 @@ final class FixtureLodyClient: LodyClient {
         filePreviewUnavailableReason: String? = nil,
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
-        projectGitFailureOnce: ProjectGitFailure? = nil
+        projectGitFailureOnce: ProjectGitFailure? = nil,
+        workspaceSummaries: [WorkspaceSummary] = [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
+        workspaceRefreshDelay: Duration? = nil,
+        failWorkspaceRefreshOnce: Bool = false,
+        accountID: String? = nil
     ) {
+        self.fixtureAccountID = accountID
+        self.workspaceSummaries = workspaceSummaries
+        self.workspaceRefreshDelay = workspaceRefreshDelay
+        self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
         self.projectGitFailureOnce = projectGitFailureOnce
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
@@ -139,7 +152,7 @@ final class FixtureLodyClient: LodyClient {
             self.archivedSessionIDs = Set(records.map(\.summary.id)).intersection(seeded)
         }
         if startsSignedIn {
-            account = Account(email: "demo@kurage.app")
+            account = Account(email: "demo@kurage.app", id: fixtureAccountID)
         }
     }
 
@@ -157,7 +170,7 @@ final class FixtureLodyClient: LodyClient {
         guard authorization.deviceCode == "device-1" else { throw LodyClientError.signInFailed }
         if let authorizationDelay { try await Task.sleep(for: authorizationDelay) }
         try Task.checkCancellation()
-        account = Account(email: "demo@kurage.app")
+        account = Account(email: "demo@kurage.app", id: fixtureAccountID)
     }
 
     func restoreSession() async -> Account? {
@@ -177,11 +190,35 @@ final class FixtureLodyClient: LodyClient {
 
     func workspaces() async throws -> [WorkspaceSummary] {
         try requireAccount()
-        return [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")]
+        workspaceRequestCount += 1
+        if workspaceRequestCount > 1 {
+            if let workspaceRefreshDelay { try await Task.sleep(for: workspaceRefreshDelay) }
+            try Task.checkCancellation()
+            try requireAccount()
+            if failWorkspaceRefreshOnce {
+                failWorkspaceRefreshOnce = false
+                throw LodyClientError.unreachable
+            }
+        }
+        return workspaceSummaries
+    }
+
+    func notificationDestination(sessionID: String, workspaceID: String) async throws -> NotificationSessionDestination? {
+        try requireAccount()
+        guard workspaceID == "ws-demo", !archivedSessionIDs.contains(sessionID),
+              let session = records.first(where: { $0.summary.id == sessionID })?.summary else { return nil }
+        let rootID = session.parentSessionID ?? session.id
+        guard !archivedSessionIDs.contains(rootID),
+              records.contains(where: { $0.summary.id == rootID && $0.summary.parentSessionID == nil }) else { return nil }
+        return NotificationSessionDestination(rootSessionID: rootID, sessionID: sessionID,
+                                             isTabClosed: session.isTabClosed == true)
     }
 
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
         try requireAccount()
+        // Additional picker fixtures are isolated, empty workspaces; demo operations never cross into them.
+        guard workspaceSummaries.contains(where: { $0.id == workspaceID }) else { throw LodyClientError.notConnected }
+        if workspaceID != "ws-demo" { return [] }
         try requireWorkspace(workspaceID)
         return records
             .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
@@ -1080,8 +1117,35 @@ extension SessionRecord {
                     .init(id: "reuse-complete", title: "Complete subagent reuse_review", status: .completed),
                 ]),
                 ConversationSubtask(id: "review-quality", title: "Review correctness", agentName: "Codex agent",
-                                    status: .running, summary: "Checking state isolation.", lastToolName: "Read"),
+                                    status: .completed, summary: "Checking state isolation.", lastToolName: "Read",
+                                    modelID: "Fixture model", totalTokens: 2400, toolUses: 1,
+                                    run: .init(turns: [
+                    ConversationTurn(id: "quality-output", author: .agent,
+                                     text: "Checking state isolation.", parts: [
+                        .text("Checking state isolation."),
+                        .text("**Review complete.**\n\n- Workspace changes discard stale updates.\n- Cancellation releases the subscription.\n- Parent drafts stay available after closing the task."),
+                    ], work: ConversationWork(durationMs: 54_000, parts: [
+                        .text("Checked workspace scoped cache."),
+                        .activity(ConversationActivity(id: "quality-read", commands: 0, reads: 1,
+                            edits: 0, searches: 0, fetches: 0, tools: 0,
+                            steps: [.init(id: "read-model", kind: .read, title: "Read AppModel.swift")])),
+                    ])),
+                ], streamsOutput: true, outputIncomplete: false)),
             ]
+        }
+        return records
+    }
+
+    static var samplesWithSubtaskStatuses: [SessionRecord] {
+        var records = samplesWithSubtasks
+        if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {
+            records[index].subtasks.append(contentsOf: [
+                ConversationSubtask(id: "review-efficiency", title: "Review efficiency", agentName: "Codex agent",
+                                    status: .running, lastToolName: "Read",
+                                    progressSummary: "Checking command latency."),
+                ConversationSubtask(id: "review-clarity", title: "Review clarity", agentName: "Codex agent",
+                                    status: .failed, error: "The review was interrupted."),
+            ])
         }
         return records
     }

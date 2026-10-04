@@ -45,6 +45,7 @@ extension NewSessionOptions {
 struct NewSessionView: View {
     let route: NewSessionRoute
     let model: AppModel
+    let isReading: Bool
     var draftStore: ConversationDraftStore? = nil
     var onArchived: (() -> Void)? = nil
     var onStaged: ((SessionSummary.ID?) -> Void)? = nil
@@ -68,11 +69,12 @@ struct NewSessionView: View {
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
+    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil, isReading: Bool = true,
          draftStore: ConversationDraftStore? = nil, onArchived: (() -> Void)? = nil,
          onStaged: ((SessionSummary.ID?) -> Void)? = nil) {
         self.route = route
         self.model = model
+        self.isReading = isReading
         self.draftStore = draftStore
         self.onArchived = onArchived
         self.onStaged = onStaged
@@ -113,6 +115,7 @@ struct NewSessionView: View {
                 // Its local first turn and the synchronized turn share an ID.
                 ConversationTabsContent(rootID: startedSessionID, title: model.sessionSummary(startedSessionID)?.title ?? "Session",
                     model: model, workspaceGeneration: route.workspaceGeneration, isReadOnly: false,
+                    isReading: isReading,
                     draftStore: draftStore, onArchived: onArchived,
                     onEditSessionStart: restoreDraft)
             } else {

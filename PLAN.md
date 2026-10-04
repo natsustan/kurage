@@ -1,5 +1,52 @@
 # Kurage 会话功能
 
+## 子代理列表状态与配色（2026-10-04）
+
+- agents 浮层每行副标题始终显示任务状态：完成为 Done，其余为 Running、Pending、Failed、Cancelled 或 Status unknown；Running 保留已提供的进展或最新工具，辅助字号下将进展放到下一行，结束后不再用旧工具名／执行者替代状态。辅助功能值同步使用行状态，失败文字为红色。
+- 圆点标识子代理，按稳定任务 ID 在当前会话视图内一次分配蓝、绿、橙、紫等八色；状态分组变化、正文增长、任务移除和浮层关闭重开不改变其他子代理的已有颜色。状态含义由文字表达，详情中的状态颜色仍独立保留。
+- 新增专用四任务 fixture 与列表 UI 回归，覆盖两个 Done、Running 的进展、Failed、打开正确详情及重开列表；原来的两任务 fixture 保持原数据。此项只涉及列表 UI、fixtures 和 UI 测试，未改同步投影或协议。
+- 本轮 iPhone 17／iOS 27 Simulator 构建及三个浅色定向 UI 用例通过，覆盖列表状态、完整正文展开、旧摘要详情和返回父草稿。浅色初次／重开截图确认 running 的橙色、failed 的紫色、两个 completed 的蓝／绿色保持一致，Done／Running／Failed 清楚可见；深色 accessibility-medium 的列表用例也通过，但截图发现进展截断、底部 quality 行需滚动后才能看到，随后改为辅助字号上下排列，并加强截图滚动到最后一行的断言。
+- 最后换行修正后的浅／深色 UI 复测未执行：共享工程新增的 OneSignal 依赖拉取遇到 early EOF，后续解析在等待 GUI Xcode 持有的 SwiftPM 缓存锁；只结束本轮专属测试进程，未动 GUI Xcode 或共享锁。当前 `ConversationSubtasksView.swift` 以之前成功构建的 Kurage 模块完成独立 Swift 6 类型检查，这不是最终完整工程构建或截图验证。专属模拟器已恢复浅色与默认 large 字号并关闭，`git diff --check` 通过。此项没有运行 JavaScript 或模型测试；iOS 26、iPad、真机与真实账号状态流转尚未复测。
+
+## 子代理完整正文（2026-10-04）
+
+- 对齐 Lody 官方 main `3963a1d4` 的 `shared/src/ai.ts`、`acp/history-apply.ts` 与 `components/src/components/ai-gui/subagent-task-panel.tsx`／`view.tsx`：从父会话 history 中的 `subagent_task.run.items` 读取规范化运行正文，不把 ACP root／run ID 当作可单独打开的 Lody Session。
+- 新版 run 以 ACP root ID 与 task ID 作为身份，名称相同的不同 run 不再合并；状态以 snapshot 为准，明确区分 pending、running、completed、failed、cancelled 与 unknown，不用父 turn 结束推断新版 run 已完成。旧版 Codex 活动仍沿用按 actor 归并的兼容路径。
+- 子代理详情默认打开半屏只读面板，可拖到大尺寸；关闭按钮旁左对齐真实任务名及父会话的项目／机器信息，状态与 model／token／工具次数收到信息浮层。复用主对话的 Markdown、工具活动标题与 “Worked for …” 折叠组件，但从正文开头打开，短内容紧贴标题栏；已在底部时跟随增长，上滑阅读后保留位置。过滤与 run 名称完全匹配的 “Delegated task for …” 自动占位说明，保留实际任务提示；缺少 snapshot 时间时使用任务记录时间或 progress.durationMs 显示已记录的用时，不编造时长。展示结果、最新进展和明确类型的当前计划，保持 thought 与工具原始 input／output 不投影。关闭后保留父会话草稿，打开时收起父输入键盘，面板内没有发送或停止父会话的操作。
+- 新版正文增长、删除和结束状态继续经现有父会话 snapshot／patch 推送到已打开面板，复用原有工作区、账号和后台取消作用域；下拉刷新使用父会话刷新入口。无正文、provider 不提供可展示步骤、输出不完整和状态未知分别提示；缺少 run 的历史记录保留原摘要／步骤，不能补回服务端未保存的正文。
+- 首次实现的 frozen lockfile 安装、320 项 JavaScript 测试与 bundle 重建、28 项原生定向测试通过。共享工作区 UI 重建曾被并行 Settings 修改中未收录的 `AccountAvatar.swift` 阻断，随后用隔离副本完成浅色默认字号两项 subtask UI 与深色 accessibility-medium 一项验证；这些结果未覆盖后续截图反馈中的标题与顶部留白问题。
+- 截图反馈后的修正：本轮 frozen lockfile 安装、322 项 JavaScript 测试及 bundle 重建通过；共享工作区构建与 31 项原生定向测试通过，新增短 run 顶部对齐及增长跟随、多行 run 保持开头、单条长回答不被估算高度拉到底部的回归。UI 实测发现标题容器覆盖子元素的辅助功能标识，已改为独立包含子元素；原生 Menu 将只读信息显示为低对比的禁用文字，已换为原生 popover。最终浮层版本的浅色默认字号与深色 accessibility-medium 各一项新版正文 UI 用例通过，8 张截图确认半屏、标题／副标题、顶部内容位置、绿色状态和用量可读、工作／工具展开及关闭保留父草稿正常；旧摘要路径的关闭回归也已在本轮修正标题容器后通过。模拟器已恢复浅色与默认 large 字号并关闭，`git diff --check` 通过。iOS 26、iPad、真机以及真实账号的新版机器输出、跨端持续更新、断网与后台恢复尚未实测。
+
+## iPad 侧栏图标替换（2026-10-04）
+
+- iPad 侧栏开关的 `sidebar` 模板资源改为提供的 `list.svg` 三横线图标；保留矢量表示、24×24 pt 显示尺寸与原有辅助功能标识。
+- 本轮 generic iOS Simulator 构建与 `git diff --check` 通过。侧栏 fixture UI 回归在重新编译时被工作区的 `SessionListView.swift` 中 `AccountAvatar` 缺失阻止，测试未执行；已构建应用在独立 iPad 模拟器启动到欢迎页，尚未验证侧栏图标的实际显示与开关交互。真机与 iOS 26 本轮未验证。
+
+## Settings Theme 与图标（2026-10-04）
+
+- Settings 新增 Theme 卡片与原生选择菜单，提供 System、Light、Dark，默认 System。`AppTheme` 定义三个持久化值，`@AppStorage("appTheme")` 保存本机选择；稳定根视图中的小型 UIKit 视图仅为它所在的窗口设置 `overrideUserInterfaceStyle`，System 明确恢复 `.unspecified`，Settings、Workspace picker 与 About 继承外观。切换直接更新颜色，不改变视图 ID，重新登录及重启保留偏好；Theme 行在大字号或空间不足时改为上下排列，避免选项名称拆字。
+- Theme、About 与 Workspace 分别导入本机 MingCute Icon System Pro v1.50 / SVG / cute regular 的 `palette_cute_re.svg`、`information_cute_re.svg` 与 `briefcase_cute_re.svg`。资源保留矢量和 template 渲染，24 pt 起随字号缩放并限制最大尺寸，继承行前景色，装饰图标不参与辅助功能朗读。
+- 新增主题选择／弹层／重启恢复 UI 回归，截图背景亮度断言覆盖显式浅／深色及恢复 System，另以独立 iPad 用例覆盖 Dark → Light → System 切换后草稿保留；工程已重新生成。首轮视觉检查发现 `preferredColorScheme(nil)` 在系统深色下从 Light 返回 System 后仍保留浅色，以及最大字号 Theme 行拆字；已改为上述窗口外观应用和自适应布局。
+- 本轮主题版本的 iOS 27 Simulator 测试构建，以及独立 Swift 6 严格并发 UI 测试 bundle 构建通过。修复后 iPhone 17 普通字号主题回归 1 项、系统深色最大辅助字号主题回归 1 项、iPad Pro 13-inch (M5) 独立主题／草稿回归 1 项均通过。真实背景亮度断言验证显式浅／深色、重启后的 Light，以及恢复 System；截图核对 Settings、Workspace picker、About 和会话列表的外观及三个图标。
+- 原 iPad 已读／草稿组合用例的两处已读时序断言未通过：自动化从会话点击到 Settings 打开耗时超过 fixture 的 3 秒加载延迟，检查前会话已被读到；其后的主题和草稿断言没有失败。保留原时序断言，独立主题／草稿用例复验通过。新模拟器首轮 runner 在加载辅助功能 bundle 时 stall 并退出，使用已初始化设备后恢复运行。
+- 验证期间共享工作区并行加入通知依赖；剩余 UI 回归通过独立 `.xctestrun` 使用本轮已构建的主题版本与更新后的 UI 测试执行，跳过无关的包解析。并行通知改动后的完整工程、iOS 26、真机和 VoiceOver 实际操作未纳入本轮验证；未修改同步协议或运行桥接／模型测试。
+- 已检查最大字号标题与选项完整显示、System 返回真实深色及 iPad 原生横屏画面；横屏无黑边或裁切，之前 XCTest attachment 的方向黑区属于采集画布问题。本轮创建的三台模拟器已关闭并删除，原有设备未修改；`git diff --check` 通过。
+
+## Settings 中性色调整（2026-10-04）
+
+- 根据参考截图调整浅色配色：页面 #FCFCFC、卡片 #F2F2F2、账号分隔线 #E0E0E0，消除系统灰在卡片上的蓝紫色偏并减淡分隔线。Settings、Workspace picker 与 About 共用页面／卡片颜色；深色仍按系统语义背景与分隔线解析，文字与原生控件颜色保持系统行为。
+- 本轮 iOS 27 Simulator 测试构建通过；iPhone 17 两项浅色 Settings／Workspace／Retry／About 回归、一项深色工作区切换回归通过。浅色截图像素核对为背景 RGB(252,252,252)、卡片 RGB(242,242,242)、账号分隔线 RGB(224,224,224)，已去除原卡片 RGB(242,242,246) 的蓝紫色偏；深色截图仍是系统 elevated 背景与分组色。`git diff --check` 通过，专用模拟器已关闭并删除。此次为配色修改，未新增测试或运行模型／桥接测试；iPad、iOS 26 与真机配色本轮未验证。
+
+## Settings 与 Workspace 页面（2026-10-04）
+
+- 头像改为打开大尺寸原生 Settings sheet；圆角分组承接账号摘要、Workspace、About 与退出确认。Workspace 使用带首字母头像、名称、地址和选中勾号的短选择器，较多条目可以滚动与展开；单工作区也保留入口，无数据和刷新失败可重试。
+- Settings 宿主位于 `workspaceGeneration` 的会话重建边界之外。切换先提交工作区，只关闭选择器，Settings 更新名称；新工作区的会话刷新继续由模型管理。选择当前项只关闭选择器，同工作区开关 Settings 保留草稿与导航；被遮挡会话暂停已读回执，继续沿用原有订阅与后台清理规则。
+- 模型独立表达 workspace 加载／错误，以请求代际、认证代际和取消检查丢弃旧结果；刷新失败保留已有列表。Fixture 增加隔离的多工作区、空列表、长列表及一次刷新失败场景，其他工作区不会返回 Demo 会话。新增相关模型与 UI 回归，并更新原有退出用例；已重新生成 Xcode 工程。
+- 本轮 iOS 27 Simulator 测试构建与 38 项 WorkspaceSelection／SignIn／FixtureLodyClient 模型测试通过。iPhone 17 浅色定向 UI 回归最终 7 项通过（iPad 专用用例按设计跳过），深色最大辅助字号的长列表与切换 2 项通过；iPad Pro 13-inch (M5) 常规 Settings 回归 6 项、深色最大辅助字号 2 项、横屏已读／草稿复核 1 项全部通过。
+- 首轮退出与重试 UI 断言失败，原因是同名按钮匹配到了底层退出行、原生 popover 没有独立 Cancel 行，以及短暂加载状态被轮询错过；测试改为精确定位确认、适配点外取消和核对重试最终状态后，3 项复跑通过，应用业务逻辑未因此修改。已检查手机与 iPad 的 Settings、短选择器、长名称、错误和确认截图；XCTest 横屏 attachment 有黑区与裁切，原生 simctl 对照确认实际 Settings 视口完整。`git diff --check` 通过，本轮专用模拟器已关闭并删除。
+- iOS 26、真机、真实账号多工作区、网络恢复、持续输出与后台返回、iPad 窄窗口和 VoiceOver 实际操作尚未验证；fixture 结果不替代真实服务验证。
+- 详细方案见 [SETTINGS_PLAN.md](SETTINGS_PLAN.md)。本机 Theme 已加入，列表／触觉偏好与机器、Agent、MCP、Skills 仍按后续阶段推进；归档继续属于会话列表，运行配置继续属于会话输入。多账号、用量、更新、Auto-review、时区与通知需分别核实能力和语义。本轮没有修改同步协议。
+
 ## 提及浮层审查修复与 iPhone 方向（2026-10-04）
 
 - iPhone 仅支持竖屏，iPad 保留四个方向；修改 `project.yml` 并重新生成 Xcode 工程。此项取代此前 iPhone 支持横屏的配置，窗口尺寸变化仍由现有自适应导航处理。
@@ -321,9 +368,32 @@
 - 修复：成功释放共享正文副本后调用对应 transport 的 `forgetDoc`，清除该文档的本地会话和游标，再次打开重新恢复历史。正在观察或等待建立观察的会话仍保留正文和游标；不修改远端文档、元数据或依赖版本。
 - 验证：使用真实云端会话和当前固定版本依赖复现「正常 4 条 → 释放正文后 0 条」，加入游标清理后重新观察恢复 4 条。另在 Node 中加载修改前后的完整 bridge 源码，连续两次读取同一真实会话：修改前为 4/0，修改后为 4/4（网络使用原生 fetch，未经过 WebKit）。新增重复读取与活跃观察保护回归，237 项 JS 测试通过；已按 frozen lockfile 安装依赖并重建应用 bundle。Swift/JS 消息契约未变，本轮未运行 iOS 测试；修复尚未安装到真机，WebKit、后台恢复和弱网场景仍待设备验证。
 
-## 通知规划（尚未实现）
+## iOS 普通通知（2026-10-04 客户端接入；Cloud 目标与真实投递待确认）
 
-- 已核实 Lody 机器端通过 Cloud 发送完成／权限事件。Innei/lody-ios 的实现和文档提供第三方接入路径：独立 OneSignal App，由 SDK 注册设备并关联 Lody 用户，Cloud 的 `ONE_SIGNAL_APPS` 清单增加发送目标，无需新建 token 接口。该云端配置机制尚未在 Kurage 所用部署核实，也未验证向 Kurage Bundle ID 的投递。优先确认配置并验证真实事件链路，再接入授权、账号绑定、点击路由和前台展示；保持项目仅开发客户端的范围。本次仅更新规划文档。
+- 官方 Lody main `4ccb2fe7` 的 `apps/cli/src/lib/notifications/notification-service.ts`、`message-handler.ts` 和 `session/session-execution-service.ts` 确认机器经 Cloud 提交完成／工具权限／问答事件；完成使用 turn ID 作为 `occurrenceId`，手动取消或没有输出时跳过完成通知。普通工具权限优先发送 Live Activity 提醒，成功且活动未结束时跳过普通推送；问答直接发普通推送。公开仓库不包含托管后端、移动端工程和部署配置，MCP 工具也没有读取通知部署配置的能力。
+- [Innei/lody-ios `cebe0b97` 的接入文档](https://github.com/Innei/lody-ios/blob/cebe0b9794a9ac1e99cf500aec9bc4758be5c79b/apps/mobile/PUSH_NOTIFICATIONS.md#enable-native-ios-on-the-existing-backend) 描述该项目的第三方接入方式：独立 OneSignal App，由 SDK 注册设备并绑定 Better Auth 用户 ID，Cloud 的完整 `ONE_SIGNAL_APPS` JSON 数组追加发送目标。文档称该后端路径使用现有接口；这是第三方实现／文档证据，未获得官方公开来源确认，尚未读取 Kurage 所用部署的实际配置，也未验证向 `com.spike.kurage` 投递。
+- 首阶段只接普通通知。拟追加项如下；`appId` 由 Kurage 自己的 OneSignal App 提供，`apiKeyEnv` 指向由服务方保存在 Cloud 环境中的 REST API key。维护完整清单并保留既有目标；APNs 配置属于该 OneSignal App 的 iOS 平台，客户端只携带公开 App ID。
+
+```json
+{
+  "name": "kurage-ios",
+  "appId": "199f71a9-c5a2-42c9-ac88-4b8b7593b06f",
+  "apiKeyEnv": "ONE_SIGNAL_KURAGE_IOS_API_KEY",
+  "push": true,
+  "liveActivities": false
+}
+```
+
+- 已接入固定版本 OneSignal iOS SDK 5.5.1、Notification Service Extension、Push／App Group entitlements 和显式 Info.plist。公开 App ID 通过 `KURAGE_ONESIGNAL_APP_ID` build setting 注入；2026-10-04 已设置 Kurage 的公开 App ID，并在 OneSignal 控制台确认 `com.spike.kurage` 的 Apple iOS 平台为 Active、使用 `.p8` APNs 认证。当前 Cloud 可用性开关关闭，或没有有效 App ID 时，构建不初始化 SDK并隐藏通知入口。App 与扩展版本保持一致；fixture 和原生单元测试不注册真实设备。配置步骤见 [NOTIFICATIONS.md](NOTIFICATIONS.md)。
+- Settings → Notifications 由用户主动开启时请求授权，安装内偏好持久化，回前台刷新系统权限与注册状态。账号恢复／登录后以 `Account.id` 绑定；退出 opt-out／logout，清通知、badge、待处理点击与可见会话。冷启动点击等待账号，recipient 不匹配或重复点击丢弃；旧 SDK payload 没有 recipient 时使用到达时的 external ID。
+- 点击通过 `AppModel` 核对当前工作区 catalog，再用 `LodyClient`／桥接层读取新同步的 metadata 解析根会话或直接子 tab，不读取正文或创建 Streams 流。关闭的 tab 重新打开；归档、删除、side-panel 或无权限会话不给导航；断网保留 Retry，取消及账号／工作区变化阻止迟到跳转。正在前台显示且已连接目标会话时抑制重复展示，设置或详情 modal 遮挡时正常展示。点击权限通知只打开会话，普通工具审批能力不变。
+- 本轮验证：JS 327 项通过，按 frozen lockfile 安装并重建 bundle；Simulator App／扩展最终构建通过，原生整套 263 项通过，最终通知模型／路由专项 16 项通过，另补的 notification destination WebKit／原生代理取消回归单项通过。通知 fixture UI 五项分别验证通过：开启／关闭、冷启动等待登录、直接子 tab、不同账号丢弃、未配置禁用；首次开关测试点到 SwiftUI 暴露为 Switch 的整行空白，改点实际右侧控件后重跑通过。已核验 iPhone 17／iOS 27 标准字号截图；dark + accessibility-extra-large 的开关单项及截图也通过，文字换行、safe area 与控件正常，测试后恢复设备原设置。不把 fixture 当成真实投递验证。
+- 公开 App ID 与 OneSignal APNs 平台配置已完成；后续 2026-10-04 检查已在登录的 Safari 私密窗口中确认一台真机订阅为 `Subscribed`，其关联用户有 external ID；用户已在本机开启通知。该检查未独立核对 external ID 与原生恢复账号的 ID，也未发送测试推送。仍需服务方确认的 Cloud 发送目标，以及签名真机上的 OneSignal 测试推送和真实 Lody 完成／问答事件验证，覆盖前台、锁屏、冷启动及退出／切账号。尚未修改 Cloud 部署或发送真实推送。Live Activity 的原生类型和远程 start 协议仍需另行核实。
+- 本次 App ID 配置验证（2026-10-04）：重新生成 Xcode 工程，`generic/platform=iOS` 签名构建通过；检查产物确认公开 App ID、`aps-environment: development` 与 `group.com.spike.kurage.onesignal` 生效，`git diff --check` 通过。本次未修改通知逻辑或运行 fixture 测试，真机订阅与投递仍待验证。
+- 同次签名构建已通过 `devicectl` 更新安装到配对 iPhone；Device Hub 镜像当前停在系统解锁页，启动命令 30 秒超时。尚未观察 App 内通知状态或确认 OneSignal 设备注册，不能将安装成功视为推送投递验证。
+- Cloud 发送目标探索（2026-10-04）：重新核对官方 Lody `ea3d599e` 的 `notification-service.ts` 与 `cloud-api/src/index.ts`，机器 action 只携带 CLI 凭据、用户／工作区／会话及事件，不携带 OneSignal App ID 或 key；普通通知 action 返回 `null`，没有 provider message ID／recipient count，且 CLI 捕获失败。Innei `cebe0b97` 文档中的 `ONE_SIGNAL_APPS` 是部署级完整清单，并会取代 legacy fallback；追加 Kurage 时需保留既有清单和 fallback 目标。MCP 无通知部署配置工具；Convex 控制台当前需登录，未读取实际 Cloud 配置。已在 `NOTIFICATIONS.md` 补充 App 目标／用户 external ID 的区别、证据边界及「单设备测试 → external ID 测试 → 真实完成事件」验证顺序。本轮只更新文档，未运行 App／bridge 测试。
+- 官方方案核对（2026-10-04）：读取官方 main `e73d3109`，`components/src/lib/onesignal.ts` 确认 Web／原生 Cordova 由 `VITE_ONESIGNAL_APP_ID` 初始化，`routes/$workspaceName/_auth.tsx` 用 `currentUser.id` 登录 OneSignal；机器通知 action 的公开参数不包含 App ID／API key／第三方目标。官方完整 Git tree 不含 Cloud sender 或 Convex 后端实现，官方通知指南只说明官方客户端开关，未找到 `ONE_SIGNAL_APPS` 或第三方目标登记的官方公开协议。`NOTIFICATIONS.md` 已将官方已验证链路与 lody-ios 的候选配置分开；后者必须获得服务方兼容性确认，不能据此声称官方托管 Cloud 支持 Kurage。此次只修正文档，未修改客户端或 Cloud 配置。
+- 通知暂时隐藏（2026-10-04）：按用户要求，官方托管 Cloud 的 Kurage 发送目标确认前隐藏 Settings → Notifications；`OneSignalNotificationService.isCloudDeliveryEnabled` 暂置 `false`，正常启动不初始化 SDK，既有开启偏好不会自动恢复注册。现有实现、配置与偏好保留；`--fixture --fixture-notifications` 继续覆盖通知流程，普通 fixture 检查入口隐藏且 Theme／About 可用。本轮 iPhone 17／iOS 27 Simulator 测试构建、通知模型／路由 16 项原生测试及通知／Theme／工作区切换 7 项 UI 回归通过；浅／深色设置页截图确认通知入口隐藏且其余布局正常，`git diff --check` 通过。未修改 Cloud 配置，尚未更新真机安装或验证真实 APNs 投递；已有 provider 订阅不因隐藏入口而被删除。
 
 ## Session 多 tab（2026-09-29）
 
@@ -763,3 +833,5 @@
 - 保持应用版本 0.4.2，将构建号更新为 10，并通过 XcodeGen 重新生成工程；上一轮构建号 9 已上传，本轮使用新构建号。
 - 本轮 Release 归档及 App Store Connect 上传成功，上传日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（10），尚未确认 TestFlight 可安装状态。归档确认 Bundle ID 为 `com.spike.kurage`、`UIDeviceFamily` 为 `[1, 2]`。
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+- 2026-10-04 恢复账号访问后再次重试，现有 0.4.2（11）归档上传成功，日志确认 `Upload succeeded`。Apple 已开始处理，尚未确认 TestFlight 可安装状态；本次仅重试上传，未重新归档或运行测试。

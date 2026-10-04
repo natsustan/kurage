@@ -100,3 +100,102 @@ test('hidden replacements drop their step and an emptied subagent', () => {
            status: 'in_progress' }),
     task({ taskId: 'act-1', skipTranscript: true }))]), []);
 });
+
+const runTask = (state = 'running', items = [], snapshot = {}, progress) => task({
+  taskId: 'worker', actor: 'Same name', status: 'in_progress',
+  run: { sessionId: 'acp-root', snapshot: { state, name: 'Same name',
+    startedAtEpochSeconds: 100, support: { stream: ['text', 'tool'], cancel: false }, ...snapshot },
+    items, ...(progress ? { progress } : {}) },
+});
+
+test('normalized runs project brief, folded activity and complete Markdown without raw output', () => {
+  const items = [
+    { type: 'text', text: 'Checking the shared helper.' },
+    { type: 'thought', text: 'PRIVATE THOUGHT' },
+    { type: 'tool_call', toolCallId: 'read', kind: 'read', title: 'Read helper.swift',
+      rawOutput: { text: 'PRIVATE OUTPUT' } },
+    { type: 'plan', entries: [{ content: 'Review helpers', status: 'completed' }, { content: 'bad', status: 'invalid' }] },
+    { type: 'text', text: '**Review complete.**\n\n- Reuse is consistent.\n- No changes needed.' },
+  ];
+  const [result] = projectSubtasks([assistant(runTask('completed', items,
+    { description: 'Review code reuse.', endedAtEpochSeconds: 154, modelId: 'test-model' },
+    { totalTokens: 42, toolCallCount: 1, summary: 'Finished the review.' }))]);
+  assert.equal(result.status, 'completed');
+  assert.equal(result.run.turns[0].text, 'Review code reuse.');
+  const output = result.run.turns[1];
+  assert.equal(output.work.durationMs, 54_000);
+  assert.equal(output.text, items.at(-1).text);
+  assert.equal(output.work.parts[1].reads, 1);
+  assert.deepEqual(output.work.parts[1].steps, [{ id: 'read', kind: 'read', title: 'Read helper.swift' }]);
+  assert.deepEqual(result.run.plan, [{ content: 'Review helpers', status: 'completed' }]);
+  assert.equal(result.totalTokens, 42);
+  assert.equal(result.toolUses, 1);
+  assert.equal(result.progressSummary, 'Finished the review.');
+  assert.equal(result.modelID, 'test-model');
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+});
+
+test('normalized run state overrides legacy status and parent completion', () => {
+  for (const [state, status] of [['pending', 'pending'], ['running', 'in_progress'],
+    ['completed', 'completed'], ['failed', 'failed'], ['cancelled', 'cancelled'], ['unknown', 'unknown']]) {
+    const [result] = projectSubtasks([assistant(runTask(state, [], {
+      outputIncomplete: true, reason: { message: 'Lost connection' }, support: { stream: [] },
+    }))]);
+    assert.equal(result.status, status);
+    assert.equal(result.run.streamsOutput, false);
+    assert.equal(result.run.outputIncomplete, true);
+    assert.equal(result.error, 'Lost connection');
+    assert.equal(Boolean(result.run.turns[0]?.timing), ['pending', 'running'].includes(state));
+  }
+});
+
+test('delegated run labels are not projected as user prompts', () => {
+  const [result] = projectSubtasks([assistant(runTask('completed', [{ type: 'text', text: 'Review result.' }],
+    { description: 'Delegated task for Same name' }))]);
+  assert.equal(result.title, 'Same name');
+  assert.deepEqual(result.run.turns.map(turn => [turn.author, turn.text]), [['agent', 'Review result.']]);
+  const [realBrief] = projectSubtasks([assistant(runTask('completed', [],
+    { description: 'Review the delegated task for Same name and check its result.' }))]);
+  assert.equal(realBrief.run.turns[0].author, 'user');
+});
+
+test('folded run duration falls back to persisted task timing or progress', () => {
+  const items = [{ type: 'tool_call', toolCallId: 'read', kind: 'read', title: 'Read file' },
+    { type: 'text', text: 'Done' }];
+  const timed = { ...runTask('completed', items, { startedAtEpochSeconds: undefined }),
+    startedAtEpochSeconds: 100, endedAtEpochSeconds: 154 };
+  const [result] = projectSubtasks([assistant(timed)]);
+  assert.equal(result.run.turns[0].work.durationMs, 54_000);
+  for (const [durationMs, expected] of [[42_000, 42_000], [-1, undefined], [Infinity, undefined], ['42000', undefined]]) {
+    const [fallback] = projectSubtasks([assistant(runTask('completed', items,
+      { startedAtEpochSeconds: undefined }, { durationMs }))]);
+    assert.equal(fallback.run.turns[0].work.durationMs, expected);
+  }
+  const [snapshotWins] = projectSubtasks([assistant(runTask('completed', items,
+    { endedAtEpochSeconds: 154 }, { durationMs: 999_000 }))]);
+  assert.equal(snapshotWins.run.turns[0].work.durationMs, 54_000);
+});
+
+test('run identities include ACP root and do not merge same names', () => {
+  const one = runTask();
+  const two = { ...runTask(), taskId: 'other-worker' };
+  const anotherRoot = { ...runTask(), run: { ...one.run, sessionId: 'another-root' } };
+  const results = projectSubtasks([assistant(one, two, anotherRoot), assistant({ ...one, skipTranscript: true })]);
+  assert.equal(new Set(results.map(value => value.id)).size, 2);
+  assert.ok(results.some(value => value.id.includes('another-root')));
+});
+
+test('run replacements preserve IDs, exact growth, removal and nonduplicate result fallback', () => {
+  const initial = projectSubtasks([runningAssistant(runTask('running', [{ type: 'text', text: 'repeat' }]))])[0];
+  const grown = projectSubtasks([runningAssistant(runTask('running', [{ type: 'text', text: 'repeatrepeat' }]))])[0];
+  assert.equal(initial.id, grown.id);
+  assert.equal(initial.run.turns[0].id, grown.run.turns[0].id);
+  assert.equal(grown.run.turns[0].text, 'repeatrepeat');
+  const removed = projectSubtasks([assistant(runTask('completed', [], { summary: 'Final result.' }))])[0];
+  assert.equal(removed.run.turns.length, 1);
+  assert.equal(removed.run.turns[0].text, 'Final result.');
+  const deduped = projectSubtasks([assistant(runTask('completed', [{ type: 'text', text: 'Final result.' }],
+    { summary: 'Final result.' }))])[0];
+  assert.equal(deduped.run.turns.length, 1);
+  assert.equal(projectSubtasks([assistant({ ...runTask(), run: { sessionId: 'root', snapshot: { state: 'invalid' }, items: [] } })]).length, 0);
+});

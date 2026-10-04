@@ -14,6 +14,10 @@ struct StatusNote: Equatable {
 @Observable
 final class AppModel {
     private let client: any LodyClient
+    let notifications: NotificationModel
+    private(set) var notificationNavigation: NotificationNavigation?
+    private(set) var notificationOpenGeneration = 0
+    private var notificationRoutingGeneration = 0
     private var tabsByWorkspace: [String: [String: [SessionSummary]]] = [:]
     private var activeTabsByWorkspace: [WorkspaceSummary.ID: [SessionSummary.ID: SessionSummary.ID]] = [:]
     private var pendingTabs: [String: [String: SessionTabStart]] = [:]
@@ -108,6 +112,8 @@ final class AppModel {
     private var sessionIndex: [String: SessionSummary] = [:]
     private(set) var archivedSessions: [ArchivedSessionSummary] = []
     private(set) var isRefreshingSessions = false
+    private(set) var isRefreshingWorkspaces = false
+    var workspaceLoadStatusNote: StatusNote? { workspaceStatusNote }
     private(set) var isRefreshingArchivedSessions = false
     private var archiveLoadStatusNote: StatusNote?
     private var archiveOperationStatusNote: StatusNote?
@@ -132,6 +138,7 @@ final class AppModel {
     private(set) var deviceAuthorization: DeviceAuthorization?
     private var signInTask: Task<Void, Never>?
     private var authenticationGeneration = 0
+    private var workspaceRefreshGeneration = 0
     private var sessionRefreshGeneration = 0
     private var sessionRefreshTask: Task<[SessionSummary], Error>?
     private var sessionRefreshWorkspaceID: WorkspaceSummary.ID?
@@ -210,8 +217,9 @@ final class AppModel {
         return failedSearchBodies[workspaceID]?.isEmpty == false
     }
 
-    init(client: any LodyClient) {
+    init(client: any LodyClient, notifications: NotificationModel? = nil) {
         self.client = client
+        self.notifications = notifications ?? NotificationModel(service: FixturePushNotificationService())
         account = client.account
         if let cache = client.cachedSession, cache.account == account {
             workspaces = cache.workspaces
@@ -273,6 +281,7 @@ final class AppModel {
             return
         }
         account = restored
+        notifications.identify(restored?.id)
         guard account != nil else { return }
         await refreshContent()
     }
@@ -303,6 +312,7 @@ final class AppModel {
                 try Task.checkCancellation()
                 guard generation == authenticationGeneration else { return }
                 account = client.account
+                notifications.identify(account?.id)
                 deviceAuthorization = nil
                 await refreshWorkspaces()
                 await refreshSessions()
@@ -335,11 +345,15 @@ final class AppModel {
     }
 
     func signOut() {
+        notifications.signOut()
+        notificationNavigation = nil
         signInTask?.cancel()
         signInTask = nil
         isSigningIn = false
         deviceAuthorization = nil
         authenticationGeneration += 1
+        workspaceRefreshGeneration += 1
+        isRefreshingWorkspaces = false
         cancelSessionRefresh()
         client.signOut()
         pendingStartsByWorkspace = [:]
@@ -373,11 +387,19 @@ final class AppModel {
     }
 
     func refreshWorkspaces() async {
-        guard account != nil else { return }
+        guard !Task.isCancelled, account != nil else { return }
         let generation = authenticationGeneration
+        workspaceRefreshGeneration += 1
+        let refreshGeneration = workspaceRefreshGeneration
+        isRefreshingWorkspaces = true
+        workspaceStatusNote = nil
+        defer {
+            if refreshGeneration == workspaceRefreshGeneration { isRefreshingWorkspaces = false }
+        }
         do {
             let loaded = try await client.workspaces()
-            guard isCurrentAuthentication(generation) else { return }
+            guard !Task.isCancelled, isCurrentAuthentication(generation),
+                  refreshGeneration == workspaceRefreshGeneration else { return }
             workspaces = loaded
             workspaceStatusNote = nil
             if !loaded.contains(where: { $0.id == selectedWorkspaceID }) {
@@ -406,14 +428,79 @@ final class AppModel {
             dirtySearchBodies = dirtySearchBodies.filter { workspaceIDs.contains($0.key) }
             persistSession()
         } catch LodyClientError.signedOut {
-            guard isCurrentAuthentication(generation) else { return }
+            guard !Task.isCancelled, isCurrentAuthentication(generation),
+                  refreshGeneration == workspaceRefreshGeneration else { return }
             signOut()
         } catch is CancellationError {
             return
         } catch {
-            guard isCurrentAuthentication(generation) else { return }
+            guard !Task.isCancelled, isCurrentAuthentication(generation),
+                  refreshGeneration == workspaceRefreshGeneration else { return }
             workspaceStatusNote = StatusNote(tone: .failure, text: "Could not load workspaces.")
         }
+    }
+
+    func openPendingNotification() async {
+        guard isApplicationActive, let click = notifications.pendingClick,
+              let userID = notifications.userID, account?.id == userID, click.userID == userID else { return }
+        notificationRoutingGeneration += 1
+        let operation = notificationRoutingGeneration
+        let generation = authenticationGeneration
+        func isCurrent() -> Bool {
+            !Task.isCancelled && isApplicationActive && notificationRoutingGeneration == operation &&
+                isCurrentAuthentication(generation) && account?.id == userID &&
+                notifications.pendingClick?.id == click.id && notifications.userID == userID
+        }
+        do {
+            await refreshWorkspaces()
+            guard isCurrent() else { return }
+            guard workspaceLoadStatusNote == nil else { throw LodyClientError.notConnected }
+            let matches = workspaces.filter { $0.id == click.route.workspace || $0.slug == click.route.workspace }
+            guard matches.count == 1, let workspace = matches.first else {
+                notifications.routingError = "You no longer have access to this workspace."
+                notifications.acknowledge(click.id)
+                return
+            }
+            let selection = workspaceGeneration + (selectedWorkspaceID != workspace.id ? 1 : 0)
+            if selectedWorkspaceID != workspace.id { await selectWorkspace(workspace.id) }
+            else { await refreshSessions() }
+            guard isCurrent() else { return }
+            guard selectedWorkspaceID == workspace.id, workspaceGeneration == selection else {
+                notifications.acknowledge(click.id)
+                return
+            }
+            let destination = try await client.notificationDestination(sessionID: click.route.sessionID, workspaceID: workspace.id)
+            guard isCurrent() else { return }
+            guard workspaceGeneration == selection, selectedWorkspaceID == workspace.id else {
+                notifications.acknowledge(click.id)
+                return
+            }
+            guard let destination, destination.sessionID == click.route.sessionID,
+                  sessions.contains(where: { $0.id == destination.rootSessionID }) else {
+                notifications.routingError = "This conversation is no longer available."
+                notifications.acknowledge(click.id)
+                return
+            }
+            if destination.isTabClosed {
+                try await updateSessionMetadata(.tabClosed(false), sessionID: destination.sessionID)
+                guard isCurrent(), workspaceGeneration == selection else { return }
+            }
+            setActiveSessionTab(destination.sessionID, rootID: destination.rootSessionID)
+            notificationNavigation = NotificationNavigation(clickID: click.id, workspaceID: workspace.id,
+                rootSessionID: destination.rootSessionID, sessionID: destination.sessionID)
+            notificationOpenGeneration += 1
+            notifications.routingError = nil
+            notifications.acknowledge(click.id)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard isCurrent() else { return }
+            notifications.routingError = "Could not load this conversation. Try again when connected."
+        }
+    }
+
+    func consumeNotificationNavigation(_ clickID: String) {
+        if notificationNavigation?.clickID == clickID { notificationNavigation = nil }
     }
 
     func selectWorkspace(_ workspaceID: WorkspaceSummary.ID) async {
@@ -556,6 +643,7 @@ final class AppModel {
     func setApplicationActive(_ active: Bool) {
         isApplicationActive = active
         if active {
+            Task { await notifications.refresh() }
             scheduleSessionSearchIndex()
         } else {
             cancelSessionSearchIndex()

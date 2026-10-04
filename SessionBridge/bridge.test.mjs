@@ -13,6 +13,7 @@ import { runningSessionTabParents } from './session-tabs.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { turnDiffSource } from './turn-diff.mjs';
 import { projectGitSource } from './project-git.mjs';
+import { notificationSessionDestination } from './notification-session.mjs';
 import {
   activityTime,
   deleteArchivedSession,
@@ -89,6 +90,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     turnDiffSource,
     loadTurnDiff: extras.loadTurnDiff,
     projectGitSource: extras.projectGitSource ?? projectGitSource,
+    notificationSessionDestination,
     readProjectGit: extras.readProjectGit,
     fetch: async () => {},
     AbortController,
@@ -98,6 +100,42 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('notification destination uses freshly synced workspace metadata only and releases its replica', async () => {
+  const pulls = [];
+  const rows = [{ docId: 'session-root', meta: {} },
+    { docId: 'session-tab', meta: { parentSessionId: 'root', isTabClosed: true } }];
+  const { window, repos } = makeBridge(async (options, repo) => {
+    pulls.push({ scope: options.scope, workspace: repo.transport.metaStreamId });
+    return { ok: true };
+  }, rows, undefined, undefined, {
+    openPersistedDoc: () => { throw new Error('Notification routing must not open history'); },
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  pulls.length = 0;
+  const result = JSON.parse(await window.kurageNotificationDestination('workspace', 'tab', 'https://streams.test', 'push-read'));
+  assert.deepEqual(result, { destination: { rootSessionID: 'root', sessionID: 'tab', isTabClosed: true } });
+  assert.deepEqual(pulls, [{ scope: 'meta', workspace: 'workspace:meta' }]);
+  assert.equal(repos[0].destroyed, false);
+  assert.equal(repos[1].destroyed, true);
+  await window.kurageNotificationDestination('other', 'root', 'https://streams.test', 'other-push');
+  assert.deepEqual(pulls[1], { scope: 'meta', workspace: 'other:meta' });
+  assert.equal(repos[2].destroyed, true);
+});
+
+test('cancelled notification lookup cannot publish late metadata', async () => {
+  let started, finish;
+  const ready = new Promise(resolve => { started = resolve; });
+  const delayed = new Promise(resolve => { finish = resolve; });
+  const { window, repos } = makeBridge(async () => { started(); return delayed; },
+    [{ docId: 'session-root', meta: {} }]);
+  const request = window.kurageNotificationDestination('workspace', 'root', 'https://streams.test', 'cancelled-push');
+  await ready;
+  window.kurageCancel('cancelled-push');
+  finish({ ok: true });
+  await assert.rejects(request, { name: 'AbortError' });
+  assert.equal(repos[0].destroyed, true);
+});
 
 test('turn diff releases the metadata read lock and keeps RPC cancellation alive', async () => {
   let started;

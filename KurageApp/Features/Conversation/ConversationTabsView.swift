@@ -38,6 +38,7 @@ struct ConversationTabsContent: View {
     let model: AppModel
     let workspaceGeneration: Int
     let isReadOnly: Bool
+    var isReading = true
     var draftStore: ConversationDraftStore? = nil
     var onArchived: (() -> Void)? = nil
     var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
@@ -64,7 +65,7 @@ struct ConversationTabsContent: View {
                     projectID: model.sessionSummary(rootID)?.projectID ?? "",
                     projectName: model.sessionSummary(rootID)?.projectName ?? "Shared working directory",
                     templateSessionID: rootID, workspaceGeneration: workspaceGeneration, parentSessionID: rootID
-                ), model: model, restoredMessage: restoredTabMessage, onStaged: { id in
+                ), model: model, restoredMessage: restoredTabMessage, isReading: isReading, onStaged: { id in
                     guard let id else { return }
                     model.setActiveSessionTab(id, rootID: rootID)
                     showsNewTab = false
@@ -78,7 +79,7 @@ struct ConversationTabsContent: View {
                 }
             } else {
                 ConversationContent(sessionID: activeID, title: model.sessionSummary(activeID)?.title ?? title,
-                    model: model, workspaceGeneration: workspaceGeneration, isReadOnly: isReadOnly, isReading: true,
+                    model: model, workspaceGeneration: workspaceGeneration, isReadOnly: isReadOnly, isReading: isReading,
                     draft: draft.text, mentions: draft.mentions, attachments: draft.attachments,
                     isCancelling: draft.isCancelling, banner: draft.banner,
                     runConfigState: draft.runConfig,
@@ -114,6 +115,10 @@ struct ConversationTabsContent: View {
         )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
         .onChange(of: openTabs.map(\.id)) { _, ids in
             if activeID != rootID, !ids.contains(activeID) { model.setActiveSessionTab(rootID, rootID: rootID) }
+        }
+        .onChange(of: model.notificationOpenGeneration) { _, _ in
+            showsNewTab = false
+            restoredTabMessage = nil
         }
     }
 

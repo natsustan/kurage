@@ -382,6 +382,19 @@ final class HTTPLodyClient: LodyClient {
         return access
     }
 
+    func notificationDestination(sessionID: String, workspaceID: String) async throws -> NotificationSessionDestination? {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let destination = try await bridge.notificationDestination(sessionID: sessionID, workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return destination
+    }
+
     func sessions(workspaceID: WorkspaceSummary.ID) async throws -> [SessionSummary] {
         try Task.checkCancellation()
         let generation = authenticationGeneration

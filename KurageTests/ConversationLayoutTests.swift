@@ -5,6 +5,60 @@ import UIKit
 
 @MainActor
 struct ConversationLayoutTests {
+    @Test func readOnlyRunStartsBelowItsHeaderAndFollowsGrowthFromTheBottom() async throws {
+        let (controller, window) = try makeController(startsAtTop: true)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var turns = [ConversationTurn(id: "output", author: .agent, text: "Review complete.")]
+        update(controller, turns: turns)
+        await settle(controller)
+        let table = try transcript(in: controller.view)
+        #expect(table.contentInset.top == 6)
+        #expect(abs(table.contentOffset.y + 6) < 1)
+
+        turns[0].text = String(repeating: "More output\n", count: 80)
+        update(controller, turns: turns)
+        await settle(controller)
+        expectAtBottom(table)
+        #expect(table.contentInset.top == 6)
+    }
+
+    @Test func longReadOnlyRunOpensAtTheBeginningAndPreservesReadingDuringUpdates() async throws {
+        let (controller, window) = try makeController(startsAtTop: true)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        var turns = sampleTurns()
+        update(controller, turns: turns)
+        await settle(controller)
+        let table = try transcript(in: controller.view)
+        #expect(abs(table.contentOffset.y + 6) < 1)
+        turns[turns.count - 1].text += String(repeating: " More output.", count: 80)
+        update(controller, turns: turns)
+        controller.view.frame.size.height = 430
+        await settle(controller)
+        #expect(abs(table.contentOffset.y + 6) < 1)
+
+        controller.scrollViewWillBeginDragging(table)
+        table.contentOffset.y = max(-6, table.contentSize.height + table.contentInset.bottom - table.bounds.height)
+        controller.scrollViewDidEndDragging(table, willDecelerate: false)
+        turns[turns.count - 1].text += String(repeating: " More output.", count: 80)
+        update(controller, turns: turns)
+        await settle(controller)
+        expectAtBottom(table)
+    }
+
+    @Test func singleLongAnswerDoesNotFollowItsEstimatedRowHeightToTheEnd() async throws {
+        let (controller, window) = try makeController(startsAtTop: true)
+        defer { window.isHidden = true; window.rootViewController = nil }
+        let turns = [ConversationTurn(id: "output", author: .agent, text: String(repeating: "Review finding.\n", count: 80))]
+        update(controller, turns: turns)
+        await settle(controller)
+        let table = try transcript(in: controller.view)
+        #expect(table.contentSize.height > table.bounds.height)
+        #expect(abs(table.contentOffset.y + 6) < 1)
+        update(controller, turns: turns)
+        await settle(controller)
+        #expect(abs(table.contentOffset.y + 6) < 1)
+    }
+
     @Test func wideTranscriptAndComposerShareACenteredReadableWidth() async throws {
         let (controller, window) = try makeController()
         defer { window.isHidden = true; window.rootViewController = nil }
@@ -249,9 +303,9 @@ struct ConversationLayoutTests {
         }
     }
 
-    private func makeController() throws -> (ConversationLayoutController<TestFooter>, UIWindow) {
+    private func makeController(startsAtTop: Bool = false) throws -> (ConversationLayoutController<TestFooter>, UIWindow) {
         let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
-        let controller = ConversationLayoutController(footer: TestFooter())
+        let controller = ConversationLayoutController(footer: TestFooter(), startsAtTop: startsAtTop)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
         window.rootViewController = controller

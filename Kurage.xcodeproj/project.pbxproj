@@ -8,12 +8,14 @@
 
 /* Begin PBXBuildFile section */
 		058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153B4F2F19120EAF70238123 /* ConversationView.swift */; };
+		0C0998CE1A432AEC62D96496 /* NotificationFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */; };
 		0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */; };
 		0CF5D421D7F018861F917B9B /* ComposerMentionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5B6A1D4A107B17DF5D6024 /* ComposerMentionsTests.swift */; };
 		18ECD83602A35A9E4A73CF7B /* ConversationFileChanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029CAB0AB3D05D30B9BF55F8 /* ConversationFileChanges.swift */; };
 		1F1BBE369FF36F6B450F5B9D /* ConversationChangesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52992274F3830D8D34FF1B15 /* ConversationChangesTests.swift */; };
 		202F8979458138C533AD6081 /* ConversationLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C69CCB7DF6027B62311BCFF /* ConversationLayoutTests.swift */; };
 		256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */; };
+		27EBC036E34C7199DDB4D33F /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E327BCE94AA9576F37427A /* NotificationModels.swift */; };
 		2C6A69AAD4625C9D8D4E1911 /* SignInFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */; };
 		357BCBEC79197D443B735EE1 /* ConversationTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374F20ECC60DB1DC17DDDDCA /* ConversationTabsView.swift */; };
 		36A47666D86EC3CEA0817A81 /* UserMessageText.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA46E2844598B0A50F9A983F /* UserMessageText.swift */; };
@@ -22,29 +24,35 @@
 		3AE24C610D1992B80F5EDA3D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 689573159C8EC11124B112A6 /* LaunchScreen.storyboard */; };
 		3BF139DE4510CCC4A72F4E9F /* OutgoingMessageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */; };
 		401B74DA0A333A159C23A634 /* ConversationSubtasksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6E7BB882700BCC2B3DCE1A /* ConversationSubtasksView.swift */; };
+		417F01C3AEB7306AA1A3B7B8 /* WorkspacePickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA733CCE0B0B68BDDEA76262 /* WorkspacePickerView.swift */; };
 		4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91DECA865E619085D6495AE9 /* SignInView.swift */; };
 		4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD05638D968AB68EF4E23886 /* NewSessionView.swift */; };
 		4BC901017C96539CB677175A /* UserMessageSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F52F4447A649EB64999DF6 /* UserMessageSelectionTests.swift */; };
 		59162197B3F96A8D054670C6 /* OutgoingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6AC2AF5662316492B81CF0 /* OutgoingMessage.swift */; };
 		5F1BBE8C4F61E306AB58A0AA /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3182FD9B993292936C8C71D4 /* ComposerAttachments.swift */; };
 		617C98A6547E19F77D7D0F2B /* SessionMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */; };
+		6299D3085136B38D1063BABC /* OneSignalFramework in Frameworks */ = {isa = PBXBuildFile; productRef = BFEB7B7C324D450819F3AE78 /* OneSignalFramework */; };
 		631BD465A3EDA0F542CB06CC /* SessionActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FCB49C75A6EF2BD30A3266F /* SessionActions.swift */; };
 		660F47FDE5A3FADAFAB499B6 /* ConversationImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38FAFEC4E8C04B28773FAECF /* ConversationImageView.swift */; };
 		67CAF1EE62C5732FD3B6C298 /* MarkdownView in Frameworks */ = {isa = PBXBuildFile; productRef = E19E548C83F201B3073B5E62 /* MarkdownView */; };
 		731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */; };
+		793B17AAF276C97C07FCB005 /* AccountAvatar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */; };
 		7C3ED78FA7C1113A1D387EEA /* MentionText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 850C0523A7D97A506897E2A8 /* MentionText.swift */; };
 		7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF9509B93A448677F2BA6F70 /* KurageApp.swift */; };
 		7FB5A3A2867FFA5EF3E091CD /* SessionProjectGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */; };
 		8179635148BCF07EE4DC4A1F /* ConversationQuestions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2762162515A785B6DDBFA12A /* ConversationQuestions.swift */; };
 		835FC85AEDA614A2E7D93F9D /* SessionProjectGroupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */; };
 		8E8DF62B9A143981ADD3ACD8 /* ComposerMentions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B882E38674648C331B5848 /* ComposerMentions.swift */; };
+		8FA661DFFB9493FD0C91BFF9 /* SettingsFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CB25C24C6A1733672DA6505 /* SettingsFlowTests.swift */; };
 		91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12912BB0B079CC40470DF3DC /* LodyModels.swift */; };
 		97C515198A462A0117955E45 /* ArchivedSessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */; };
 		9B10551437F89D49FCE2B4C3 /* ConversationQuestionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7903B89A96C3E0A0D21D8C1F /* ConversationQuestionTests.swift */; };
 		9C7475A61636EE410F2D2EEA /* SessionImageTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */; };
 		A623FD39CBAE3F01F7779351 /* SignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E02D0CEF5411E13D83E3B8D /* SignInTests.swift */; };
 		A6D2FF46CA8CC8FAE03BF8CB /* ConversationChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D3BD86C616EDFBCCF15230 /* ConversationChangesView.swift */; };
+		A80A9480D1243C24BE3C4FDC /* OneSignalExtension in Frameworks */ = {isa = PBXBuildFile; productRef = D2DA0C63F0F7F6BF7F81C192 /* OneSignalExtension */; };
 		AA4AD44A95E3C8D96EAF4811 /* ProjectGit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64722609B71532885A1302E5 /* ProjectGit.swift */; };
+		AAEDCFA3378D9106D39367BB /* NotificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD856DF2F6F7F07A50E68563 /* NotificationTests.swift */; };
 		AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49C39757158A6D291B6DF642 /* AuthTokenStore.swift */; };
 		AC5ED9D79BFC3193F858618E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6998C6DDA1554E4E716FF9AF /* Assets.xcassets */; };
 		AEB3BBDF3678B7A48630E01D /* SessionProjectPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBCDF436626D73BEB441EB3 /* SessionProjectPicker.swift */; };
@@ -56,19 +64,28 @@
 		C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B545D0AADF9E7DBA1579C84 /* HTTPLodyClient.swift */; };
 		C260EC8C0275502F582D4FE4 /* ConversationImageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */; };
 		C35151C7EE8619D3E22458FB /* LodyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */; };
+		C3F52055A2CDF24CF2E14E0D /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C9B8587C8EDC7D324885094 /* AppTheme.swift */; };
 		C614E10AF67B279394205AED /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */; };
 		CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */; };
+		CD702DC85031A301F6687C61 /* NotificationModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F430299504D793272188A53 /* NotificationModel.swift */; };
+		CF349598601956A92CD49E89 /* WorkspaceSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B3AD0203F2338F8D1BCBE9 /* WorkspaceSelectionTests.swift */; };
 		D2DB957DFB03AB6265203514 /* ComposerAttachment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22DC7D0AA7296E6CF4BBC2D0 /* ComposerAttachment.swift */; };
 		D846FE6BE213A32414FCFCAE /* SessionSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F74E4465617B7E007D2D8DC /* SessionSearch.swift */; };
+		DB44B23855E90D697C75452D /* OneSignalNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E9B4AA6043B15D5E5D0A550 /* OneSignalNotificationService.swift */; };
 		DD1B41F3673C97F1791C0435 /* ProjectGitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */; };
 		DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */ = {isa = PBXBuildFile; fileRef = AF6B057A72F618ECD2D1FA99 /* session-bridge.html */; };
+		DF2F9613F4D0611C8AE09A04 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 223485F7EFD870EC6A23E934 /* NotificationService.swift */; };
 		E2FAA4C9BB027013F9DEE334 /* SessionComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FD450BD8575DF0264928B18 /* SessionComposer.swift */; };
 		E610F04E9116BF949CD86F67 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A83DD40C8A260803B91A452 /* RootView.swift */; };
 		E76D66B895E55F36E4C4A198 /* LaunchCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */; };
 		E7C093957D9F6A9D50121318 /* AuthorizationBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BC7B1E59C8561D871225236 /* AuthorizationBrowser.swift */; };
 		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
 		EA004FC38EE7E82876F98010 /* ConversationLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B366CEB77792BB4C07117803 /* ConversationLayout.swift */; };
+		EA65E2F70800ECD9D895826B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA6BABACA4081EE53AECD44 /* SettingsView.swift */; };
+		F08B2A353936073585BC6820 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5506E74A6347C9820765D255 /* AboutView.swift */; };
 		F147BA09F273F0B35A5CF7A5 /* SessionTabsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */; };
+		F2FB166F16323DB7B77E9C0B /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */; };
+		F81D7A6DB9AAE1BD5AB36AA4 /* KurageNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */; };
 		FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 6A79AACE724D367AC3C05B6B /* session-bridge.js */; };
 /* End PBXBuildFile section */
@@ -88,19 +105,46 @@
 			remoteGlobalIDString = 916545DECCA9CB31B4D2CD75;
 			remoteInfo = Kurage;
 		};
+		92D1F1A0DA822156D16B3F80 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = DCA9EB984FDABC20A6A90413 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EFFA4553B74A3CE6EBD70DAB;
+			remoteInfo = KurageNotificationService;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		4D254102F1496F9A7D4CABA5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				F81D7A6DB9AAE1BD5AB36AA4 /* KurageNotificationService.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		029CAB0AB3D05D30B9BF55F8 /* ConversationFileChanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationFileChanges.swift; sourceTree = "<group>"; };
 		03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMessageTests.swift; sourceTree = "<group>"; };
+		05B3AD0203F2338F8D1BCBE9 /* WorkspaceSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSelectionTests.swift; sourceTree = "<group>"; };
+		0800A76BDB70BAF2ABCCADAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchTests.swift; sourceTree = "<group>"; };
 		0D6E7BB882700BCC2B3DCE1A /* ConversationSubtasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSubtasksView.swift; sourceTree = "<group>"; };
+		0E9B4AA6043B15D5E5D0A550 /* OneSignalNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneSignalNotificationService.swift; sourceTree = "<group>"; };
 		12912BB0B079CC40470DF3DC /* LodyModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyModels.swift; sourceTree = "<group>"; };
 		153B4F2F19120EAF70238123 /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		19D3BD86C616EDFBCCF15230 /* ConversationChangesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChangesView.swift; sourceTree = "<group>"; };
 		1A83DD40C8A260803B91A452 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionImageTransport.swift; sourceTree = "<group>"; };
+		1C9B8587C8EDC7D324885094 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		1DA6BABACA4081EE53AECD44 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1F74E4465617B7E007D2D8DC /* SessionSearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearch.swift; sourceTree = "<group>"; };
+		223485F7EFD870EC6A23E934 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		22DC7D0AA7296E6CF4BBC2D0 /* ComposerAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachment.swift; sourceTree = "<group>"; };
 		230C1FC425B06A52A44A20B0 /* FixtureLodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLodyClient.swift; sourceTree = "<group>"; };
 		2762162515A785B6DDBFA12A /* ConversationQuestions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationQuestions.swift; sourceTree = "<group>"; };
@@ -117,13 +161,16 @@
 		4C69CCB7DF6027B62311BCFF /* ConversationLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayoutTests.swift; sourceTree = "<group>"; };
 		52992274F3830D8D34FF1B15 /* ConversationChangesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationChangesTests.swift; sourceTree = "<group>"; };
 		52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInFlowTests.swift; sourceTree = "<group>"; };
+		5506E74A6347C9820765D255 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
 		5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPLodyClientTests.swift; sourceTree = "<group>"; };
 		627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		64722609B71532885A1302E5 /* ProjectGit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectGit.swift; sourceTree = "<group>"; };
 		689573159C8EC11124B112A6 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		6998C6DDA1554E4E716FF9AF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6A79AACE724D367AC3C05B6B /* session-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "session-bridge.js"; sourceTree = "<group>"; };
+		6CB25C24C6A1733672DA6505 /* SettingsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsFlowTests.swift; sourceTree = "<group>"; };
 		6E02D0CEF5411E13D83E3B8D /* SignInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInTests.swift; sourceTree = "<group>"; };
+		6F430299504D793272188A53 /* NotificationModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModel.swift; sourceTree = "<group>"; };
 		72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyClient.swift; sourceTree = "<group>"; };
 		7903B89A96C3E0A0D21D8C1F /* ConversationQuestionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationQuestionTests.swift; sourceTree = "<group>"; };
 		7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSyncBridge.swift; sourceTree = "<group>"; };
@@ -132,31 +179,40 @@
 		800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectGitTests.swift; sourceTree = "<group>"; };
 		84497201224F3906A5EACF8A /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		850C0523A7D97A506897E2A8 /* MentionText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentionText.swift; sourceTree = "<group>"; };
+		8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAvatar.swift; sourceTree = "<group>"; };
 		8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LodyEndpoints.swift; sourceTree = "<group>"; };
 		8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
 		91DECA865E619085D6495AE9 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
+		93BF8A2B9CDAF0A04888EDF1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		9FBCDF436626D73BEB441EB3 /* SessionProjectPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectPicker.swift; sourceTree = "<group>"; };
 		9FD450BD8575DF0264928B18 /* SessionComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionComposer.swift; sourceTree = "<group>"; };
 		A2B882E38674648C331B5848 /* ComposerMentions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerMentions.swift; sourceTree = "<group>"; };
 		A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroupTests.swift; sourceTree = "<group>"; };
 		A318FB6C86AA0B5E9D6FBD42 /* ConversationQuestionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationQuestionCard.swift; sourceTree = "<group>"; };
 		AF6B057A72F618ECD2D1FA99 /* session-bridge.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "session-bridge.html"; sourceTree = "<group>"; };
+		B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KurageNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B2B912BC7E896A7425EDF22F /* Kurage.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Kurage.entitlements; sourceTree = "<group>"; };
 		B366CEB77792BB4C07117803 /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
 		B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsTests.swift; sourceTree = "<group>"; };
 		B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedSessionsView.swift; sourceTree = "<group>"; };
 		BE8A6A1BC9B69F735FEC452E /* ProjectBranchRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectBranchRow.swift; sourceTree = "<group>"; };
 		C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationWorkView.swift; sourceTree = "<group>"; };
 		CA46E2844598B0A50F9A983F /* UserMessageText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageText.swift; sourceTree = "<group>"; };
+		CA733CCE0B0B68BDDEA76262 /* WorkspacePickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspacePickerView.swift; sourceTree = "<group>"; };
 		CD5B6A1D4A107B17DF5D6024 /* ComposerMentionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerMentionsTests.swift; sourceTree = "<group>"; };
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
+		D4E327BCE94AA9576F37427A /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
 		D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsFlowTests.swift; sourceTree = "<group>"; };
 		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoverView.swift; sourceTree = "<group>"; };
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
 		DD05638D968AB68EF4E23886 /* NewSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionView.swift; sourceTree = "<group>"; };
 		E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadataTests.swift; sourceTree = "<group>"; };
+		EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationFlowTests.swift; sourceTree = "<group>"; };
 		EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationImageTests.swift; sourceTree = "<group>"; };
 		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FD856DF2F6F7F07A50E68563 /* NotificationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -165,6 +221,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				67CAF1EE62C5732FD3B6C298 /* MarkdownView in Frameworks */,
+				6299D3085136B38D1063BABC /* OneSignalFramework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D7A895C464F0A3F2D7E864FC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A80A9480D1243C24BE3C4FDC /* OneSignalExtension in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -195,6 +260,7 @@
 			isa = PBXGroup;
 			children = (
 				D8AB4457E0D00261BF02F78D /* Kurage.app */,
+				B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */,
 				F29673DBA060CA471CBB7B12 /* KurageTests.xctest */,
 				627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */,
 			);
@@ -228,8 +294,11 @@
 		4066EC103822F26E6ECD3E47 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */,
 				84497201224F3906A5EACF8A /* AppModel.swift */,
+				1C9B8587C8EDC7D324885094 /* AppTheme.swift */,
 				DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */,
+				6F430299504D793272188A53 /* NotificationModel.swift */,
 				4A6AC2AF5662316492B81CF0 /* OutgoingMessage.swift */,
 				1A83DD40C8A260803B91A452 /* RootView.swift */,
 			);
@@ -243,9 +312,22 @@
 				A2CC7796F76FBB2AF738BD85 /* Client */,
 				FD3F733F77DE39EA9D21F9F1 /* Features */,
 				614E6E518E014794F9BC96D0 /* Resources */,
+				93BF8A2B9CDAF0A04888EDF1 /* Info.plist */,
+				B2B912BC7E896A7425EDF22F /* Kurage.entitlements */,
 				CF9509B93A448677F2BA6F70 /* KurageApp.swift */,
 			);
 			path = KurageApp;
+			sourceTree = "<group>";
+		};
+		6121B0AF0F4936A61C97F255 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				5506E74A6347C9820765D255 /* AboutView.swift */,
+				927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */,
+				1DA6BABACA4081EE53AECD44 /* SettingsView.swift */,
+				CA733CCE0B0B68BDDEA76262 /* WorkspacePickerView.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 		614E6E518E014794F9BC96D0 /* Resources */ = {
@@ -263,10 +345,20 @@
 			isa = PBXGroup;
 			children = (
 				587BF2E19CD1BC1127CAD945 /* KurageApp */,
+				917A9E91704C71ECB831B64D /* KurageNotificationService */,
 				B749D250F7F3622E43370F96 /* KurageTests */,
 				E987D242A0CEF1167D8F9DEE /* KurageUITests */,
 				1950DEAE703DD1786CADF75B /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		917A9E91704C71ECB831B64D /* KurageNotificationService */ = {
+			isa = PBXGroup;
+			children = (
+				0800A76BDB70BAF2ABCCADAA /* Info.plist */,
+				223485F7EFD870EC6A23E934 /* NotificationService.swift */,
+			);
+			path = KurageNotificationService;
 			sourceTree = "<group>";
 		};
 		A2CC7796F76FBB2AF738BD85 /* Client */ = {
@@ -281,6 +373,8 @@
 				72D3CBA156E9FF885F1D1AC5 /* LodyClient.swift */,
 				8B7739A3E5563D6B738F1078 /* LodyEndpoints.swift */,
 				12912BB0B079CC40470DF3DC /* LodyModels.swift */,
+				D4E327BCE94AA9576F37427A /* NotificationModels.swift */,
+				0E9B4AA6043B15D5E5D0A550 /* OneSignalNotificationService.swift */,
 				64722609B71532885A1302E5 /* ProjectGit.swift */,
 				1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */,
 				7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */,
@@ -298,6 +392,7 @@
 				7903B89A96C3E0A0D21D8C1F /* ConversationQuestionTests.swift */,
 				2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */,
 				5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */,
+				FD856DF2F6F7F07A50E68563 /* NotificationTests.swift */,
 				03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */,
 				800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */,
 				E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */,
@@ -305,6 +400,7 @@
 				0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */,
 				B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */,
 				6E02D0CEF5411E13D83E3B8D /* SignInTests.swift */,
+				05B3AD0203F2338F8D1BCBE9 /* WorkspaceSelectionTests.swift */,
 			);
 			path = KurageTests;
 			sourceTree = "<group>";
@@ -313,7 +409,9 @@
 			isa = PBXGroup;
 			children = (
 				49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */,
+				EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */,
 				D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */,
+				6CB25C24C6A1733672DA6505 /* SettingsFlowTests.swift */,
 				2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */,
 				52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */,
 				39F52F4447A649EB64999DF6 /* UserMessageSelectionTests.swift */,
@@ -326,6 +424,7 @@
 			children = (
 				17C2C17D269499AF4A93B2C3 /* Conversation */,
 				33DDC15280666DDA3A90F842 /* Sessions */,
+				6121B0AF0F4936A61C97F255 /* Settings */,
 				1F694F2C65A87B77E8DDDBC7 /* SignIn */,
 			);
 			path = Features;
@@ -341,14 +440,17 @@
 				90346D40B824DFEA12785C56 /* Sources */,
 				856B192AFEAB3C46B2A993E2 /* Resources */,
 				1096DEE528A2B2EA2E6576B6 /* Frameworks */,
+				4D254102F1496F9A7D4CABA5 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				BC4C15BF72C3ED33C9596DDD /* PBXTargetDependency */,
 			);
 			name = Kurage;
 			packageProductDependencies = (
 				E19E548C83F201B3073B5E62 /* MarkdownView */,
+				BFEB7B7C324D450819F3AE78 /* OneSignalFramework */,
 			);
 			productName = Kurage;
 			productReference = D8AB4457E0D00261BF02F78D /* Kurage.app */;
@@ -390,6 +492,25 @@
 			productReference = 627DD1B873AFC4E366BF4CAF /* KurageUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		EFFA4553B74A3CE6EBD70DAB /* KurageNotificationService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8579BCFB0B350754B61A12CB /* Build configuration list for PBXNativeTarget "KurageNotificationService" */;
+			buildPhases = (
+				50317D5E612110D3DB58D7E7 /* Sources */,
+				D7A895C464F0A3F2D7E864FC /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = KurageNotificationService;
+			packageProductDependencies = (
+				D2DA0C63F0F7F6BF7F81C192 /* OneSignalExtension */,
+			);
+			productName = KurageNotificationService;
+			productReference = B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -406,6 +527,10 @@
 					E7EEEE0E3B691F4E8C5560AC = {
 						TestTargetID = 916545DECCA9CB31B4D2CD75;
 					};
+					EFFA4553B74A3CE6EBD70DAB = {
+						DevelopmentTeam = V6GTS74AND;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 59D29E14E9F0B4A9D5850EE8 /* Build configuration list for PBXProject "Kurage" */;
@@ -419,6 +544,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				32DEDD68334E53E118DCE33A /* XCRemoteSwiftPackageReference "MarkdownView" */,
+				AE86731C9CF07FA4875B4B42 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 1950DEAE703DD1786CADF75B /* Products */;
@@ -426,6 +552,7 @@
 			projectRoot = "";
 			targets = (
 				916545DECCA9CB31B4D2CD75 /* Kurage */,
+				EFFA4553B74A3CE6EBD70DAB /* KurageNotificationService */,
 				AC0473877888F75F2515FBE6 /* KurageTests */,
 				E7EEEE0E3B691F4E8C5560AC /* KurageUITests */,
 			);
@@ -452,10 +579,20 @@
 			buildActionMask = 2147483647;
 			files = (
 				374BB6DA235990ADAD39C728 /* AdaptiveLayoutFlowTests.swift in Sources */,
+				0C0998CE1A432AEC62D96496 /* NotificationFlowTests.swift in Sources */,
 				C03092CC8B3720F717546291 /* SessionTabsFlowTests.swift in Sources */,
+				8FA661DFFB9493FD0C91BFF9 /* SettingsFlowTests.swift in Sources */,
 				0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */,
 				2C6A69AAD4625C9D8D4E1911 /* SignInFlowTests.swift in Sources */,
 				4BC901017C96539CB677175A /* UserMessageSelectionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		50317D5E612110D3DB58D7E7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DF2F9613F4D0611C8AE09A04 /* NotificationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -463,7 +600,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F08B2A353936073585BC6820 /* AboutView.swift in Sources */,
+				793B17AAF276C97C07FCB005 /* AccountAvatar.swift in Sources */,
 				37374D0737827CAF63322595 /* AppModel.swift in Sources */,
+				C3F52055A2CDF24CF2E14E0D /* AppTheme.swift in Sources */,
 				97C515198A462A0117955E45 /* ArchivedSessionsView.swift in Sources */,
 				AB027575BD3EB4C1B48BF850 /* AuthTokenStore.swift in Sources */,
 				E7C093957D9F6A9D50121318 /* AuthorizationBrowser.swift in Sources */,
@@ -489,6 +629,10 @@
 				91176081C4B2CB4498693CDA /* LodyModels.swift in Sources */,
 				7C3ED78FA7C1113A1D387EEA /* MentionText.swift in Sources */,
 				4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */,
+				CD702DC85031A301F6687C61 /* NotificationModel.swift in Sources */,
+				27EBC036E34C7199DDB4D33F /* NotificationModels.swift in Sources */,
+				F2FB166F16323DB7B77E9C0B /* NotificationSettingsView.swift in Sources */,
+				DB44B23855E90D697C75452D /* OneSignalNotificationService.swift in Sources */,
 				59162197B3F96A8D054670C6 /* OutgoingMessage.swift in Sources */,
 				B82AEEFC5C19DCFBDCEF6B38 /* ProjectBranchRow.swift in Sources */,
 				AA4AD44A95E3C8D96EAF4811 /* ProjectGit.swift in Sources */,
@@ -501,8 +645,10 @@
 				AEB3BBDF3678B7A48630E01D /* SessionProjectPicker.swift in Sources */,
 				D846FE6BE213A32414FCFCAE /* SessionSearch.swift in Sources */,
 				256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */,
+				EA65E2F70800ECD9D895826B /* SettingsView.swift in Sources */,
 				4B101D516DBF7D560AA710F6 /* SignInView.swift in Sources */,
 				36A47666D86EC3CEA0817A81 /* UserMessageText.swift in Sources */,
+				417F01C3AEB7306AA1A3B7B8 /* WorkspacePickerView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -517,6 +663,7 @@
 				9B10551437F89D49FCE2B4C3 /* ConversationQuestionTests.swift in Sources */,
 				B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */,
 				E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */,
+				AAEDCFA3378D9106D39367BB /* NotificationTests.swift in Sources */,
 				3BF139DE4510CCC4A72F4E9F /* OutgoingMessageTests.swift in Sources */,
 				DD1B41F3673C97F1791C0435 /* ProjectGitTests.swift in Sources */,
 				617C98A6547E19F77D7D0F2B /* SessionMetadataTests.swift in Sources */,
@@ -524,12 +671,18 @@
 				CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */,
 				F147BA09F273F0B35A5CF7A5 /* SessionTabsTests.swift in Sources */,
 				A623FD39CBAE3F01F7779351 /* SignInTests.swift in Sources */,
+				CF349598601956A92CD49E89 /* WorkspaceSelectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		BC4C15BF72C3ED33C9596DDD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EFFA4553B74A3CE6EBD70DAB /* KurageNotificationService */;
+			targetProxy = 92D1F1A0DA822156D16B3F80 /* PBXContainerItemProxy */;
+		};
 		EC871511AA16ED448AB84F85 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 916545DECCA9CB31B4D2CD75 /* Kurage */;
@@ -546,7 +699,9 @@
 		0051F96817EDF71830AF95B5 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KurageApp/Kurage.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
@@ -554,11 +709,13 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = KurageApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				KURAGE_ONESIGNAL_APP_ID = "199f71a9-c5a2-42c9-ac88-4b8b7593b06f";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -572,21 +729,69 @@
 			};
 			name = Debug;
 		};
+		2C06B0680F543C964CF4EC54 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = KurageNotificationService/KurageNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = V6GTS74AND;
+				INFOPLIST_FILE = KurageNotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.4.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.spike.kurage.notification-service";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		302BA21FDC655A992D4BD058 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = KurageNotificationService/KurageNotificationService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 10;
+				DEVELOPMENT_TEAM = V6GTS74AND;
+				INFOPLIST_FILE = KurageNotificationService/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.4.2;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.spike.kurage.notification-service";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		5A45467485656C2E813DD5EA /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = KurageApp/Kurage.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = KurageApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Kurage;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Take photos to attach to your messages.";
 				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				KURAGE_ONESIGNAL_APP_ID = "199f71a9-c5a2-42c9-ac88-4b8b7593b06f";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -832,6 +1037,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		8579BCFB0B350754B61A12CB /* Build configuration list for PBXNativeTarget "KurageNotificationService" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2C06B0680F543C964CF4EC54 /* Debug */,
+				302BA21FDC655A992D4BD058 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -843,9 +1057,27 @@
 				revision = b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed;
 			};
 		};
+		AE86731C9CF07FA4875B4B42 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/OneSignal/OneSignal-iOS-SDK.git";
+			requirement = {
+				kind = exactVersion;
+				version = 5.5.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		BFEB7B7C324D450819F3AE78 /* OneSignalFramework */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AE86731C9CF07FA4875B4B42 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalFramework;
+		};
+		D2DA0C63F0F7F6BF7F81C192 /* OneSignalExtension */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AE86731C9CF07FA4875B4B42 /* XCRemoteSwiftPackageReference "OneSignal-iOS-SDK" */;
+			productName = OneSignalExtension;
+		};
 		E19E548C83F201B3073B5E62 /* MarkdownView */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 32DEDD68334E53E118DCE33A /* XCRemoteSwiftPackageReference "MarkdownView" */;

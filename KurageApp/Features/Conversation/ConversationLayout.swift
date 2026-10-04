@@ -12,6 +12,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
     var isRunning = false
+    var startsAtTop = false
     let scrollRequestID: Int
     var messageTimestamp: Double? = nil
     var onBottomMessage: (Double?) -> Void = { _ in }
@@ -25,7 +26,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     @ViewBuilder let footer: () -> Footer
 
     func makeUIViewController(context: Context) -> ConversationLayoutController<Footer> {
-        ConversationLayoutController(footer: footer())
+        ConversationLayoutController(footer: footer(), startsAtTop: startsAtTop)
     }
 
     func updateUIViewController(_ controller: ConversationLayoutController<Footer>, context: Context) {
@@ -75,6 +76,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var snapshotGeneration = 0
     private var applyingSnapshot = false
     private var followsOutput = true
+    private let startsAtTop: Bool
+    private var isOpeningAtTop: Bool
     private var isUserScrolling = false
     private var isAdjustingLayout = false
     /// Opened "Worked for …" and activity disclosures, restored when cells are reconfigured or reused.
@@ -83,7 +86,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
     var onPreviewImage: ((ConversationImage) -> Void)?
 
-    init(footer: Footer) {
+    init(footer: Footer, startsAtTop: Bool = false) {
+        self.startsAtTop = startsAtTop
+        isOpeningAtTop = startsAtTop
         footerHost = UIHostingController(rootView: MeasuredConversationFooter(content: footer, onHeightChange: { _ in }))
         super.init(nibName: nil, bundle: nil)
     }
@@ -238,6 +243,14 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
                 canRetryMessage: Bool = false, canEditMessage: Bool = false,
                 footer: Footer, onRefresh: @escaping () -> Void) {
         loadViewIfNeeded()
+        // Decide whether to follow only after the first snapshot has settled;
+        // a single long answer may initially have a short estimated row height.
+        if isOpeningAtTop, !turnIDs.isEmpty, !applyingSnapshot, !needsReceiptLayout,
+           tableView.window != nil, tableView.bounds.height > 0 {
+            isOpeningAtTop = false
+            followsOutput = abs(tableView.contentOffset.y - bottomOffset) <= 20
+            if followsOutput { readingAnchor = nil }
+        }
         self.messageTimestamp = messageTimestamp
         needsReceiptLayout = true
         self.onRefresh = onRefresh
@@ -265,6 +278,12 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         self.canEditMessage = canEditMessage
         let updatedChanges = Dictionary(uniqueKeysWithValues: fileChanges.map { ($0.id, $0) })
         let updatedIDs = turns.map(\.id)
+        // Read-only runs open at their beginning. Once a short run reaches the
+        // bottom, subsequent output follows the same gesture rules as chat.
+        if startsAtTop, turnIDs.isEmpty, let firstID = updatedIDs.first {
+            followsOutput = false
+            readingAnchor = ReadingAnchor(id: firstID, viewportOffset: 6)
+        }
         let lastTurnChanged = turnIDs.last != updatedIDs.last
         let changedIDs: [ConversationTurn.ID] = turns.compactMap { turn in
             let runningDisplayChanged = (runningChanged || lastTurnChanged) &&
@@ -359,8 +378,8 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             let offset = tableView.rectForRow(at: indexPath).minY - readingAnchor.viewportOffset
             bottomInset = max(bottomInset, offset + tableView.bounds.height - tableView.contentSize.height)
         }
-        // Short conversations sit next to the composer, without inserting a fake message row.
-        let topInset = max(6, tableView.bounds.height - bottomInset - tableView.contentSize.height)
+        // Chat sits next to its composer; read-only runs begin below their header.
+        let topInset = startsAtTop ? 6 : max(6, tableView.bounds.height - bottomInset - tableView.contentSize.height)
         let inset = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
         if tableView.contentInset != inset { tableView.contentInset = inset }
         let indicatorInsets = UIEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
@@ -410,6 +429,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        isOpeningAtTop = false
         isUserScrolling = true
         anchorsDisclosure = false
         followsOutput = false

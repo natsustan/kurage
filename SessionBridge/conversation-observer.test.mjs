@@ -830,3 +830,36 @@ test('metadata changes update the tab group while history changes do not rescan 
   assert.equal(h.updates.length, published + 1);
   h.controller.abort();
 });
+
+test('subagent transcript growth and deletion emit patches without changing parent content', async () => {
+  const h = harness();
+  const history = h.doc.getList('history');
+  const entry = text => ({ id: 'parent', role: 'assistant', items: [
+    { type: 'text', text: 'Parent answer' },
+    { type: 'subagent_task', taskId: 'run', status: 'in_progress', run: { sessionId: 'acp',
+      snapshot: { state: 'running', support: { stream: ['text'] } },
+      items: text ? [{ type: 'text', text }] : [] } },
+  ] });
+  history.push(entry('First'));
+  h.doc.commit();
+  await h.start();
+  const id = h.updates.at(-1).subtasks[0].run.turns[0].id;
+  for (const text of ['First and second', '']) {
+    history.delete(0, 1);
+    history.push(entry(text));
+    h.doc.commit();
+    await h.flush();
+    const patch = h.updates.at(-1);
+    assert.equal(patch.replacesSubtasks, true);
+    assert.deepEqual(patch.changed, []);
+    assert.equal(patch.subtasks[0].run.turns[0].id, id);
+    assert.equal(patch.subtasks[0].run.turns[0].text, text);
+  }
+  h.controller.abort();
+  const count = h.updates.length;
+  history.push(entry('After cancel'));
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.length, count);
+  assert.equal(h.releases(), 2);
+});

@@ -308,6 +308,44 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testSubtaskRowsShowStatusBeforeOpeningTheirDetails() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtask-statuses"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let subtasks = app.buttons["conversation-subtasks"]
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        XCTAssertTrue(subtasks.label.contains("4 agents"))
+        tap(subtasks)
+        for (id, status) in [("review-reuse", "Done"), ("review-quality", "Done"),
+                             ("review-efficiency", "Running"), ("review-clarity", "Failed")] {
+            let row = app.buttons["subtask-\(id)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            XCTAssertEqual(row.value as? String, status)
+            XCTAssertTrue(row.label.contains(status))
+        }
+        XCTAssertTrue(app.buttons["subtask-review-efficiency"].label.contains("Checking command latency."))
+        attachScreen(app, name: "Subagent colors and visible row states")
+        let reuse = app.buttons["subtask-review-reuse"]
+        let quality = app.buttons["subtask-review-quality"]
+        let list = app.descendants(matching: .any)["subtask-list"]
+        for _ in 0..<4 where !list.frame.contains(quality.frame) { list.swipeUp() }
+        XCTAssertTrue(list.frame.contains(quality.frame))
+        attachScreen(app, name: "Completed subagent row colors")
+        tap(reuse)
+        XCTAssertTrue(app.staticTexts["Reuse review finished."].waitForExistence(timeout: 5))
+        tap(app.buttons["close-subtask"])
+        tap(subtasks)
+        XCTAssertEqual(app.buttons["subtask-review-efficiency"].value as? String, "Running")
+        XCTAssertEqual(app.buttons["subtask-review-reuse"].value as? String, "Done")
+        attachScreen(app, name: "Subagent colors after reopening")
+        for _ in 0..<4 where !list.frame.contains(quality.frame) { list.swipeUp() }
+        XCTAssertTrue(list.frame.contains(quality.frame))
+        attachScreen(app, name: "Completed subagent colors after reopening")
+    }
+
+    @MainActor
     func testSubtasksOpenReadOnlyAndReturnToParentDraft() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-subtasks"]
@@ -347,6 +385,67 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertEqual(field.value as? String, "Keep parent draft")
         XCTAssertTrue(subtasks.exists)
         attachScreen(app, name: "Parent draft after subtask")
+    }
+
+    @MainActor
+    func testNormalizedSubtaskShowsFullAnswerAndFoldedWork() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep transcript draft")
+        tap(app.buttons["conversation-subtasks"])
+        tap(app.buttons["subtask-review-quality"])
+        let transcript = app.descendants(matching: .any)["subtask-transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Checking state isolation."].waitForExistence(timeout: 5))
+        let work = app.buttons["turn-work-toggle-quality-output"]
+        XCTAssertTrue(work.waitForExistence(timeout: 5))
+        let title = app.staticTexts["subtask-title"]
+        let context = app.staticTexts["subtask-context"]
+        let close = app.buttons["close-subtask"]
+        XCTAssertEqual(title.label, "Review correctness")
+        XCTAssertEqual(context.label, "kurage · spike@mac")
+        XCTAssertGreaterThan(title.frame.minX, close.frame.maxX)
+        XCTAssertLessThan(context.frame.minY, close.frame.maxY + 10)
+        XCTAssertGreaterThan(close.frame.minY, app.frame.height * 0.35)
+        XCTAssertLessThan(work.frame.minY, close.frame.maxY + 80)
+        XCTAssertTrue(work.label.contains("54s"))
+        XCTAssertFalse(app.staticTexts["Completed"].exists)
+        XCTAssertEqual(app.buttons["subtask-info"].value as? String, "Completed")
+        XCTAssertFalse(app.staticTexts["Delegated task for Review correctness"].exists)
+        XCTAssertFalse(transcript.buttons["send-follow-up"].exists)
+        XCTAssertFalse(transcript.buttons["pause-session"].exists)
+        XCTAssertFalse(transcript.descendants(matching: .any)["follow-up-field"].exists)
+        attachScreen(app, name: "Subagent full Markdown answer")
+        let table = transcript.tables["conversation-transcript"]
+        tap(app.buttons["subtask-info"])
+        for label in ["Completed", "Model: Fixture model", "1 tool uses"] {
+            XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                .firstMatch.waitForExistence(timeout: 5))
+        }
+        let tokenUsage = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "tokens")).firstMatch
+        XCTAssertTrue(tokenUsage.waitForExistence(timeout: 5))
+        XCTAssertEqual(tokenUsage.label.filter(\.isNumber), "2400")
+        attachScreen(app, name: "Subagent status and usage popover")
+        table.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.9)).tap()
+        XCTAssertTrue(close.isHittable)
+        for _ in 0..<5 where !work.isHittable { table.swipeDown() }
+        XCTAssertTrue(work.isHittable)
+        tap(work)
+        XCTAssertTrue(app.staticTexts["Checked workspace scoped cache."].waitForExistence(timeout: 5))
+        let activity = app.buttons["turn-activity-quality-read"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 5))
+        for _ in 0..<5 where !activity.isHittable { table.swipeUp() }
+        tap(activity)
+        XCTAssertTrue(app.staticTexts["Read AppModel.swift"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "Subagent expanded work and tool titles")
+        tap(app.buttons["close-subtask"])
+        XCTAssertEqual(field.value as? String, "Keep transcript draft")
+        attachScreen(app, name: "Parent draft after full transcript")
     }
 
     @MainActor

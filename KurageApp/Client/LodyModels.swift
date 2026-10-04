@@ -418,12 +418,27 @@ struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
     var detail: String
 }
 
-/// One subagent the session spawned. Codex reports its lifecycle activities as
-/// separate history tasks, so the bridge groups them here: `steps` keeps what
-/// the subagent ran through, while the remaining fields describe it as a whole.
-struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable {
+/// One subagent projected from parent history. Normalized runs carry their own
+/// transcript; legacy Codex lifecycle activities are grouped into `steps`.
+struct ConversationSubtask: Codable, Equatable, Sendable, Identifiable {
     enum Status: String, Codable, Sendable {
-        case pending, running = "in_progress", completed, failed
+        case pending, running = "in_progress", completed, failed, cancelled, unknown
+    }
+
+    /// Projected from the normalized run embedded in parent history, not a child Session.
+    struct Run: Codable, Equatable, Sendable {
+        struct PlanEntry: Codable, Equatable, Sendable {
+            enum Status: String, Codable, Sendable {
+                case pending, inProgress = "in_progress", completed
+            }
+            var content: String
+            var status: Status
+        }
+
+        var turns: [ConversationTurn]
+        var streamsOutput: Bool
+        var outputIncomplete: Bool
+        var plan: [PlanEntry] = []
     }
 
     struct Step: Codable, Equatable, Hashable, Sendable, Identifiable {
@@ -445,6 +460,8 @@ struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable
     var totalTokens: Int? = nil
     var toolUses: Int? = nil
     var steps: [Step]? = nil
+    var run: Run? = nil
+    var progressSummary: String? = nil
 }
 
 struct Conversation: Codable, Equatable, Sendable {

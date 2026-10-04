@@ -78,6 +78,8 @@ protocol LodyClient: AnyObject {
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession]
     func mentionSkills(templateSessionID: String, agentConfigID: String?, projectID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSkill]
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation
+    /// Resolve an existing root or direct tab from current workspace metadata only.
+    func notificationDestination(sessionID: String, workspaceID: String) async throws -> NotificationSessionDestination?
     /// The turn ID reserved for an in-flight or unconfirmed text send.
     func pendingTextSend(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) -> PendingTextSend?
     /// Retire only the exact pending turn after acceptance or permanent rejection.
@@ -157,6 +159,11 @@ extension LodyClient {
 
     func startSessionTab(_ request: SessionTabStart, parentSessionID: String, workspaceID: String) async throws {
         throw LodyClientError.notConnected
+    }
+
+    func notificationDestination(sessionID: String, workspaceID: String) async throws -> NotificationSessionDestination? {
+        guard try await sessions(workspaceID: workspaceID).contains(where: { $0.id == sessionID }) else { return nil }
+        return NotificationSessionDestination(rootSessionID: sessionID, sessionID: sessionID, isTabClosed: false)
     }
 
     func mentionSessions(projectID: String, excluding sessionID: String?, workspaceID: WorkspaceSummary.ID) async throws -> [MentionSession] { [] }
