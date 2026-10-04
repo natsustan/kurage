@@ -2,6 +2,42 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testMentionSuggestionsOverlayChangesAndSubtasksWithoutMovingThem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Draft")
+        let changes = app.buttons["conversation-changes-hud"]
+        let subtasks = app.buttons["conversation-subtasks"]
+        XCTAssertTrue(changes.waitForExistence(timeout: 5))
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        let changesFrame = changes.frame
+        let subtasksFrame = subtasks.frame
+        attachScreen(app, name: "HUD positions before mentions")
+
+        field.typeText(" @")
+        let menu = app.scrollViews["mention-suggestions"]
+        let session = app.buttons["mention-session-session-tests"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        XCTAssertEqual(changes.frame.minY, changesFrame.minY, accuracy: 1)
+        XCTAssertEqual(subtasks.frame.minY, subtasksFrame.minY, accuracy: 1)
+        XCTAssertTrue(menu.frame.intersects(changes.frame))
+        XCTAssertTrue(menu.frame.intersects(subtasks.frame))
+        attachScreen(app, name: "Mention panel over stationary HUDs")
+        tap(session)
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5))
+        XCTAssertTrue((field.value as? String)?.contains("Draft @fix-flaky-tests") == true)
+        XCTAssertTrue(changes.isHittable)
+        XCTAssertTrue(subtasks.isHittable)
+        attachScreen(app, name: "HUDs after choosing mention")
+    }
+
+    @MainActor
     func testSkillMentionLoadingMenuKeepsFullWidth() {
         verifyMentionLoadingMenu(trigger: "$", alternate: "@")
     }
@@ -56,6 +92,35 @@ final class ShellFlowTests: XCTestCase {
     @MainActor
     func testNewSessionLongMentionMenusStayAboveKeyboard() {
         verifyLongMentionMenu(newSession: true)
+    }
+
+    @MainActor
+    func testMentionSuggestionsStayOnScreenWithAMultilineDraft() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("First line\nSecond line\nThird line\nFourth line\nFifth line\n$sample")
+        let menu = app.scrollViews["mention-suggestions"]
+        let first = app.buttons["mention-skill-sample-skill-1"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        XCTAssertTrue(first.isHittable)
+        attachScreen(app, name: "Mention candidates above multiline draft")
+        let last = app.buttons["mention-skill-sample-skill-12"]
+        for _ in 0..<10 {
+            if last.isHittable && last.frame.maxY <= menu.frame.maxY { break }
+            menu.swipeUp()
+        }
+        XCTAssertTrue(last.isHittable)
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        tap(last)
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5))
+        XCTAssertTrue((field.value as? String)?.contains("Fifth line\n$sample-skill-12") == true)
+        attachScreen(app, name: "Mention inserted in multiline draft")
     }
 
     @MainActor
@@ -116,6 +181,7 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(field.isHittable, file: file, line: line)
         XCTAssertTrue(send.isHittable, file: file, line: line)
         XCTAssertGreaterThan(menu.frame.height, 0, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(menu.frame.minY, app.frame.minY, file: file, line: line)
         let row = menu.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
                                                      "mention-skill-", "mention-session-")).firstMatch
         XCTAssertGreaterThan(row.frame.height, 0, file: file, line: line)

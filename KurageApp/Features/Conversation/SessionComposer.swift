@@ -233,9 +233,7 @@ struct SessionComposer: View {
     var body: some View {
         let loadID = mentionLoadID
         VStack(spacing: 8) {
-            if let query = mentionQuery {
-                mentionMenu(query)
-            } else if mentions.hasSkillMentions, mentionLoadFailed {
+            if mentionQuery == nil, mentions.hasSkillMentions, mentionLoadFailed {
                 Button("Could not refresh skills. Retry") { mentionRetry += 1 }
                     .accessibilityIdentifier("mention-retry")
             }
@@ -286,6 +284,12 @@ struct SessionComposer: View {
                 content.padding(.horizontal, isExpanded ? 0 : 12)
             }
         }
+            .background {
+                MentionSuggestionsAnchor(isPresented: mentionQuery != nil && scenePhase == .active,
+                                         height: mentionRowHeight * (dynamicTypeSize.isAccessibilitySize ? 1 : 3)) {
+                    if let query = mentionQuery { mentionMenu(query) }
+                }
+            }
             .background {
                 if let sendFeedbackView {
                     ComposerSendFeedbackAnchor(view: sendFeedbackView)
@@ -451,12 +455,11 @@ struct SessionComposer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
         }
-        // Large accessibility text also grows the multiline composer. Reserve
-        // one candidate row so it stays reachable above the keyboard; the rest
-        // remain scrollable. Loading and results use the same viewport.
+        // The overlay supplies the available viewport height. Candidate rows
+        // keep their text size and remain scrollable when space is limited.
         .frame(maxWidth: .infinity)
-        .frame(height: mentionRowHeight * (dynamicTypeSize.isAccessibilitySize ? 1 : 3))
         .clipped()
+        .background(.background, in: .rect(cornerRadius: 20))
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .buttonStyle(.plain)
         .accessibilityIdentifier("mention-suggestions")
@@ -901,6 +904,154 @@ private struct ReasoningGauge: View {
                          with: .color(.primary))
         }
         .accessibilityHidden(true)
+    }
+}
+
+/// Suggestions float above the footer's scroll viewport and its glass HUDs.
+/// The window never takes keyboard focus and only handles touches in the panel.
+private struct MentionSuggestionsAnchor<Content: View>: UIViewRepresentable {
+    let isPresented: Bool
+    let height: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> RunConfigOverlayAnchor.AnchorView {
+        let view = RunConfigOverlayAnchor.AnchorView()
+        view.isUserInteractionEnabled = false
+        view.onLayout = { [weak coordinator = context.coordinator, weak view] in
+            guard let view else { return }
+            coordinator?.position(from: view)
+        }
+        return view
+    }
+
+    func updateUIView(_ view: RunConfigOverlayAnchor.AnchorView, context: Context) {
+        context.coordinator.configuration = self
+        context.coordinator.update(from: view)
+    }
+
+    static func dismantleUIView(_ view: RunConfigOverlayAnchor.AnchorView, coordinator: Coordinator) {
+        view.onLayout = nil
+        coordinator.close()
+    }
+
+    final class SuggestionsWindow: UIWindow {
+        var panelFrame: CGRect = .zero
+        override var canBecomeKey: Bool { false }
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            guard panelFrame.contains(point) else { return nil }
+            return super.hitTest(point, with: event)
+        }
+    }
+
+    @MainActor
+    final class Coordinator {
+        var configuration: MentionSuggestionsAnchor?
+        private var window: SuggestionsWindow?
+        private var host: UIHostingController<MentionSuggestionsOverlay<Content>>?
+        private var displayLink: CADisplayLink?
+
+        func update(from anchor: UIView) {
+            guard let configuration, configuration.isPresented,
+                  let source = anchor.window, let scene = source.windowScene else {
+                close()
+                return
+            }
+            let content = configuration.content()
+            if window == nil {
+                let window = SuggestionsWindow(windowScene: scene)
+                window.frame = source.frame
+                window.windowLevel = .alert + 1
+                window.backgroundColor = .clear
+                let host = UIHostingController(rootView: MentionSuggestionsOverlay(
+                    panelFrame: .zero, content: content
+                ))
+                host.safeAreaRegions = []
+                host.view.backgroundColor = .clear
+                window.rootViewController = host
+                self.window = window
+                self.host = host
+                // Moving a UIKit ancestor (keyboard avoidance or footer
+                // scrolling) does not lay out the SwiftUI anchor itself.
+                let tracker = MentionSuggestionsPositionTracker()
+                tracker.onUpdate = { [weak self, weak anchor] in
+                    guard let anchor else { self?.close(); return }
+                    self?.position(from: anchor)
+                }
+                let link = CADisplayLink(target: tracker, selector: #selector(MentionSuggestionsPositionTracker.tick))
+                link.add(to: .main, forMode: .common)
+                displayLink = link
+            }
+            position(from: anchor)
+            if let host, let window {
+                host.rootView = MentionSuggestionsOverlay(panelFrame: window.panelFrame,
+                                                          content: content)
+            }
+        }
+
+        func position(from anchor: UIView) {
+            guard let configuration, configuration.isPresented,
+                  let source = anchor.window else {
+                close()
+                return
+            }
+            // SwiftUI can first update the anchor before it joins a window.
+            // Its attachment callback must also be able to create the panel.
+            guard let window, let host else {
+                update(from: anchor)
+                return
+            }
+            let rect = anchor.convert(anchor.bounds, to: source)
+            if window.frame != source.frame { window.frame = source.frame }
+            let style = source.traitCollection.userInterfaceStyle
+            if window.overrideUserInterfaceStyle != style { window.overrideUserInterfaceStyle = style }
+            let safeArea = source.bounds.inset(by: source.safeAreaInsets)
+            let bottom = max(safeArea.minY, min(rect.minY - 8, safeArea.maxY))
+            let height = min(configuration.height, bottom - safeArea.minY)
+            let panel = CGRect(x: rect.minX, y: bottom - height,
+                               width: rect.width, height: height)
+            let panelFrame = source.convert(panel, to: window)
+            window.isHidden = panelFrame.isEmpty
+            guard panelFrame != window.panelFrame else { return }
+            window.panelFrame = panelFrame
+            // Moving the panel must not rerun query parsing or candidate search.
+            host.rootView = MentionSuggestionsOverlay(panelFrame: window.panelFrame,
+                                                      content: host.rootView.content)
+        }
+
+        func close() {
+            displayLink?.invalidate()
+            displayLink = nil
+            window?.isHidden = true
+            window?.rootViewController = nil
+            host = nil
+            window = nil
+        }
+    }
+}
+
+@MainActor
+private final class MentionSuggestionsPositionTracker: NSObject {
+    var onUpdate: (() -> Void)?
+
+    @objc func tick() { onUpdate?() }
+}
+
+private struct MentionSuggestionsOverlay<Content: View>: View {
+    let panelFrame: CGRect
+    let content: Content
+
+    var body: some View {
+        GeometryReader { _ in
+            GlassEffectContainer {
+                content
+            }
+                .frame(width: panelFrame.width, height: panelFrame.height)
+                .position(x: panelFrame.midX, y: panelFrame.midY)
+        }
+        .ignoresSafeArea()
     }
 }
 

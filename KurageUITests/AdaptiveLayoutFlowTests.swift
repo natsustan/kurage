@@ -212,7 +212,11 @@ final class AdaptiveLayoutFlowTests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertEqual(field.value as? String, "Draft survives window changes")
-        attach(app, "Landscape conversation")
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            let window = app.windows.firstMatch.frame
+            XCTAssertLessThan(window.width, window.height)
+        }
+        attach(app, "Conversation after device rotation")
 
         XCUIDevice.shared.orientation = .portrait
         showSessions(app, target: session("session-tests", in: app))

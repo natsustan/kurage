@@ -42,7 +42,7 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: Take photos to attach to your messages.
         INFOPLIST_KEY_CFBundleDisplayName: Kurage
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
-        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: V6GTS74AND
