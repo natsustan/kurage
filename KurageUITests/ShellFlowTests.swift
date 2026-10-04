@@ -2,6 +2,42 @@ import XCTest
 
 final class ShellFlowTests: XCTestCase {
     @MainActor
+    func testMentionSuggestionsOverlayChangesAndSubtasksWithoutMovingThem() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-subtasks"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Draft")
+        let changes = app.buttons["conversation-changes-hud"]
+        let subtasks = app.buttons["conversation-subtasks"]
+        XCTAssertTrue(changes.waitForExistence(timeout: 5))
+        XCTAssertTrue(subtasks.waitForExistence(timeout: 5))
+        let changesFrame = changes.frame
+        let subtasksFrame = subtasks.frame
+        attachScreen(app, name: "HUD positions before mentions")
+
+        field.typeText(" @")
+        let menu = app.scrollViews["mention-suggestions"]
+        let session = app.buttons["mention-session-session-tests"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: false)
+        XCTAssertEqual(changes.frame.minY, changesFrame.minY, accuracy: 1)
+        XCTAssertEqual(subtasks.frame.minY, subtasksFrame.minY, accuracy: 1)
+        XCTAssertTrue(menu.frame.intersects(changes.frame))
+        XCTAssertTrue(menu.frame.intersects(subtasks.frame))
+        attachScreen(app, name: "Mention panel over stationary HUDs")
+        tap(session)
+        XCTAssertTrue(menu.waitForNonExistence(timeout: 5))
+        XCTAssertTrue((field.value as? String)?.contains("Draft @fix-flaky-tests") == true)
+        XCTAssertTrue(changes.isHittable)
+        XCTAssertTrue(subtasks.isHittable)
+        attachScreen(app, name: "HUDs after choosing mention")
+    }
+
+    @MainActor
     func testSkillMentionLoadingMenuKeepsFullWidth() {
         verifyMentionLoadingMenu(trigger: "$", alternate: "@")
     }
