@@ -2,6 +2,91 @@ import Foundation
 import Testing
 @testable import Kurage
 
+struct NotificationIdentityTests {
+    @Test func legacyColdClickSurvivesMatchingAccountRestoration() throws {
+        var identity = NotificationIdentity(legacyRecipientID: "user-a")
+        let owner = try #require(identity.recipientUserID(nil))
+        let capturedGeneration = identity.generation
+        #expect(owner == "user-a")
+        #expect(identity.acceptsClick(userID: owner, capturedGeneration: capturedGeneration))
+
+        identity.identify("user-a")
+        #expect(identity.recipientUserID(nil) == owner)
+        #expect(identity.acceptsClick(userID: owner, capturedGeneration: capturedGeneration))
+        identity.identify("user-a")
+        #expect(identity.recipientUserID(nil) == owner)
+    }
+
+    @Test(arguments: [false, true])
+    func accountSwitchRejectsOwnerlessPayloadsAndPreservesExplicitRecipients(signOutFirst: Bool) {
+        var identity = NotificationIdentity(legacyRecipientID: "user-a")
+        identity.identify("user-a")
+        if signOutFirst { identity.identify(nil) }
+        identity.identify("user-b")
+
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(identity.recipientUserID("user-b") == "user-b")
+        #expect(identity.acceptsClick(userID: "user-b", capturedGeneration: identity.generation))
+        #expect(!identity.acceptsClick(userID: "user-a", capturedGeneration: identity.generation))
+
+        identity.identify("user-a")
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(identity.acceptsClick(userID: "user-a", capturedGeneration: identity.generation))
+    }
+
+    @Test func signOutAndSameAccountReLoginDoNotRestoreLegacyFallback() {
+        var identity = NotificationIdentity(legacyRecipientID: "user-a")
+        identity.identify("user-a")
+        identity.identify(nil)
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(!identity.acceptsClick(userID: "user-a", capturedGeneration: identity.generation))
+
+        identity.identify("user-a")
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(identity.recipientUserID("user-a") == "user-a")
+        #expect(identity.acceptsClick(userID: "user-a", capturedGeneration: identity.generation))
+    }
+
+    @Test func restoringAnotherAccountRejectsLegacyColdClick() throws {
+        var identity = NotificationIdentity(legacyRecipientID: "user-a")
+        let owner = try #require(identity.recipientUserID(nil))
+        let capturedGeneration = identity.generation
+        identity.identify("user-b")
+
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(!identity.acceptsClick(userID: owner, capturedGeneration: capturedGeneration))
+        #expect(identity.acceptsClick(userID: "user-b", capturedGeneration: identity.generation))
+    }
+
+    @Test func unknownStartupIdentityCannotAttributeOwnerlessPayloadsToFirstAccount() {
+        var identity = NotificationIdentity()
+        #expect(identity.recipientUserID(nil) == nil)
+        let capturedGeneration = identity.generation
+        identity.identify("user-a")
+
+        #expect(identity.recipientUserID(nil) == nil)
+        #expect(identity.recipientUserID("user-a") == "user-a")
+        #expect(identity.acceptsClick(userID: "user-a", capturedGeneration: capturedGeneration))
+    }
+
+    @Test func queuedClickIsRejectedAfterSwitchingAwayAndBack() {
+        var identity = NotificationIdentity(legacyRecipientID: "user-a")
+        identity.identify("user-a")
+        let capturedGeneration = identity.generation
+        identity.identify("user-b")
+        identity.identify("user-a")
+
+        #expect(!identity.acceptsClick(userID: "user-a", capturedGeneration: capturedGeneration))
+        #expect(identity.recipientUserID(nil) == nil)
+    }
+
+    @Test func emptyRecipientDoesNotUseLegacyFallback() {
+        let identity = NotificationIdentity(legacyRecipientID: "user-a")
+        #expect(identity.recipientUserID("") == nil)
+        #expect(NotificationIdentity(legacyRecipientID: "").recipientUserID(nil) == nil)
+    }
+}
+
 @MainActor
 struct NotificationTests {
     @Test func routeDecodesComponents() throws {

@@ -25,9 +25,7 @@ final class OneSignalNotificationService: NSObject, PushNotificationService, OSN
     private var userID: String?
     private var wantsSubscription = false
     private struct DisplayContext: Sendable {
-        var userID: String?
-        var legacyRecipientID: String?
-        var generation = 0
+        var identity = NotificationIdentity()
         var workspaceIDs: Set<String> = []
         var sessionID: String?
     }
@@ -42,7 +40,7 @@ final class OneSignalNotificationService: NSObject, PushNotificationService, OSN
         OneSignal.Debug.setLogLevel(.LL_NONE)
         OneSignal.initialize(appID, withLaunchOptions: launchOptions)
         // Account restoration must establish the native identity before subscribing.
-        displayContext.withLock { $0.legacyRecipientID = OneSignal.User.externalId }
+        displayContext.withLock { $0.identity = NotificationIdentity(legacyRecipientID: OneSignal.User.externalId) }
         OneSignal.User.pushSubscription.optOut()
         OneSignal.Notifications.addClickListener(self)
         OneSignal.Notifications.addForegroundLifecycleListener(self)
@@ -52,11 +50,17 @@ final class OneSignalNotificationService: NSObject, PushNotificationService, OSN
 
     func identify(_ id: String?, enabled: Bool) {
         guard isConfigured else { return }
-        if displayContext.withLock({ $0.legacyRecipientID }) != id { clearDelivered() }
+        let shouldClearDelivered = displayContext.withLock { context in
+            let previousUserID = context.identity.userID ?? context.identity.legacyRecipientID
+            context.identity.identify(id)
+            context.workspaceIDs = []
+            context.sessionID = nil
+            return previousUserID != id
+        }
+        if shouldClearDelivered { clearDelivered() }
         OneSignal.User.pushSubscription.optOut()
         userID = id
         wantsSubscription = enabled && id != nil
-        displayContext.withLock { $0 = DisplayContext(userID: id, legacyRecipientID: id, generation: $0.generation + 1) }
         if let id, !id.isEmpty {
             OneSignal.login(id)
             if wantsSubscription && OneSignal.Notifications.permission { OneSignal.User.pushSubscription.optIn() }
@@ -119,14 +123,14 @@ final class OneSignalNotificationService: NSObject, PushNotificationService, OSN
         guard let id = event.notification.notificationId,
               let rawRoute = event.notification.additionalData?["route"] as? String,
               let route = NotificationRoute(rawRoute),
-              let owner = event.notification.additionalData?["recipientUserId"] as? String
-                ?? context.legacyRecipientID, !owner.isEmpty else { return }
+              let owner = context.identity.recipientUserID(
+                event.notification.additionalData?["recipientUserId"] as? String) else { return }
         let click = NotificationClick(id: id, route: route, userID: owner)
         Task { @MainActor [weak self] in
             guard let self else { return }
             let current = displayContext.withLock { $0 }
-            guard current.generation == context.generation ||
-                    (context.generation == 0 && current.generation == 1 && current.userID == owner) else { return }
+            guard current.identity.acceptsClick(userID: owner,
+                capturedGeneration: context.identity.generation) else { return }
             if let onClick { onClick(click) }
             else { bufferedClicks = Array((bufferedClicks + [click]).suffix(8)) }
         }
@@ -137,7 +141,8 @@ final class OneSignalNotificationService: NSObject, PushNotificationService, OSN
         let rawRoute = event.notification.additionalData?["route"] as? String
         let route = rawRoute.flatMap(NotificationRoute.init)
         let shouldDisplay = displayContext.withLock { context in
-            guard let userID = context.userID, recipient == nil || recipient == userID else { return false }
+            guard let userID = context.identity.userID,
+                  context.identity.recipientUserID(recipient) == userID else { return false }
             return route == nil || route?.sessionID != context.sessionID ||
                 !context.workspaceIDs.contains(route?.workspace ?? "")
         }

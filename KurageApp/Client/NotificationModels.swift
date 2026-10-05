@@ -30,6 +30,35 @@ struct NotificationClick: Equatable, Sendable, Identifiable {
     let userID: String
 }
 
+struct NotificationIdentity: Sendable {
+    private(set) var userID: String?
+    private(set) var legacyRecipientID: String?
+    private(set) var generation = 0
+
+    init(legacyRecipientID: String? = nil) {
+        self.legacyRecipientID = legacyRecipientID?.isEmpty == false ? legacyRecipientID : nil
+    }
+
+    mutating func identify(_ id: String?) {
+        // An ownerless payload cannot be attributed after leaving the startup SDK identity.
+        // Once discarded, the fallback stays unavailable until a new launch captures it.
+        if id != legacyRecipientID { legacyRecipientID = nil }
+        userID = id
+        generation += 1
+    }
+
+    func recipientUserID(_ recipient: String?) -> String? {
+        guard let owner = recipient ?? legacyRecipientID, !owner.isEmpty else { return nil }
+        return owner
+    }
+
+    func acceptsClick(userID owner: String, capturedGeneration: Int) -> Bool {
+        guard generation == 0 || userID == owner else { return false }
+        return generation == capturedGeneration ||
+            (capturedGeneration == 0 && generation == 1 && userID == owner)
+    }
+}
+
 struct NotificationSessionDestination: Codable, Equatable, Sendable {
     let rootSessionID: String
     let sessionID: String
