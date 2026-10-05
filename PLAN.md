@@ -1,5 +1,41 @@
 # Kurage 会话功能
 
+## Settings 固定高度与实心 Blue 气泡（2026-10-05）
+
+- Settings 按新参考图固定在实际屏幕约 85% 高度，使用单一 `.fraction(0.95)` 系统可用区域高度，隐藏拖动指示器，取消 medium／large 切换；普通与辅助字号都在同一高度内滚动，二级页面沿用同一个 sheet 与导航栈。此项取代上一轮默认半屏、上拉展开的方案。
+- Blue 用户文本气泡改为不透明蓝底与白色正文，参考图 Display P3 转为 sRGB 后使用 #006CEB；会话／skill 提及的标签与图标同步使用白色。Black 继续使用中性背景与语义文字色。更新消息渲染时比较强调色，切换 Blue／Black 会重绘已有正文和提及图标；显示标签与复制原始引用的规则沿用现有实现。
+- 调整既有 UI 回归以检查固定高度、无拖动条、上滑与重开同高，并提高 Blue 气泡实心填充的像素门槛；保留已有缓存刷新、浅／深色强调色范围和发送前后尺寸／去重检查。
+- 本轮 iPhone 17／iOS 27 Simulator 最终测试构建通过，20 项 ComposerMentions 测试通过；浅／深色 × Blue／Black 四组合气泡、发送尺寸／去重、最终固定高度、深色 accessibility-medium 固定高度共 4 次定向 UI 执行通过，另有 1 项仓库外白色提及／Settings 手势检查通过。Settings 与 Workspace 实测为 84.92% 全屏高度，无拖动条，上滑、返回与重开同高；已复核全屏截图与辅助功能树，蓝底正文及两类提及图标／标签为白色，三行辅助字号气泡完整，Black 保持中性，设置项可触达。
+- 初轮 `.fraction(0.85)` 实际仅占 76% 全屏，几何回归失败后校正系统可用区域比例并重新构建、通过定向高度回归；没有放宽断言。发送首轮 runner 初始化失败，外部 harness 首轮元素查询错误，分别修正验证环境／脚本后单项复验通过。气泡源码在高度校准后未改动，四组合与发送不重复执行。临时模拟器已关闭并删除，`git diff --check` 通过；iOS 26、iPad、真机与 VoiceOver 实际操作本轮未验证。未改模型或同步协议，未运行 JavaScript 测试。
+
+## Settings 打开高度与 Workspace 刷新（2026-10-05）
+
+- Settings 支持原生 medium／large 两个高度，普通字号每次打开默认 medium，辅助字号使用 large；显示拖动指示器，内容优先滚动，保留上拉展开和同一个二级导航栈。半屏内容仍可滚动访问 About／Sign out 等条目。
+- Workspace 使用原生 plain List 与 `refreshable`：进入页面立即展示已有行并后台刷新，不再在列表下插入 “Refreshing workspaces…” 和转圈；手动下拉使用系统顶部刷新指示器，只有无数据初次加载显示居中转圈。刷新失败继续保留原行与 Retry，空列表提供 Refresh，切换与取消仍复用 `AppModel`。
+- 更新 UI 用例的 Workspace 容器查询并适配半屏 Settings 滚动；增加打开／重开高度、缓存刷新无页脚、下拉后保留行和选中项的回归。独立慢刷新 fixture 仅延迟后续工作区请求，不延迟首次账号工作区加载。
+- 本轮 iOS 27 Simulator 测试构建、9 项 WorkspaceSelection 测试、6 项 Settings／Workspace fixture UI 回归通过，覆盖默认与重开高度、下拉刷新、切换隔离、失败重试、空列表、长列表与退出确认；深色 accessibility-medium 下的工作区切换回归另通过 1 项。独立手势检查确认拖动指示器可展开，关闭再打开回到 medium；首轮外部 harness 使用错误的系统辅助功能值，改为实际的 “Expanded” 后复验通过，应用代码不变。已复核浅／深色全屏截图与辅助功能树：缓存刷新没有页脚或加载遮挡，手动下拉显示系统顶部指示器且保留行，半屏可滚动访问 About／Sign out，辅助字号默认展开且文字无新增裁切。真实账号网络刷新、iOS 26、iPad、真机与 VoiceOver 实际操作本轮未验证；未改模型或同步协议，未运行 JavaScript 测试。
+- 本轮临时模拟器已关闭并删除，`git diff --check` 通过。
+
+## 推理设置浮层细节（2026-10-05）
+
+- 对照参考截图减轻推理浮层的视觉重量：轨道由 56pt 改为 48pt，保留 40pt 滑块与 48pt 操作区域；取消独立灰色底轨，使用单层 regular material 和 0.5pt 细边框，标题与滑条间距由 22pt 改为 14pt。独立窗口继续使用可见的 material 背景，避免已有玻璃渲染问题；截图检查后保留 regular material，减弱底层发送按钮的颜色透入。
+- 刻度由 7pt 改为 12pt，中心与滑块及拖动选档位置一致；已选刻度使用强调色的前景色，未选刻度使用语义浅灰。Blue 滑条的大面积填充使用柔和靛蓝，深色 Blue 保留白色滑块，Black 随系统语义颜色适配；继续沿用强调色偏好、触觉开关、离散选档和辅助功能调整动作。
+- 新会话与既有会话的配置摘要、Advanced 选项及辅助功能说明将熟悉的 `XHigh` / `ExtraHigh` 显示别名统一为 `Extra High`，保留原 provider 选项值与未知标签，不改变发送协议。
+- 本轮构建通过；4 项既有推理展示规则测试和配置编辑／新会话创建 2 项 fixture UI 回归通过。截图发现 Spacer 布局使首尾刻度偏离滑块，随后改为使用同一套几何中心定位并重新构建；最终版在独立 iPhone 17／iOS 27 Simulator 的 Light Blue、Dark Blue、Dark Black + accessibility-medium 三种场景各通过 1 项外部 XCTest 检查，覆盖 Low／Medium 点击、拖动 High、浮层关闭、Advanced 与键盘／草稿保留，已复核全屏截图和辅助功能树。浅／深色刻度与滑块清楚，辅助字号无新增裁切、重叠或越过键盘；专用模拟器已关闭并删除，`git diff --check` 通过。fixture 仅提供三个 effort，未截图复核真实账号的六档 `Extra High` 状态；iOS 26、iPad、真机触觉与 VoiceOver 实际操作尚未验证。本次未改桥接或发送协议，未运行 JavaScript 测试。
+
+## Settings 二级交互与 Appearance / Haptics（2026-10-05）
+
+- Workspace 与 Appearance 统一在 Settings 的原生导航栈内进入二级页面；Workspace 不再新开短 sheet，选择后返回 Settings，切换与刷新仍复用 `AppModel`。设置行移除前置装饰图标，保留标题、当前值和导航箭头。
+- Appearance 按参考图提供 System / Day / Night 三列外观卡片及 Black / Blue 两列强调色卡片，选中用灰色实心背景、未选用细边框。保留原 `appTheme` 存储值，强调色以 `appAccent` 保存；默认 System / Black，Black 的单色控件在深色下使用语义浅色。辅助字号改为纵向排列，所有选项可以滚动访问。
+- 强调色范围修正：根视图保持系统语义单色 tint，导航、工具栏、附件菜单和停止按钮不随 Blue 变色；发送按钮底色、Haptics／Notifications 开关、附件数量徽标和问题选中标记单独读取强调色。用户消息气泡在 Blue 下使用淡蓝底，Black 保留原中性灰底；正文保持语义文字色，实心按钮／徽标使用对应的对比文字色，适配 Day 与 Night。
+- Reasoning 细节跟随强调色：输入区小 dial 的指针与中心圆点、reasoning 选择条的已选填充使用 Blue／Black；刻度与未选轨道沿用中性色，保持原有档位、拖动与指针动画。
+- Reasoning 配色增量测试构建通过；iPhone 17 / iOS 27 的既有 reasoning 交互 UI 用例在 Day／Blue、Night／Blue、Night／Black 三种场景最终均通过，已复核指针及 Low／High 已选条截图，颜色清楚、无新增布局问题。Night／Black 首次最后的发送断言失败：自动化触点使用键盘展开前的旧位置，草稿保留；源码和用例不变的单次重跑通过，初次失败截图、自动 hierarchy 与重跑结果均保留。成功运行未导出完整 hierarchy，保留截图与元素查询记录；本次未新增测试，未验证真机或 iOS 26。
+- 强调色范围修正后的 generic iOS Simulator 测试构建通过；iPhone 17 / iOS 27 的三项 fixture UI 回归全部通过，覆盖强调色／触觉重启恢复、Day／Night × Blue／Black 的发送按钮、用户气泡及导航／工具栏像素检查，以及发送前后气泡尺寸和去重；Stop 的像素检查仅执行 Day／Blue 场景，其余组合已有草稿而显示发送按钮。已复核四张聊天配色截图、Blue Haptics 截图及辅助功能树，发送箭头和气泡文字清晰，导航／工具栏保持单色，无新增重叠或裁切。专用模拟器已关闭并删除，`git diff --check` 通过。本次未验证真机、iOS 26 或 iPad。
+- Appearance 与 Haptics 合并为同一个圆角偏好分组，中间以分隔线区分两行。Appearance 下方加入 Haptics 二级页面，以 Haptics Feedback 开关控制现有 reasoning 拨盘与 Advanced 配置选择的触觉；默认开启，`hapticsEnabled` 保存本机偏好。外观与触觉偏好按安装保留，不参与远程同步。
+- 同组布局修正后的增量测试构建、iPhone / iOS 27 的一项工作区切换 fixture UI 回归通过；本次截图确认两行共用一个背景、分隔线清楚，辅助功能树保留两个独立导航按钮，无重叠或裁切。专用模拟器已关闭并删除，`git diff --check` 通过。
+- UI 回归更新为原生二级页面返回与卡片选择，新增强调色／触觉重启恢复检查，并保存截图与 UI hierarchy；新增文件已用 XcodeGen 纳入工程。首轮发现额外辅助功能分组将卡片的 identifier 与 Selected 状态放到 Other 包装层，原生 Button 没有对应标识；已去掉包装，装饰符号单独隐藏，按钮直接提供名称、选中状态和标识。
+- 本轮 generic iOS Simulator 测试构建通过；iPhone / iOS 27 的外观切换与恢复、强调色／触觉恢复、工作区切换／刷新重试／空列表／长列表、退出确认和通知开关验证通过。深色最大辅助字号下的外观与强调色／触觉两项回归，以及 iPad / iOS 27 的已读基线／草稿与外观切换后草稿两项回归均通过；已检查 iPhone 的 Settings、Workspace、Appearance 浅／深色截图和辅助功能树，Haptics On 截图确认 Blue 与 Black 实际应用到原生开关。iPad 横屏 XCTest 截图有采集黑边／裁切，仅确认功能与辅助功能树，完整横屏视觉未复核。真机触觉手感、VoiceOver 实际操作、iOS 26 与真实账号多工作区尚未验证。本轮未修改模型、协议或桥接，未运行模型或 JavaScript 测试。
+
 ## 分支审查修复（2026-10-05）
 
 - 子代理正文补丁改为稳定 ID 的 `subtaskOrder` / `changedSubtasks`：初次订阅仍发送完整快照，后续仅传发生变化的 run；Swift 按每个补丁的顺序重建完整列表并移除已删除任务，校验重复／缺失 ID，兼容已有完整替换字段。一个 run 增长不再重传其它已完成任务的正文；thought 与原始工具输出的过滤规则沿用既有投影。
@@ -452,7 +488,7 @@
 
 ### 其它功能状态
 
-- 会话管理：列表长按与详情页右上角 ··· 提供 Pin/Unpin、Rename session、Copy Session URL 和红色 Archive。Pinned 单独置顶分组，项目/时间列表不重复显示；项目全部置顶时仍保留本地项目的新建入口。详情页置顶、取消置顶和重命名后留在会话，归档成功后返回。Pin 使用 Lody `isPinned`，重命名写入 `title` 与 `titleSource: user`，独立副本同步并核对 metadata 后更新缓存；复制 `https://lody.ai/{workspaceSlug}/sessions/{sessionID}`，不创建公开分享。旧磁盘缓存缺少置顶字段仍可读取。协议参考 `use-session-actions.ts` 的 `setSessionPinned` / `updateSessionTitle` 与 `loro-app-sidebar.tsx` 的 `copySessionUrl`。本轮 119 项 JavaScript 测试、bundle 重建与 123 项 Swift 测试通过；新增两项 fixture UI 测试在浅色默认字号、深色辅助大字号通过，覆盖两处菜单、项目/时间模式的 Pinned、重命名标题更新、URL 粘贴与归档返回，原有左滑归档回归通过。截图核对菜单红色 Archive 与大字号换行正常。真实账号跨端同步尚未验证。
+- 会话管理：列表长按与详情页右上角 ··· 提供 Pin/Unpin、Rename session、Copy Session URL 和红色 Archive（详情菜单的图标使用原色系统红，避免被菜单 tint 覆盖）。Pinned 单独置顶分组，项目/时间列表不重复显示；项目全部置顶时仍保留本地项目的新建入口。详情页置顶、取消置顶和重命名后留在会话，归档成功后返回。Pin 使用 Lody `isPinned`，重命名写入 `title` 与 `titleSource: user`，独立副本同步并核对 metadata 后更新缓存；复制 `https://lody.ai/{workspaceSlug}/sessions/{sessionID}`，不创建公开分享。旧磁盘缓存缺少置顶字段仍可读取。协议参考 `use-session-actions.ts` 的 `setSessionPinned` / `updateSessionTitle` 与 `loro-app-sidebar.tsx` 的 `copySessionUrl`。本轮 119 项 JavaScript 测试、bundle 重建与 123 项 Swift 测试通过；新增两项 fixture UI 测试在浅色默认字号、深色辅助大字号通过，覆盖两处菜单、项目/时间模式的 Pinned、重命名标题更新、URL 粘贴与归档返回，原有左滑归档回归通过。截图核对菜单红色 Archive 与大字号换行正常。真实账号跨端同步尚未验证。
 
 - 设备码登录、账号恢复、退出登录和工作区列表已经接入 Lody；发送使用当前账号的用户 ID 标记 turn。
 - 工作区选择和下拉刷新已接入真实会话列表；所有会话操作都明确携带工作区 ID。列表导航栏固定显示 Kurage 和当前工作区名称，滚动会话时保持可见。

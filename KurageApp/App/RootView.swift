@@ -30,8 +30,9 @@ struct RootView: View {
         .accessibilityHidden(showsLaunchCover)
         .sheet(isPresented: $showsSettings) {
             SettingsView(model: model)
-                .presentationDetents([.large])
+                .presentationDetents([.fraction(0.95)])
                 .presentationDragIndicator(.hidden)
+                .presentationContentInteraction(.scrolls)
                 .presentationCornerRadius(36)
         }
         .overlay {
@@ -83,6 +84,7 @@ struct RootView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
+        .tint(Color(uiColor: .label))
     }
 }
 

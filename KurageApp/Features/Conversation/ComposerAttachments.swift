@@ -5,6 +5,7 @@ import AVFoundation
 import ImageIO
 
 struct ComposerAttachments: View {
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
     @Binding var attachments: [ComposerAttachment]
     @Binding var pending: [PendingComposerAttachment]
     private var isLoading: Bool { !pending.isEmpty }
@@ -50,9 +51,9 @@ struct ComposerAttachments: View {
                         } else if showsSummary && !attachments.isEmpty {
                             Text(attachments.count, format: .number)
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color.white)
+                                .foregroundStyle(accent.foregroundColor)
                                 .padding(.horizontal, 4)
-                                .background(Color.accentColor, in: Capsule())
+                                .background(accent.color, in: Capsule())
                                 .allowsHitTesting(false)
                         }
                     }

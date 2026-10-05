@@ -30,7 +30,7 @@ extension NewSessionOptions {
         }
         let provider = provider?.label
         let model = runConfig?.selectedModel?.label
-        let reasoning = runConfig?.selectedReasoning?.label
+        let reasoning = runConfig?.selectedReasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
         return RunConfigMenu(
             modelLabel: model, reasoningLabel: reasoning, providerLabel: provider,
             accessibilitySummary: [provider.map { "Provider \($0)" }, model.map { "model \($0)" },

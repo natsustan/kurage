@@ -33,6 +33,9 @@ struct RunConfigMenu: Equatable {
         init(kind: Kind, options: [SessionRunConfig.Value], selection: String) {
             self.kind = kind
             self.selection = selection
+            let options = kind == .reasoning ? options.map {
+                SessionRunConfig.Value(value: $0.value, label: RunConfigMenu.displayReasoningLabel($0.label))
+            } : options
             // Capabilities describe the allowed values, not their intensity order.
             // Keep unfamiliar values in their original slots instead of guessing.
             if kind == .reasoning {
@@ -85,6 +88,12 @@ struct RunConfigMenu: Equatable {
     var isLoading = false
     var loadFailed = false
 
+    /// Expand familiar display aliases without changing the provider's wire values.
+    static func displayReasoningLabel(_ label: String) -> String {
+        let key = label.lowercased().filter { $0.isLetter || $0.isNumber }
+        return key == "xhigh" || key == "extrahigh" ? "Extra High" : label
+    }
+
     var reasoningProgress: Double {
         guard let section = sections.first(where: { $0.kind == .reasoning }),
               let index = section.options.firstIndex(where: { $0.value == section.selection }) else { return 1 }
@@ -99,9 +108,10 @@ struct RunConfigMenu: Equatable {
 extension SessionRunConfig {
     /// An existing session offers one editable value; see `Editable`.
     var menu: RunConfigMenu? {
-        let parts = [model?.label, reasoning?.label].compactMap { $0 }
+        let reasoningLabel = reasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
+        let parts = [model?.label, reasoningLabel].compactMap { $0 }
         guard !parts.isEmpty else { return nil }
-        let accessibility = [model.map { "Model \($0.label)" }, reasoning.map { "reasoning \($0.label)" }]
+        let accessibility = [model.map { "Model \($0.label)" }, reasoningLabel.map { "reasoning \($0)" }]
             .compactMap { $0 }.joined(separator: ", ")
         var sections: [RunConfigMenu.Section] = []
         if let editable {
@@ -112,7 +122,7 @@ extension SessionRunConfig {
             ))
         }
         return RunConfigMenu(
-            modelLabel: model?.label, reasoningLabel: reasoning?.label,
+            modelLabel: model?.label, reasoningLabel: reasoningLabel,
             accessibilitySummary: accessibility,
             sections: sections
         )
@@ -159,6 +169,7 @@ struct SessionComposer: View {
     @Binding var draft: String
     @Binding var mentions: ComposerMentionState
     @Binding var attachments: [ComposerAttachment]
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
     @State private var attachmentError: String?
@@ -591,7 +602,8 @@ struct SessionComposer: View {
                     Button {
                         presentationState.showsRunConfig = true
                     } label: {
-                        ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
+                        ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress,
+                                       accentColor: accent.color)
                             .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)
                             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
                             .contentShape(Rectangle())
@@ -615,7 +627,7 @@ struct SessionComposer: View {
                 Button {
                     if onSend() { sendFeedbackView?.play() }
                 } label: {
-                    composerIcon("arrow.up", enabled: canSend)
+                    composerIcon("arrow.up", enabled: canSend, usesAccent: true)
                 }
                 .disabled(!canSend)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -626,12 +638,12 @@ struct SessionComposer: View {
         }
     }
 
-    private func composerIcon(_ name: String, enabled: Bool) -> some View {
+    private func composerIcon(_ name: String, enabled: Bool, usesAccent: Bool = false) -> some View {
         Image(systemName: name)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(enabled ? Color.white : Color.secondary)
+            .foregroundStyle(enabled ? (usesAccent ? accent.foregroundColor : Color(uiColor: .systemBackground)) : Color.secondary)
             .frame(width: ComposerControlMetrics.actionSize, height: ComposerControlMetrics.actionSize)
-            .background(enabled ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+            .background(enabled ? (usesAccent ? accent.color : Color.primary) : Color.primary.opacity(0.08), in: Circle())
             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
             .contentShape(Rectangle())
     }
@@ -714,7 +726,7 @@ private struct RunConfigPanel: View {
     let onAdvanced: () -> Void
 
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: 14) {
             Button(action: onAdvanced) {
                 HStack(spacing: 6) {
                     Text(runConfig.modelLabel ?? "Model").fontWeight(.semibold)
@@ -732,9 +744,13 @@ private struct RunConfigPanel: View {
             if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
                reasoning.options.count > 1 {
                 ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
-                    .padding(10)
+                    .padding(12)
                     // Glass can render this dial invisible in the separate overlay window.
                     .background(.regularMaterial, in: Capsule())
+                    .overlay {
+                        Capsule().strokeBorder(.primary.opacity(0.16), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    }
             } else {
                 Text("Reasoning is not adjustable for this model.")
                     .font(.footnote)
@@ -750,44 +766,53 @@ private struct ReasoningDial: View {
     let section: RunConfigMenu.Section
     let onChoose: (String) -> Void
     @State private var selectionFeedbackID = 0
+    @AppStorage(AppHaptics.storageKey) private var hapticsEnabled = true
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
     @Environment(\.layoutDirection) private var layoutDirection
 
     private var selectedIndex: Int? {
         section.options.firstIndex { $0.value == section.selection }
     }
 
+    private var fillColor: Color {
+        // A calmer blue keeps the dial's large filled area from overpowering its label.
+        accent == .blue ? Color(red: 0.23, green: 0.39, blue: 0.96) : accent.color
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let diameter: CGFloat = 40
-            let travel = max(0, geometry.size.width - diameter - 16)
+            let inset: CGFloat = 4
+            let tickDiameter: CGFloat = 12
+            let endWidth = diameter + inset * 2
+            let travel = max(0, geometry.size.width - endWidth)
             let step = travel / CGFloat(max(1, section.options.count - 1))
             ZStack(alignment: .leading) {
-                Capsule().fill(.primary.opacity(0.06))
                 if let selectedIndex {
-                    Capsule().fill(Color(uiColor: .label))
-                        .frame(width: diameter + 16 + step * CGFloat(selectedIndex))
+                    Capsule().fill(fillColor)
+                        .frame(width: endWidth + step * CGFloat(selectedIndex))
                 }
-                HStack(spacing: 0) {
-                    ForEach(0..<section.options.count, id: \.self) { tick in
-                        if tick > 0 { Spacer(minLength: 0) }
-                        Circle()
-                            .fill(Color(uiColor: .systemGray))
-                            .frame(width: 7, height: 7)
-                    }
+                ForEach(section.options.enumerated(), id: \.element.id) { tick, _ in
+                    let center = endWidth / 2 + step * CGFloat(tick)
+                    Circle()
+                        .fill(tick <= (selectedIndex ?? -1) ? accent.foregroundColor.opacity(0.28) : Color(uiColor: .systemGray3))
+                        .frame(width: tickDiameter, height: tickDiameter)
+                        .position(x: layoutDirection == .rightToLeft ? geometry.size.width - center : center,
+                                  y: geometry.size.height / 2)
                 }
-                .padding(.horizontal, 28)
                 if let selectedIndex {
-                    Circle().fill(Color(uiColor: .systemBackground))
+                    Circle().fill(accent.foregroundColor)
                         .frame(width: diameter, height: diameter)
-                        .shadow(color: .black.opacity(0.12), radius: 2, y: 1)
-                        .padding(.leading, 8 + step * CGFloat(selectedIndex))
+                        .shadow(color: .black.opacity(0.08), radius: 1, y: 1)
+                        .padding(.leading, inset + step * CGFloat(selectedIndex))
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.capsule)
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 let x = layoutDirection == .rightToLeft
                     ? geometry.size.width - value.location.x : value.location.x
-                let index = min(section.options.count - 1, max(0, Int(((x - 28) / max(1, step)).rounded())))
+                let index = min(section.options.count - 1, max(0, Int(((x - endWidth / 2) / max(1, step)).rounded())))
                 let option = section.options[index]
                 if option.value != section.selection {
                     onChoose(option.value)
@@ -795,7 +820,7 @@ private struct ReasoningDial: View {
                 }
             })
         }
-        .frame(height: 56)
+        .frame(height: 48)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reasoning")
         .accessibilityValue(section.options.first { $0.value == section.selection }?.label ?? "Default")
@@ -807,7 +832,7 @@ private struct ReasoningDial: View {
             if value != section.selection { selectionFeedbackID += 1 }
         }
         .accessibilityIdentifier("reasoning-dial")
-        .sensoryFeedback(.selection, trigger: selectionFeedbackID)
+        .sensoryFeedback(.selection, trigger: selectionFeedbackID) { _, _ in hapticsEnabled }
     }
 }
 
@@ -815,6 +840,7 @@ private struct RunConfigAdvanced: View {
     let runConfig: RunConfigMenu?
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
     @State private var selectionFeedbackID = 0
+    @AppStorage(AppHaptics.storageKey) private var hapticsEnabled = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -849,7 +875,7 @@ private struct RunConfigAdvanced: View {
                 }
             }
         }
-        .sensoryFeedback(.selection, trigger: selectionFeedbackID)
+        .sensoryFeedback(.selection, trigger: selectionFeedbackID) { _, _ in hapticsEnabled }
     }
 
     @ViewBuilder
@@ -898,6 +924,7 @@ private struct RunConfigAdvanced: View {
 @Animatable
 private struct ReasoningGauge: View {
     var progress: Double
+    @AnimatableIgnored var accentColor: Color
 
     var body: some View {
         Canvas { context, size in
@@ -926,9 +953,9 @@ private struct ReasoningGauge: View {
             var needle = Path()
             needle.move(to: center)
             needle.addLine(to: point(angle, radius: radius * 0.6))
-            context.stroke(needle, with: .color(.primary), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            context.stroke(needle, with: .color(accentColor), style: StrokeStyle(lineWidth: 2, lineCap: .round))
             context.fill(Path(ellipseIn: CGRect(x: center.x - 2.4, y: center.y - 2.4, width: 4.8, height: 4.8)),
-                         with: .color(.primary))
+                         with: .color(accentColor))
         }
         .accessibilityHidden(true)
     }

@@ -149,6 +149,7 @@ struct ConversationQuestionCard: View {
 }
 
 private struct QuestionFields: View {
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
     let question: ConversationQuestion
     @Binding var draft: QuestionDraft
     var inputFocused: FocusState<Bool>.Binding
@@ -168,7 +169,7 @@ private struct QuestionFields: View {
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: draft.selected.contains(option.label) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(draft.selected.contains(option.label) ? Color.accentColor : .secondary)
+                            .foregroundStyle(draft.selected.contains(option.label) ? accent.color : .secondary)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(option.label).foregroundStyle(.primary)
                             if let description = option.description {

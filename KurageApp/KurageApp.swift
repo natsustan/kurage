@@ -56,7 +56,8 @@ struct KurageApp: App {
                         ? [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"),
                            WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
                         : [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
-                workspaceRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure") ? .seconds(1) : nil,
+                workspaceRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-workspaces") ? .seconds(15)
+                    : ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure") ? .seconds(1) : nil,
                 failWorkspaceRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure"),
                 accountID: ProcessInfo.processInfo.arguments.contains("--fixture-notifications") ? "fixture-user" : nil)
             : HTTPLodyClient()
