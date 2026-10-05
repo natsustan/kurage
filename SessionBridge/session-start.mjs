@@ -168,7 +168,7 @@ export async function newSessionOptions(repo, workspaceID, templateSessionID, ag
 // the machine never sees a session without its message. Metadata carries the
 // dispatch pointer in the same write. Retries reuse both IDs.
 export async function startSession(repo, workspaceID, {
-  templateSessionID, projectID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections, attachments = [], parentSessionID,
+  templateSessionID, projectID, agentConfigID, sessionID, turnID, userID, text: prompt, timestamp, selections, attachments = [], parentSessionID, title,
 }) {
   if (!text(userID) || !text(sessionID) || !text(turnID)) {
     throw new Error('Session dispatch configuration is unavailable');
@@ -240,8 +240,8 @@ export async function startSession(repo, workspaceID, {
     createdAt: timestamp,
     cliType: agent.cliType,
     agentType: agent.agentType,
-    title: (prompt.trim() || attachments[0]?.fileName || 'New session').slice(0, TITLE_LENGTH),
-    titleSource: 'draft',
+    title: (text(title) ?? (prompt.trim() || attachments[0]?.fileName || 'New session')).slice(0, TITLE_LENGTH),
+    titleSource: text(title) ? 'user' : 'draft',
     project,
     latestUserMsgId: turnID,
     lastMessageAt: Date.now(),

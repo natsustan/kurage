@@ -15,6 +15,7 @@ struct OutgoingSessionStart {
     let request: SessionTabStart
     let summary: SessionSummary
     let templateSessionID: SessionSummary.ID
+    var focusesComposerOnStart = true
     let stagedAt = Date()
     var isConfirmed = false
 

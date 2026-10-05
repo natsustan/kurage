@@ -386,7 +386,7 @@ final class FixtureLodyClient: LodyClient {
                                                   isTab: true, workspaceID: workspaceID)
         let config = try appliedRunConfig(options, selections: request.selections)
         let summary = SessionSummary(id: request.sessionID,
-                                 title: String((request.text.isEmpty ? request.attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
+                                 title: request.title ?? String((request.text.isEmpty ? request.attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
                                  agentName: options.agentConfigID, activity: .idle, preview: request.text,
                                  projectID: parent.summary.projectID, projectName: parent.summary.projectName,
                                  machineName: parent.summary.machineName, parentSessionID: parentSessionID)

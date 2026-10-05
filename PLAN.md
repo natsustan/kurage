@@ -1,5 +1,16 @@
 # Kurage 会话功能
 
+## Quick Actions 任务 tab（2026-10-05）
+
+- 本地项目的会话详情右上角新增 Quick Actions（闪电）入口，提供 Create Branch、Commit 和 Create Branch & Commit。每次动作在根会话下创建命名子 tab，提交独立首轮指令并切换过去；继承根会话的工作目录与当前分支，保留主会话的历史、草稿和原模型配置。打开面板收起编辑焦点，快捷任务不自动弹出键盘。
+- 辅助字号下 tab 标题允许最多三行、扩大文字宽度并增加竖向留白，避免 Create Branch & Commit 被截成 Create Branch…，与单独创建分支的任务混淆；普通字号保持原单行尺寸。
+- Settings → Quick Actions 可按机器设置 Agent、Model 和 Reasoning，面板也能修改同一组默认值。设置保存在本机，按账号／工作区／机器隔离，重启后恢复；Use Session Defaults 清除该组设置。通过现有新会话能力投影加载选项，保存的模型或推理档位失效时阻止执行并提示重选；没有模型能力的 agent 继承只读配置。后台取消加载，工作区变化关闭面板，旧请求不能写回新工作区。
+- 使用现有 `parentSessionId` 子 tab、共享目录及新 turn `inputConfig` 协议，无新增后端。`SessionTabStart` 将可选标题传给原生 bridge，首轮发布 metadata 时同时写 `title`／`titleSource: user`，避免自动标题覆盖任务名；普通新建仍从 prompt 生成 draft 标题。outbox 保留 session ID、turn ID、标题和首轮配置，未确认的重试不重复创建，用户随后重命名也不被重试覆盖。协议参考沿用 Lody `use-session-actions.ts`、`schema.ts` 与 CLI `session-manager.ts`。
+- 同一项目已知有运行中的根／子会话或未确认的新建时禁用动作，并在按钮前解释原因；这是客户端已观察状态的检查，不是机器侧 Git 锁。指令要求先检查 diff，优先只提交已暂存文件，排除 secrets／构建产物／无关文件，保留工作内容，禁止 push／PR／amend／reset／丢弃更改，并遵循 agent 现有权限配置。实际执行结果显示在任务 tab 中；普通工具权限审批仍未接入 live。
+- 本轮 frozen lockfile 安装、329 项 JavaScript 测试及 bundle 重建通过，XcodeGen 已重新生成工程；Simulator 构建和 42 项 Swift 定向测试通过，覆盖首轮独立模型、命名、原历史保留、同 ID 重试、工作区隔离、设置持久化／能力失效校验和原生 bridge 的标题／配置请求编码。Swift 测试在 tab 大字换行调整后再次通过；最后只调整 SwiftUI 多行标签的尺寸测量，未修改模型或 bridge。
+- iPhone 17／iOS 27 的浅色主流程、运行项目禁用与普通新 tab 首轮／下一草稿同步回归通过；系统深色 accessibility-medium 的两项 Quick Actions 回归也通过。截图与 AX 层级确认独立模型及重启设置、主草稿、无键盘任务阅读与禁用原因。大字截图发现标题截断后调整 tab 换行；初次换行后胶囊仍按单行高度测量，最终给横向滚动中的多行标签明确宽度并复验主流程通过，任务胶囊增至 77pt、完整包住两行标题和留白，Main 仍为 46pt 并垂直居中。普通字号在换行调整后已复测，保持单行外观。测试初轮修正了缺少目标工作区的 fixture、Picker 的 AX label 断言和按需滚动显露元素，没有放宽行为断言。
+- 两台本轮专属模拟器已恢复浅色／默认字号后关闭并删除，`git diff --check` 通过。本轮仅用 fixture 验证客户端流程，没有在真实项目执行 Git 动作。真实账号下的创建／执行、普通工具权限交互、弱网和后台恢复，以及 iOS 26、iPad、最大辅助字号与 VoiceOver 实际操作仍未验证。
+
 ## Markdown 超链接标记（2026-10-05）
 
 - 回复中的文字链接保留语义正文色，以次要文字色的圆点下划线与末尾小号单色 `↗︎` 标记区分；不随 Blue／Black 强调色变化。标记和链接共用目标，以不换行空格贴住末词，正文、列表、表格与子任务复用相同渲染入口。

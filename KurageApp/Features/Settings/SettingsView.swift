@@ -13,6 +13,14 @@ struct SettingsView: View {
                         SettingsAccountSection(model: model, account: account)
                     }
                     SettingsPreferencesSection()
+                    NavigationLink {
+                        QuickActionsSettingsView(model: model)
+                    } label: {
+                        SettingsNavigationRow(title: "Quick Actions")
+                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings-quick-actions")
                     if model.notifications.isConfigured {
                         NavigationLink {
                             NotificationSettingsView(model: model.notifications)

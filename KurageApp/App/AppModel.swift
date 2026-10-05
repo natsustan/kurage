@@ -14,6 +14,8 @@ struct StatusNote: Equatable {
 @Observable
 final class AppModel {
     private let client: any LodyClient
+    @ObservationIgnored private let quickActionDefaults: UserDefaults
+    private(set) var quickActionPreferenceRevision = 0
     let notifications: NotificationModel
     private(set) var notificationNavigation: NotificationNavigation?
     private(set) var notificationOpenGeneration = 0
@@ -217,8 +219,9 @@ final class AppModel {
         return failedSearchBodies[workspaceID]?.isEmpty == false
     }
 
-    init(client: any LodyClient, notifications: NotificationModel? = nil) {
+    init(client: any LodyClient, notifications: NotificationModel? = nil, quickActionDefaults: UserDefaults = .standard) {
         self.client = client
+        self.quickActionDefaults = quickActionDefaults
         self.notifications = notifications ?? NotificationModel(service: FixturePushNotificationService())
         account = client.account
         if let cache = client.cachedSession, cache.account == account {
@@ -238,6 +241,75 @@ final class AppModel {
     var supportsSessionArchiving: Bool { client.supportsSessionArchiving }
     var supportsPermissionResponses: Bool { client.supportsPermissionResponses }
     var supportsSessionCreation: Bool { client.supportsSessionCreation }
+
+    var quickActionMachines: [QuickActionMachine] {
+        var seen: Set<String> = []
+        return sessions.compactMap { session in
+            guard session.parentSessionID == nil,
+                  let machineID = QuickActionMachine.machineID(projectID: session.projectID),
+                  seen.insert(machineID).inserted else { return nil }
+            return QuickActionMachine(id: machineID, name: session.machineName ?? machineID,
+                                      templateSessionID: session.id)
+        }
+    }
+
+    func supportsQuickActions(rootID: String) -> Bool {
+        supportsSessionTabs && supportsSessionCreation && sessionIndex[rootID] != nil &&
+            QuickActionMachine.machineID(projectID: sessionIndex[rootID]?.projectID) != nil
+    }
+
+    func quickActionBlockingFailure(rootID: String) -> QuickActionFailure? {
+        guard supportsQuickActions(rootID: rootID), let projectID = sessionIndex[rootID]?.projectID else {
+            return .unavailable
+        }
+        let roots = sessions.filter { $0.projectID == projectID }
+        if roots.contains(where: { $0.isRunningInList }) ||
+            roots.contains(where: { sessionTabs(rootID: $0.id).contains { $0.activity == .running } }) {
+            return .busy
+        }
+        if roots.contains(where: { pendingSessionTab(rootID: $0.id) != nil }) ||
+            pendingSessionStarts.contains(where: { $0.projectID == projectID }) {
+            return .pending
+        }
+        return nil
+    }
+
+    private func quickActionPreferenceKey(rootID: String) -> String? {
+        guard let account, let workspaceID = selectedWorkspaceID,
+              let machineID = QuickActionMachine.machineID(projectID: sessionIndex[rootID]?.projectID) else {
+            return nil
+        }
+        return QuickActionPreference.storageKey(account: account, workspaceID: workspaceID, machineID: machineID)
+    }
+
+    func quickActionPreference(rootID: String) -> QuickActionPreference? {
+        _ = quickActionPreferenceRevision
+        guard let key = quickActionPreferenceKey(rootID: rootID), let data = quickActionDefaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(QuickActionPreference.self, from: data)
+    }
+
+    func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String, workspaceGeneration: Int) {
+        guard self.workspaceGeneration == workspaceGeneration, let key = quickActionPreferenceKey(rootID: rootID) else { return }
+        if let preference, let data = try? JSONEncoder().encode(preference) {
+            quickActionDefaults.set(data, forKey: key)
+        } else {
+            quickActionDefaults.removeObject(forKey: key)
+        }
+        quickActionPreferenceRevision += 1
+    }
+
+    func stageQuickAction(_ action: QuickAction, rootID: String, options: NewSessionOptions,
+                          runConfig: NewSessionRunConfig?, workspaceGeneration: Int) throws -> String {
+        try Task.checkCancellation()
+        guard self.workspaceGeneration == workspaceGeneration, isApplicationActive else { throw CancellationError() }
+        if let failure = quickActionBlockingFailure(rootID: rootID) { throw failure }
+        guard let root = sessionIndex[rootID] else { throw QuickActionFailure.unavailable }
+        return try stageSessionStart(action.prompt, composerText: action.prompt, mentions: .init(), attachments: [],
+            agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
+            selections: runConfig?.selections ?? [], projectID: root.projectID ?? "", projectName: root.projectName ?? "Project",
+            templateSessionID: rootID, parentSessionID: rootID, title: String(localized: action.title),
+            focusesComposerOnStart: false)
+    }
     var hasCachedSessions: Bool {
         selectedWorkspaceID.map { sessionsByWorkspace[$0] != nil } ?? false
     }
@@ -795,11 +867,18 @@ final class AppModel {
         return outgoingStartsByWorkspace[workspaceID]?[sessionID]?.isConfirmed == false
     }
 
+    func shouldFocusSessionStartComposer(sessionID: String) -> Bool {
+        guard let workspaceID = selectedWorkspaceID,
+              let start = outgoingStartsByWorkspace[workspaceID]?[sessionID] else { return false }
+        return !start.isConfirmed && start.focusesComposerOnStart
+    }
+
     /// Reserve both protocol IDs and show the first turn before any upload or sync.
     func stageSessionStart(_ text: String, composerText: String, mentions: ComposerMentionState,
                            attachments: [ComposerAttachment], agentConfigID: String?, selections: [RunConfigChoice],
                            projectID: String, projectName: String, templateSessionID: String,
-                           parentSessionID: String? = nil) throws -> String {
+                           parentSessionID: String? = nil, title: String? = nil,
+                           focusesComposerOnStart: Bool = true) throws -> String {
         guard supportsSessionCreation, let workspaceID = selectedWorkspaceID,
               let template = sessionSummary(templateSessionID) else { throw LodyClientError.notConnected }
         if let parentSessionID {
@@ -815,16 +894,17 @@ final class AppModel {
             }
         }
         let request = SessionTabStart(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                                      attachments: attachments, selections: selections, agentConfigID: agentConfigID)
+                                      attachments: attachments, selections: selections, agentConfigID: agentConfigID, title: title)
         try stageOutgoingMessage(request.text, composerText: composerText, mentions: mentions,
                                  attachments: attachments, runConfig: nil, sessionID: request.sessionID, turnID: request.turnID)
         let summary = SessionSummary(id: request.sessionID,
-            title: String((request.text.isEmpty ? attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
+            title: title ?? String((request.text.isEmpty ? attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
             agentName: agentConfigID ?? template.agentName, activity: .idle, preview: request.text,
             projectID: projectID, projectName: projectName, machineName: template.machineName,
             parentSessionID: parentSessionID)
         outgoingStartsByWorkspace[workspaceID, default: [:]][request.sessionID] = OutgoingSessionStart(
-            request: request, summary: summary, templateSessionID: templateSessionID)
+            request: request, summary: summary, templateSessionID: templateSessionID,
+            focusesComposerOnStart: focusesComposerOnStart)
         if let parentSessionID { pendingTabs[workspaceID, default: [:]][parentSessionID] = request }
         return request.sessionID
     }

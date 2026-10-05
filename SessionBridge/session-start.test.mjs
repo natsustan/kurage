@@ -642,6 +642,18 @@ test('tab options offer the machine providers and inherit the parent run configu
   assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, input);
 });
 
+test('a named task tab publishes its title with the first turn and retries preserve a user rename', async () => {
+  const { repo, rows, docs } = fixture();
+  assert.equal(await start(repo, { parentSessionID: 'template', title: 'Commit' }), 'sent');
+  assert.equal(rows.get('session-new').title, 'Commit');
+  assert.equal(rows.get('session-new').titleSource, 'user');
+  assert.equal(rows.get('session-new').parentSessionId, 'template');
+  rows.get('session-new').title = 'Reviewed commit';
+  assert.equal(await start(repo, { parentSessionID: 'template', title: 'Another action' }), 'sent');
+  assert.equal(rows.get('session-new').title, 'Reviewed commit');
+  assert.equal(docs.get('session-new').getList('history').length, 1);
+});
+
 test('a tab on another provider starts from that agent and its most recent run configuration', async () => {
   const { repo, rows, docs } = fixture();
   // Another machine's agent cannot run a tab on this one.

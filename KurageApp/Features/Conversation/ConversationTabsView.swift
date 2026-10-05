@@ -45,6 +45,7 @@ struct ConversationTabsContent: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var localDrafts = ConversationDraftStore()
     @State private var showsNewTab = false
+    @State private var quickActionRoute: QuickActionRoute?
     @State private var restoredTabMessage: OutgoingMessage?
     @State private var errorMessage: String?
     @State private var changingTab = false
@@ -88,6 +89,10 @@ struct ConversationTabsContent: View {
                         restoredTabMessage = nil
                         showsNewTab = true
                     } : nil,
+                    onQuickActions: !isReadOnly && model.supportsQuickActions(rootID: rootID) ? {
+                        quickActionRoute = QuickActionRoute(rootID: rootID, workspaceGeneration: workspaceGeneration)
+                    } : nil,
+                    dismissesComposerFocus: quickActionRoute != nil,
                     closedTabs: closedTabs, onReopenTab: { setClosed(false, tab: $0) },
                     onEditSessionStart: { message in
                         if activeID == rootID {
@@ -113,6 +118,12 @@ struct ConversationTabsContent: View {
         .alert("Could not update tab", isPresented: Binding(
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
+        .sheet(item: $quickActionRoute) { route in
+            QuickActionsView(route: route, model: model) { id in
+                guard model.workspaceGeneration == workspaceGeneration else { return }
+                model.setActiveSessionTab(id, rootID: rootID)
+            }
+        }
         .onChange(of: openTabs.map(\.id)) { _, ids in
             if activeID != rootID, !ids.contains(activeID) { model.setActiveSessionTab(rootID, rootID: rootID) }
         }
@@ -144,6 +155,7 @@ private struct SessionTabBar: View {
     let openTabs: [SessionSummary]
     let select: (String) -> Void
     let setClosed: (Bool, SessionSummary) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -154,11 +166,16 @@ private struct SessionTabBar: View {
                             select(tab.id)
                         } label: {
                             Text(tab.id == rootID ? "Main" : tab.title)
-                                .lineLimit(1)
-                                .frame(maxWidth: 180)
                                 .font(.subheadline.weight(.medium))
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+                                .fixedSize(horizontal: false, vertical: true)
+                                // Horizontal scrolling proposes no width. Give
+                                // multiline task labels a width before measuring height.
+                                .frame(width: dynamicTypeSize.isAccessibilitySize && tab.id != rootID ? 260 : nil)
+                                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? 260 : 180)
                                 .foregroundStyle(activeID == tab.id ? Color.primary : Color.secondary)
                                 .padding(.horizontal, 16)
+                                .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 0)
                                 .frame(minHeight: 44)
                                 .background(activeID == tab.id ? Color(uiColor: .secondarySystemBackground) : .clear,
                                             in: .capsule)
