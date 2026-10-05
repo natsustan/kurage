@@ -164,7 +164,7 @@ Settings 首版不需要修改 Swift/JavaScript 消息契约。新增源文件�
 
 - List View 沿用 `sessionListMode` 的 key 与 raw values，Settings 与右侧快捷菜单即时同步。
 - 外观默认 System，通过根视图中与当前窗口关联的小型 UIKit 视图设置窗口外观，System 明确恢复 `.unspecified`；Settings、Workspace 和 About 继承外观，不通过改变视图 ID 应用主题，保留导航和草稿。强调色默认 Black；根视图 tint 固定为系统语义单色，导航、工具栏与停止按钮保持单色。Blue 用于发送按钮背景、Haptics／Notifications 开关、附件数量徽标、问题选中标记、dial 指针／中心圆点和 reasoning 条已选填充；dial 刻度和 reasoning 条未选轨道保持中性色。Blue 用户消息气泡使用实心 #006CEB 蓝底，正文与提及图标／标签为白色；Black 保留中性灰底与语义文字色。
-- Haptics Feedback 默认开启，控制现有 Advanced 配置选择与 reasoning 拨盘的触觉；关闭不改变请求或操作结果。当前发送／steer 和本地首轮受理没有单独触觉触发点。
+- Haptics Feedback 默认开启，仅控制现有 Advanced 配置选择与 reasoning 拨盘的触觉；关闭不改变请求或操作结果。发送／steer 和本地首轮受理的触觉仍存在，不受当前 Haptics 开关控制。
 - 本机偏好按安装持久化，重新登录保留；不宣称跨设备同步，不替代远程 Agent 配置。
 - 暂不增加单独字体倍率、应用语言或缓存清理入口。字号继续跟随系统；独立 Notifications 页面及接入代码已保留，但在官方托管 Cloud 接入确认前隐藏入口并暂停 SDK 初始化，只有通知 fixture 显式启用。普通推送的接入及外部配置见 `NOTIFICATIONS.md`，缓存清理需先定义与 outbox／附件的边界。
 
