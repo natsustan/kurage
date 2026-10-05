@@ -119,6 +119,32 @@ extension SessionRunConfig {
     }
 }
 
+@MainActor
+@Observable
+final class ComposerPresentation {
+    var showsRunConfig = false
+    var showsAdvanced = false
+    var previewAttachment: ComposerAttachment?
+    var showsPhotos = false
+    var showsFiles = false
+    var showsCamera = false
+    private(set) var dismissGeneration = 0
+
+    var isPresented: Bool {
+        showsRunConfig || showsAdvanced || previewAttachment != nil || showsPhotos || showsFiles || showsCamera
+    }
+
+    func dismiss() {
+        dismissGeneration += 1
+        showsRunConfig = false
+        showsAdvanced = false
+        previewAttachment = nil
+        showsPhotos = false
+        showsFiles = false
+        showsCamera = false
+    }
+}
+
 /// Floating input capsule shared by follow-ups and new sessions, with a compact
 /// gauge button for the next turn's configuration.
 struct SessionComposer: View {
@@ -136,7 +162,9 @@ struct SessionComposer: View {
     @State private var pendingAttachments: [PendingComposerAttachment] = []
     private var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
     @State private var attachmentError: String?
-    @State private var previewAttachment: ComposerAttachment?
+    @State private var ownedPresentation = ComposerPresentation()
+    var presentation: ComposerPresentation? = nil
+    private var presentationState: ComposerPresentation { presentation ?? ownedPresentation }
     let isSending: Bool
     var allowsEditingWhileSending = false
     private var blocksEditing: Bool { isSending && !allowsEditingWhileSending }
@@ -172,8 +200,6 @@ struct SessionComposer: View {
     @State private var mentionLoadFailed = false
     @State private var mentionRetry = 0
     @State private var loadedMentionSourceID = ""
-    @State private var showsRunConfig = false
-    @State private var showsAdvanced = false
     @State private var gaugeProgress: Double?
     @State private var targetGaugeProgress = 1.0
     @State private var sendFeedbackView: ComposerSendFeedbackView?
@@ -181,7 +207,7 @@ struct SessionComposer: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
-    private var isExpanded: Bool { isFocused || showsRunConfig || showsAdvanced }
+    private var isExpanded: Bool { isFocused || presentationState.showsRunConfig || presentationState.showsAdvanced }
 
     private var editableDraft: Binding<String> {
         Binding(
@@ -231,6 +257,7 @@ struct SessionComposer: View {
     }
 
     var body: some View {
+        @Bindable var presentation = presentationState
         let loadID = mentionLoadID
         VStack(spacing: 8) {
             if mentionQuery == nil, mentions.hasSkillMentions, mentionLoadFailed {
@@ -242,7 +269,7 @@ struct SessionComposer: View {
                     ComposerAttachmentStrip(attachments: $attachments, pending: pendingAttachments, disabled: blocksEditing,
                                             onPreview: {
                                                 isFocused = false
-                                                previewAttachment = $0
+                                                presentationState.previewAttachment = $0
                                             })
                 }
                 ZStack(alignment: .topLeading) {
@@ -305,7 +332,7 @@ struct SessionComposer: View {
             } message: { Text(attachmentError ?? "") }
             // The attachment strip disappears when the editor loses focus.
             // Keep image presentation on the composer's stable host.
-            .fullScreenCover(item: $previewAttachment) { attachment in
+            .fullScreenCover(item: $presentation.previewAttachment) { attachment in
                 AttachmentImagePreview(
                     name: attachment.fileName,
                     previewIdentifier: "composer-image-preview",
@@ -325,28 +352,28 @@ struct SessionComposer: View {
             }
             .onChange(of: runConfig?.reasoningProgress) { _, progress in
                 targetGaugeProgress = progress ?? 1
-                if !showsRunConfig && !showsAdvanced { updateGauge() }
+                if !presentationState.showsRunConfig && !presentationState.showsAdvanced { updateGauge() }
             }
-            .onChange(of: showsRunConfig) { _, isPresented in
-                if !isPresented && !showsAdvanced { updateGauge() }
+            .onChange(of: presentationState.showsRunConfig) { _, isPresented in
+                if !isPresented && !presentationState.showsAdvanced { updateGauge() }
             }
             .background {
-                RunConfigOverlayAnchor(isPresented: showsRunConfig, runConfig: runConfig,
+                RunConfigOverlayAnchor(isPresented: presentationState.showsRunConfig, runConfig: runConfig,
                                        onChoose: onChooseRunConfig,
                                        onDismiss: {
-                                           showsRunConfig = false
+                                           presentationState.showsRunConfig = false
                                        },
                                        onAdvanced: {
-                                           showsRunConfig = false
-                                           showsAdvanced = true
+                                           presentationState.showsRunConfig = false
+                                           presentationState.showsAdvanced = true
                                        })
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { showsRunConfig = false }
+                if phase != .active { presentationState.showsRunConfig = false }
             }
             .onChange(of: draft) { _, text in mentions.reconcile(text) }
             .task(id: loadID) { await loadMentions(for: loadID) }
-            .sheet(isPresented: $showsAdvanced, onDismiss: updateGauge) {
+            .sheet(isPresented: $presentation.showsAdvanced, onDismiss: updateGauge) {
                 RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
@@ -535,7 +562,7 @@ struct SessionComposer: View {
         HStack(spacing: ComposerControlMetrics.actionSpacing) {
             HStack(spacing: 0) {
                 ComposerAttachments(attachments: $attachments, pending: $pendingAttachments,
-                                    error: $attachmentError, disabled: blocksEditing,
+                                    error: $attachmentError, presentation: presentationState, disabled: blocksEditing,
                                     showsSummary: !isExpanded)
                 if isExpanded {
                     Button(action: startMention) {
@@ -562,7 +589,7 @@ struct SessionComposer: View {
                 }
                 if isExpanded, let runConfig {
                     Button {
-                        showsRunConfig = true
+                        presentationState.showsRunConfig = true
                     } label: {
                         ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress)
                             .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)

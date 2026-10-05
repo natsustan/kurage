@@ -342,3 +342,149 @@ struct ConversationLayoutTests {
         #expect(abs(table.contentOffset.y - bottom) < 1, sourceLocation: sourceLocation)
     }
 }
+
+@MainActor
+struct ConversationReadingTests {
+    enum ComposerCover: CaseIterable {
+        case advanced, attachmentPreview, photos, files
+    }
+
+    @Test(.serialized, .timeLimit(.minutes(1)), arguments: ComposerCover.allCases)
+    func coveringSheetsPauseReadingAndNotificationsRestoreTheConversation(cover: ComposerCover) async throws {
+        let client = ControlledConversationClient()
+        let service = ConversationVisibilityService()
+        let model = AppModel(client: client, notifications: NotificationModel(service: service))
+        await model.adoptExistingAccount()
+        let presentation = ReadingTestPresentation()
+        let controller = UIHostingController(rootView: ReadingTestHost(model: model, presentation: presentation))
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await waitUntil { client.isObserving }
+        presentation.showsSettings = true
+        try await waitUntil { controller.presentedViewController?.view.window != nil }
+        // Release the output only after the covering sheet exists; host speed cannot win this race.
+        client.publish(timestamp: 200)
+        try await waitUntil { model.sessionSummary("root")?.lastMessageAt == 200 }
+        for _ in 0..<5 {
+            controller.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(client.readReceipts.isEmpty)
+        #expect(service.visibleSessionID == nil)
+        presentation.showsSettings = false
+        try await waitUntil { client.readReceipts == [200] }
+        try await waitUntil { service.visibleSessionID == "root" && controller.presentedViewController == nil }
+        switch cover {
+        case .attachmentPreview:
+            presentation.composer.previewAttachment = try ComposerAttachment(
+                fileName: "photo.png", mimeType: "image/png", data: FixtureImage.png, isImage: true)
+        case .advanced:
+            presentation.composer.showsAdvanced = true
+        case .photos:
+            presentation.composer.showsPhotos = true
+        case .files:
+            presentation.composer.showsFiles = true
+        }
+        try await waitUntil { controller.presentedViewController?.view.window != nil && service.visibleSessionID == nil }
+        client.publish(timestamp: 300)
+        try await waitUntil { model.sessionSummary("root")?.lastMessageAt == 300 }
+        #expect(client.readReceipts == [200])
+        model.notifications.receive(NotificationClick(id: "same-session", route: try #require(NotificationRoute("/demo/sessions/root")), userID: "user"))
+        await model.openPendingNotification()
+        try await waitUntil { !presentation.composer.isPresented && controller.presentedViewController == nil }
+        try await waitUntil { client.readReceipts == [200, 300] && service.visibleSessionID == "root" }
+        #expect(presentation.draft == "Keep this draft")
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(condition())
+    }
+}
+
+@MainActor
+@Observable
+private final class ReadingTestPresentation {
+    var showsSettings = false
+    var draft = "Keep this draft"
+    let composer = ComposerPresentation()
+}
+
+private struct ReadingTestHost: View {
+    let model: AppModel
+    let presentation: ReadingTestPresentation
+
+    var body: some View {
+        @Bindable var presentation = presentation
+        NavigationStack {
+            ConversationContent(sessionID: "root", title: "Root", model: model, workspaceGeneration: model.workspaceGeneration,
+                isReadOnly: false, isReading: !presentation.showsSettings,
+                draft: $presentation.draft, mentions: .constant(ComposerMentionState()), attachments: .constant([]),
+                isCancelling: .constant(false), banner: .constant(nil), runConfigState: .constant(ConversationRunConfigState()),
+                rootSessionID: "root", composerPresentation: presentation.composer)
+        }
+        .sheet(isPresented: $presentation.showsSettings) { Text("Settings") }
+        .environment(\.scenePhase, .active)
+    }
+}
+
+@MainActor
+private final class ControlledConversationClient: LodyClient {
+    private(set) var account: Account? = Account(email: "fixture@kurage.app", id: "user")
+    let supportsConversations = true
+    let supportsSessionMetadataEditing = true
+    let supportsTextSending = true
+    private(set) var isObserving = false
+    private(set) var readReceipts: [Double] = []
+    private var summary = SessionSummary(id: "root", title: "Root", agentName: "Agent", activity: .idle,
+                                         preview: "", lastMessageAt: 100, lastReadAt: 100)
+    private let updates: AsyncThrowingStream<ConversationUpdate, Error>
+    private let continuation: AsyncThrowingStream<ConversationUpdate, Error>.Continuation
+
+    init() { (updates, continuation) = AsyncThrowingStream.makeStream() }
+    func restoreSession() async -> Account? { account }
+    func signOut() { account = nil }
+    func workspaces() async throws -> [WorkspaceSummary] { [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")] }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] { [summary] }
+    func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
+        Conversation(sessionID: sessionID, turns: [ConversationTurn(id: "answer", author: .agent, text: "New output")], permission: nil)
+    }
+    func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
+        isObserving = true
+        return updates
+    }
+    func publish(timestamp: Double) {
+        summary.lastMessageAt = timestamp
+        continuation.yield(ConversationUpdate(conversation: Conversation(sessionID: "root",
+            turns: [ConversationTurn(id: "answer", author: .agent, text: "New output")], permission: nil),
+            activity: .idle, syncState: .live, lastMessageAt: timestamp))
+    }
+    func updateSessionMetadata(_ change: SessionMetadataChange, sessionID: String, workspaceID: String) async throws {
+        if case .read(let timestamp) = change { readReceipts.append(timestamp); summary.lastReadAt = timestamp }
+    }
+    func beginDeviceAuthorization() async throws -> DeviceAuthorization { throw LodyClientError.notConnected }
+    func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws { throw LodyClientError.notConnected }
+    func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?, turnID: String,
+              sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { throw LodyClientError.notConnected }
+    func cancelSession(sessionID: String, workspaceID: String) async throws { throw LodyClientError.notConnected }
+    func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws { throw LodyClientError.notConnected }
+}
+
+@MainActor
+private final class ConversationVisibilityService: PushNotificationService {
+    let isConfigured = true
+    var onClick: (@MainActor (NotificationClick) -> Void)?
+    var onStatusChange: (@MainActor () -> Void)?
+    var visibleSessionID: String?
+    func identify(_ userID: String?, enabled: Bool) {}
+    func setSubscribed(_ enabled: Bool) {}
+    func status() async -> PushNotificationStatus { PushNotificationStatus() }
+    func requestAuthorization() async -> Bool { false }
+    func setVisibleSession(workspace: WorkspaceSummary?, sessionID: String?) { visibleSessionID = sessionID }
+    func clearDelivered() {}
+}

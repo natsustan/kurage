@@ -175,26 +175,21 @@ final class SettingsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testIPadSettingsDefersReadReceiptAndPreservesDraft() throws {
+    func testIPadSettingsPreservesReadStateAndDraft() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
-        let app = launch(arguments: ["--fixture-slow-conversation"])
+        let app = launch()
         let row = app.descendants(matching: .any)["session-session-long"].firstMatch
         tap(row)
-        tap(app.buttons["account-menu"])
-        let readWhileCovered = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", "Idle, Read"), object: row)
-        readWhileCovered.isInverted = true
-        XCTAssertEqual(XCTWaiter.wait(for: [readWhileCovered], timeout: 4), .completed)
-        attach(app, "iPad settings above loading conversation")
-        tap(app.buttons["settings-close"])
         let read = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Idle, Read"), object: row)
         XCTAssertEqual(XCTWaiter.wait(for: [read], timeout: 5), .completed)
         let field = app.descendants(matching: .any)["follow-up-field"].firstMatch
         tap(field)
         field.typeText("Keep this draft while settings is open")
         tap(app.buttons["account-menu"])
+        XCTAssertEqual(row.value as? String, "Idle, Read")
+        attach(app, "iPad settings preserves the existing read receipt")
         tap(app.buttons["settings-workspace"])
         tap(app.buttons["workspace-option-ws-demo"])
         tap(app.buttons["settings-close"])

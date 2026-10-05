@@ -73,6 +73,7 @@ struct ConversationContent: View {
     @State private var observedActivity: SessionActivity?
     @State private var isVisible = false
     @State private var notificationVisibilityOwner = UUID()
+    @State var composerPresentation = ComposerPresentation()
     @State private var bottomMessageAt: Double?
     @State private var loadedMessageAt: Double?
 
@@ -83,13 +84,13 @@ struct ConversationContent: View {
     private var isNotificationSessionVisible: Bool {
         isVisible && isReading && displayedConversation != nil && connectionStatus == nil &&
             scenePhase == .active && isCurrentWorkspace &&
-            selectedSubtask == nil && previewImage == nil && changesSelection == nil
+            selectedSubtask == nil && previewImage == nil && changesSelection == nil && !composerPresentation.isPresented
     }
 
     private var readReceiptTimestamp: Double? {
         guard isVisible, isReading, scenePhase == .active, isCurrentWorkspace,
               connectionStatus == nil, selectedSubtask == nil,
-              previewImage == nil, changesSelection == nil,
+              previewImage == nil, changesSelection == nil, !composerPresentation.isPresented,
               bottomMessageAt == loadedMessageAt else { return nil }
         return loadedMessageAt
     }
@@ -172,6 +173,7 @@ struct ConversationContent: View {
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
+                composerPresentation: composerPresentation,
                 focusesComposerOnAppear: isStarting,
                 dismissComposerFocus: changesSelection != nil || selectedSubtask != nil,
                 mentionSourceID: "\(workspaceGeneration):\(sessionID):\(isStarting)",
@@ -272,6 +274,7 @@ struct ConversationContent: View {
             model.notifications.setVisibleSession(owner: notificationVisibilityOwner, workspace: nil, sessionID: nil)
         }
         .onChange(of: model.notificationOpenGeneration) { _, _ in
+            composerPresentation.dismiss()
             previewImage = nil
             selectedSubtask = nil
             changesSelection = nil
@@ -827,6 +830,7 @@ private struct ConversationFooter: View {
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
+    let composerPresentation: ComposerPresentation
     var focusesComposerOnAppear = false
     var dismissComposerFocus = false
     let mentionSourceID: String
@@ -872,6 +876,7 @@ private struct ConversationFooter: View {
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
                     SessionComposer(draft: $draft, mentions: $mentions, attachments: $attachments,
+                                    presentation: composerPresentation,
                                     isSending: isSending, allowsEditingWhileSending: true, isCancelling: isCancelling,
                                     isSessionRunning: isSessionRunning,
                                     supportsTextSending: supportsTextSending,

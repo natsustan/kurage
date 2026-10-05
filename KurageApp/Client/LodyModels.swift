@@ -679,6 +679,8 @@ struct ConversationPatch: Decodable {
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var latestTurnNumber: Int? = nil
     var subtasks: [ConversationSubtask]? = nil
+    var subtaskOrder: [ConversationSubtask.ID]? = nil
+    var changedSubtasks: [ConversationSubtask]? = nil
     var questions: [ConversationQuestionRequest]? = nil
     let activity: String
     let syncState: ConversationSyncState
@@ -697,11 +699,21 @@ struct ConversationPatch: Decodable {
             guard let turn = turns[id] else { throw LodyClientError.notConnected }
             return turn
         }
+        var updatedSubtasks = replacesSubtasks == true ? subtasks : previous.subtasks
+        if let subtaskOrder {
+            guard Set(subtaskOrder).count == subtaskOrder.count else { throw LodyClientError.notConnected }
+            var tasks = Dictionary((updatedSubtasks ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            for task in changedSubtasks ?? [] { tasks[task.id] = task }
+            updatedSubtasks = try subtaskOrder.map { id in
+                guard let task = tasks[id] else { throw LodyClientError.notConnected }
+                return task
+            }
+        }
         return ConversationUpdate(
             conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission,
                                        fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges,
                                        latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
-                                       subtasks: replacesSubtasks == true ? subtasks : previous.subtasks,
+                                       subtasks: updatedSubtasks,
                                        questions: questions),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt, sessionTabs: sessionTabs

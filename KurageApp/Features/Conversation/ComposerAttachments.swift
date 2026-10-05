@@ -9,33 +9,33 @@ struct ComposerAttachments: View {
     @Binding var pending: [PendingComposerAttachment]
     private var isLoading: Bool { !pending.isEmpty }
     @Binding var error: String?
+    let presentation: ComposerPresentation
     let disabled: Bool
     var showsSummary = false
-    @State private var showsPhotos = false
-    @State private var showsFiles = false
-    @State private var showsCamera = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var importID: UUID?
     @State private var importTask: Task<Void, Never>?
 
     var body: some View {
+        @Bindable var presentation = presentation
         ZStack {
             Menu {
-                Button("Files", systemImage: "paperclip") { showsFiles = true }
+                Button("Files", systemImage: "paperclip") { presentation.showsFiles = true }
                     .accessibilityIdentifier("attach-files")
                 Button("Camera", systemImage: "camera") {
                     guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
                         error = "Camera is unavailable on this device."; return
                     }
+                    let generation = presentation.dismissGeneration
                     importTask = Task {
                         let allowed = await AVCaptureDevice.requestAccess(for: .video)
-                        guard !Task.isCancelled else { return }
-                        if allowed { showsCamera = true }
+                        guard !Task.isCancelled, presentation.dismissGeneration == generation else { return }
+                        if allowed { presentation.showsCamera = true }
                         else { error = "Allow camera access in Settings to take a photo." }
                     }
                 }
                 .accessibilityIdentifier("attach-camera")
-                Button("Photos", systemImage: "photo.on.rectangle") { showsPhotos = true }
+                Button("Photos", systemImage: "photo.on.rectangle") { presentation.showsPhotos = true }
                     .accessibilityIdentifier("attach-photos")
             } label: {
                 Image(systemName: "plus")
@@ -64,7 +64,7 @@ struct ComposerAttachments: View {
             .accessibilityValue(isLoading ? "Loading attachments" : attachments.isEmpty ? "" : "\(attachments.count) attachments")
             .accessibilityIdentifier("add-attachment")
         }
-        .photosPicker(isPresented: $showsPhotos, selection: $photos,
+        .photosPicker(isPresented: $presentation.showsPhotos, selection: $photos,
                       maxSelectionCount: max(1, 8 - attachments.count), selectionBehavior: .ordered,
                       matching: .images, preferredItemEncoding: .compatible)
         .onChange(of: photos) { _, selection in
@@ -81,7 +81,7 @@ struct ComposerAttachments: View {
                 return result
             }
         }
-        .fileImporter(isPresented: $showsFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $presentation.showsFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls):
                 guard urls.count + attachments.count <= 8 else { error = "Select up to 8 attachments."; return }
@@ -92,9 +92,9 @@ struct ComposerAttachments: View {
             case .failure(let failure): error = failure.localizedDescription
             }
         }
-        .fullScreenCover(isPresented: $showsCamera) {
+        .fullScreenCover(isPresented: $presentation.showsCamera) {
             CameraCapture { image in
-                showsCamera = false
+                presentation.showsCamera = false
                 if let image {
                     beginImport(placeholders: [PendingComposerAttachment(fileName: "Photo", isImage: true)]) {
                         [try await Self.cameraImage(image)]

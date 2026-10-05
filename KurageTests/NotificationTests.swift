@@ -262,6 +262,55 @@ struct NotificationNavigationTests {
         #expect(client.reopenedTabs.isEmpty)
     }
 
+    @Test func manualWorkspaceSwitchDuringDiscoveryDiscardsTheClick() async throws {
+        let client = NotificationRoutingClient()
+        let model = await prepare(client)
+        client.defersWorkspaces = true
+        var requests = client.workspaceRequests.makeAsyncIterator()
+        model.notifications.receive(try click())
+        let routing = Task { await model.openPendingNotification() }
+        try #require(await requests.next() != nil)
+        await model.selectWorkspace("ws-studio")
+        client.completeWorkspaces()
+        await routing.value
+        #expect(model.selectedWorkspaceID == "ws-studio")
+        #expect(model.notificationNavigation == nil)
+        #expect(model.notifications.pendingClick == nil)
+        #expect(client.destinationWorkspaces.isEmpty)
+    }
+
+    @Test func failedSessionRefreshKeepsANewWorkspaceClickForRetry() async throws {
+        let client = NotificationRoutingClient()
+        let model = await prepare(client)
+        client.failingSessionWorkspaceID = "ws-studio"
+        let incoming = try click(workspace: "studio")
+        model.notifications.receive(incoming)
+        await model.openPendingNotification()
+        #expect(model.selectedWorkspaceID == "ws-studio")
+        #expect(model.notifications.pendingClick == incoming)
+        #expect(model.notifications.routingError != nil)
+        #expect(client.destinationWorkspaces.isEmpty)
+        client.failingSessionWorkspaceID = nil
+        await model.openPendingNotification()
+        #expect(model.notificationNavigation?.clickID == incoming.id)
+        #expect(model.notifications.pendingClick == nil)
+    }
+
+    @Test func cancelledRoutingStopsItsOwnedSessionRefresh() async throws {
+        let client = NotificationRoutingClient()
+        let model = await prepare(client)
+        client.delaysSessions = true
+        var requests = client.sessionRequests.makeAsyncIterator()
+        model.notifications.receive(try click())
+        let routing = Task { await model.openPendingNotification() }
+        try #require(await requests.next() != nil)
+        routing.cancel()
+        await routing.value
+        #expect(client.sessionRequestCancelled)
+        #expect(model.notificationNavigation == nil)
+        #expect(client.destinationWorkspaces.isEmpty)
+    }
+
     private func prepare(_ client: NotificationRoutingClient) async -> AppModel {
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
@@ -280,19 +329,45 @@ private final class NotificationRoutingClient: LodyClient {
     var destination: NotificationSessionDestination? = NotificationSessionDestination(rootSessionID: "root", sessionID: "root", isTabClosed: false)
     var failsDestination = false
     var defersDestination = false
+    var defersWorkspaces = false
+    var failingSessionWorkspaceID: String?
+    var delaysSessions = false
+    private(set) var sessionRequestCancelled = false
     private(set) var destinationWorkspaces: [String] = []
     private(set) var reopenedTabs: [String] = []
     let destinationRequests: AsyncStream<Bool>
     private let requestSignal: AsyncStream<Bool>.Continuation
     private var pending: CheckedContinuation<NotificationSessionDestination?, Never>?
-    init() { (destinationRequests, requestSignal) = AsyncStream.makeStream() }
+    let workspaceRequests: AsyncStream<Bool>
+    private let workspaceSignal: AsyncStream<Bool>.Continuation
+    private var pendingWorkspaces: CheckedContinuation<[WorkspaceSummary], Never>?
+    let sessionRequests: AsyncStream<Bool>
+    private let sessionSignal: AsyncStream<Bool>.Continuation
+    init() {
+        (destinationRequests, requestSignal) = AsyncStream.makeStream()
+        (workspaceRequests, workspaceSignal) = AsyncStream.makeStream()
+        (sessionRequests, sessionSignal) = AsyncStream.makeStream()
+    }
     func restoreSession() async -> Account? { account }
     func signOut() { account = nil }
     func workspaces() async throws -> [WorkspaceSummary] {
+        if defersWorkspaces {
+            return await withCheckedContinuation { pendingWorkspaces = $0; workspaceSignal.yield(true) }
+        }
+        return catalog
+    }
+    private var catalog: [WorkspaceSummary] {
         [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"), WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
     }
+    func completeWorkspaces() { pendingWorkspaces?.resume(returning: catalog); pendingWorkspaces = nil }
     func sessions(workspaceID: String) async throws -> [SessionSummary] {
-        [SessionSummary(id: "root", title: "Root", agentName: "Agent", activity: .idle, preview: "")]
+        if workspaceID == failingSessionWorkspaceID { throw LodyClientError.unreachable }
+        if delaysSessions {
+            sessionSignal.yield(true)
+            do { try await Task.sleep(for: .seconds(60)) }
+            catch { sessionRequestCancelled = true; throw error }
+        }
+        return [SessionSummary(id: "root", title: "Root", agentName: "Agent", activity: .idle, preview: "")]
     }
     func notificationDestination(sessionID: String, workspaceID: String) async throws -> NotificationSessionDestination? {
         destinationWorkspaces.append(workspaceID)

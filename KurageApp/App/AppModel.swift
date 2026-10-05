@@ -462,13 +462,14 @@ final class AppModel {
                 return
             }
             let selection = workspaceGeneration + (selectedWorkspaceID != workspace.id ? 1 : 0)
-            if selectedWorkspaceID != workspace.id { await selectWorkspace(workspace.id) }
-            else { await refreshSessions() }
+            if selectedWorkspaceID != workspace.id { commitWorkspaceSelection(workspace.id) }
+            let refreshed = await refreshSessions(cancelWhenCallerCancels: true)
             guard isCurrent() else { return }
             guard selectedWorkspaceID == workspace.id, workspaceGeneration == selection else {
                 notifications.acknowledge(click.id)
                 return
             }
+            guard refreshed else { throw LodyClientError.unreachable }
             let destination = try await client.notificationDestination(sessionID: click.route.sessionID, workspaceID: workspace.id)
             guard isCurrent() else { return }
             guard workspaceGeneration == selection, selectedWorkspaceID == workspace.id else {
@@ -506,6 +507,16 @@ final class AppModel {
     func selectWorkspace(_ workspaceID: WorkspaceSummary.ID) async {
         guard workspaces.contains(where: { $0.id == workspaceID }),
               selectedWorkspaceID != workspaceID else { return }
+        // A manual selection supersedes a click even while its workspace request is pending.
+        notificationRoutingGeneration += 1
+        if let click = notifications.pendingClick { notifications.acknowledge(click.id) }
+        notifications.routingError = nil
+        notificationNavigation = nil
+        commitWorkspaceSelection(workspaceID)
+        await refreshSessions()
+    }
+
+    private func commitWorkspaceSelection(_ workspaceID: WorkspaceSummary.ID) {
         cancelSessionRefresh()
         cancelSessionSearchIndex()
         selectedWorkspaceID = workspaceID
@@ -513,7 +524,6 @@ final class AppModel {
         clearArchivedSessions()
         persistSession()
         currentStatusNote = nil
-        await refreshSessions()
     }
 
     /// Owned by the visible list's SwiftUI task; no polling in details or the background.
@@ -531,8 +541,9 @@ final class AppModel {
         }
     }
 
-    func refreshSessions(restart: Bool = false, cancelWhenCallerCancels: Bool = false) async {
-        guard !Task.isCancelled, account != nil, let workspaceID = selectedWorkspaceID else { return }
+    @discardableResult
+    func refreshSessions(restart: Bool = false, cancelWhenCallerCancels: Bool = false) async -> Bool {
+        guard !Task.isCancelled, account != nil, let workspaceID = selectedWorkspaceID else { return false }
         let generation = authenticationGeneration
         if restart || sessionRefreshTask?.isCancelled == true ||
             (sessionRefreshTask != nil && sessionRefreshWorkspaceID != workspaceID) {
@@ -567,7 +578,7 @@ final class AppModel {
             }
             guard !Task.isCancelled, isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
-            ) else { return }
+            ) else { return false }
             // A list request can finish after a newer conversation update.
             // Merge only the monotonic message clock; keep fresh server fields.
             let known = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0.lastMessageAt) })
@@ -595,13 +606,14 @@ final class AppModel {
             if isSessionSearchActive {
                 scheduleSessionSearchIndex()
             }
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
             // Bridge cancellation can surface as a WebKit error rather than CancellationError.
             guard !Task.isCancelled, !refreshTask.isCancelled, isCurrentSessionRefresh(
                 generation, workspaceID: workspaceID, refreshGeneration: refreshGeneration
-            ) else { return }
+            ) else { return false }
             switch error {
             case LodyClientError.signedOut:
                 signOut()
@@ -610,6 +622,7 @@ final class AppModel {
             default:
                 currentStatusNote = StatusNote(tone: .failure, text: "Could not refresh sessions.")
             }
+            return false
         }
     }
 
