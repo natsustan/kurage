@@ -704,6 +704,8 @@ struct TurnRow: View {
         } else {
             MarkdownView(text)
                 .tint(.primary)
+                .markdownLinksUnderlined(pattern: .dot, color: .secondary)
+                .markdownLinkSuffix(Self.linkSuffix)
                 .tint(Color(uiColor: .secondaryLabel), for: .inlineCodeBlock)
                 .font(.title2.weight(.semibold), for: .h1)
                 .font(.title3.weight(.semibold), for: .h2)
@@ -718,6 +720,14 @@ struct TurnRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
+
+    private static let linkSuffix: AttributedString = {
+        // Keep the monochrome indicator with the link's last word when wrapping.
+        var suffix = AttributedString("\u{00A0}↗\u{FE0E}")
+        suffix.font = .caption
+        suffix.foregroundColor = .secondary
+        return suffix
+    }()
 }
 
 private struct MessageDeliveryView: View {

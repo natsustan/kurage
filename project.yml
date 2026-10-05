@@ -19,7 +19,7 @@ settings:
 packages:
   MarkdownView:
     url: https://github.com/natsustan/MarkdownView.git
-    revision: b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed
+    revision: 7d7127ec6f516c41ca7b6101fd97139d1e4591a3
 
   OneSignal:
     url: https://github.com/OneSignal/OneSignal-iOS-SDK.git
