@@ -354,14 +354,55 @@ struct NotificationNavigationTests {
         var requests = client.workspaceRequests.makeAsyncIterator()
         model.notifications.receive(try click())
         let routing = Task { await model.openPendingNotification() }
-        try #require(await requests.next() != nil)
+        let request = try #require(await requests.next())
         await model.selectWorkspace("ws-studio")
-        client.completeWorkspaces()
+        client.completeWorkspaces(request)
         await routing.value
         #expect(model.selectedWorkspaceID == "ws-studio")
         #expect(model.notificationNavigation == nil)
         #expect(model.notifications.pendingClick == nil)
         #expect(client.destinationWorkspaces.isEmpty)
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func supersededWorkspaceRefreshRetainsNotificationForRetry(hasCachedWorkspaces: Bool, latestFails: Bool) async throws {
+        let client = NotificationRoutingClient()
+        let cached = hasCachedWorkspaces ? [client.workspaceCatalog[0]] : []
+        client.workspaceCatalog = cached
+        let model = await prepare(client)
+        let refreshed = [WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
+        client.defersWorkspaces = true
+        var requests = client.workspaceRequests.makeAsyncIterator()
+        let incoming = try click(workspace: "studio")
+        model.notifications.receive(incoming)
+        let routing = Task { await model.openPendingNotification() }
+        let routingRequest = try #require(await requests.next())
+        let latestRefresh = Task { await model.refreshWorkspaces() }
+        let latestRequest = try #require(await requests.next())
+
+        client.completeWorkspaces(routingRequest, with: refreshed)
+        await routing.value
+        #expect(model.workspaces == cached)
+        #expect(model.isRefreshingWorkspaces)
+        #expect(model.notificationNavigation == nil)
+        #expect(client.destinationWorkspaces.isEmpty)
+        #expect(model.notifications.pendingClick == incoming)
+        #expect(model.notifications.routingError == "Could not load this conversation. Try again when connected.")
+
+        if latestFails { client.failWorkspaces(latestRequest) }
+        else { client.completeWorkspaces(latestRequest, with: refreshed) }
+        #expect(await latestRefresh.value == !latestFails)
+        #expect(model.notifications.pendingClick == incoming)
+        #expect((model.workspaceLoadStatusNote != nil) == latestFails)
+
+        client.workspaceCatalog = refreshed
+        client.defersWorkspaces = false
+        await model.openPendingNotification()
+        #expect(model.notificationNavigation?.clickID == incoming.id)
+        #expect(model.notificationNavigation?.workspaceID == "ws-studio")
+        #expect(client.destinationWorkspaces == ["ws-studio"])
+        #expect(model.notifications.pendingClick == nil)
+        #expect(model.notifications.routingError == nil)
     }
 
     @Test func failedSessionRefreshKeepsANewWorkspaceClickForRetry() async throws {
@@ -415,6 +456,8 @@ private final class NotificationRoutingClient: LodyClient {
     var failsDestination = false
     var defersDestination = false
     var defersWorkspaces = false
+    var workspaceCatalog = [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"),
+                            WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
     var failingSessionWorkspaceID: String?
     var delaysSessions = false
     private(set) var sessionRequestCancelled = false
@@ -423,9 +466,9 @@ private final class NotificationRoutingClient: LodyClient {
     let destinationRequests: AsyncStream<Bool>
     private let requestSignal: AsyncStream<Bool>.Continuation
     private var pending: CheckedContinuation<NotificationSessionDestination?, Never>?
-    let workspaceRequests: AsyncStream<Bool>
-    private let workspaceSignal: AsyncStream<Bool>.Continuation
-    private var pendingWorkspaces: CheckedContinuation<[WorkspaceSummary], Never>?
+    let workspaceRequests: AsyncStream<UUID>
+    private let workspaceSignal: AsyncStream<UUID>.Continuation
+    private var pendingWorkspaces: [UUID: CheckedContinuation<[WorkspaceSummary], Error>] = [:]
     let sessionRequests: AsyncStream<Bool>
     private let sessionSignal: AsyncStream<Bool>.Continuation
     init() {
@@ -437,14 +480,20 @@ private final class NotificationRoutingClient: LodyClient {
     func signOut() { account = nil }
     func workspaces() async throws -> [WorkspaceSummary] {
         if defersWorkspaces {
-            return await withCheckedContinuation { pendingWorkspaces = $0; workspaceSignal.yield(true) }
+            return try await withCheckedThrowingContinuation { continuation in
+                let id = UUID()
+                pendingWorkspaces[id] = continuation
+                workspaceSignal.yield(id)
+            }
         }
-        return catalog
+        return workspaceCatalog
     }
-    private var catalog: [WorkspaceSummary] {
-        [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"), WorkspaceSummary(id: "ws-studio", name: "Studio", slug: "studio")]
+    func completeWorkspaces(_ id: UUID, with catalog: [WorkspaceSummary]? = nil) {
+        pendingWorkspaces.removeValue(forKey: id)?.resume(returning: catalog ?? workspaceCatalog)
     }
-    func completeWorkspaces() { pendingWorkspaces?.resume(returning: catalog); pendingWorkspaces = nil }
+    func failWorkspaces(_ id: UUID) {
+        pendingWorkspaces.removeValue(forKey: id)?.resume(throwing: LodyClientError.unreachable)
+    }
     func sessions(workspaceID: String) async throws -> [SessionSummary] {
         if workspaceID == failingSessionWorkspaceID { throw LodyClientError.unreachable }
         if delaysSessions {

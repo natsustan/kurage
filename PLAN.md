@@ -3,7 +3,7 @@
 ## 分支审查修复（2026-10-05）
 
 - 子代理正文补丁改为稳定 ID 的 `subtaskOrder` / `changedSubtasks`：初次订阅仍发送完整快照，后续仅传发生变化的 run；Swift 按每个补丁的顺序重建完整列表并移除已删除任务，校验重复／缺失 ID，兼容已有完整替换字段。一个 run 增长不再重传其它已完成任务的正文；thought 与原始工具输出的过滤规则沿用既有投影。
-- 通知路由自身提交工作区选择与用户手动切换分开；手动切换立即撤销待处理点击，阻止工作区发现阶段的旧请求切回。会话刷新明确返回是否成功，瞬时失败保留点击和 Retry，不再根据空缓存误报永久不可用。Retry 通过同一个 SwiftUI `.task(id:)` 重启，随后台、账号或新点击变化取消；路由自己拥有的会话刷新也传递取消，仍不取消其他调用者拥有的共享请求。
+- 通知路由自身提交工作区选择与用户手动切换分开；手动切换立即撤销待处理点击，阻止工作区发现阶段的旧请求切回。工作区与会话刷新明确返回是否成功提交，瞬时失败或工作区请求被后续刷新取代时保留点击和 Retry，不再根据空缓存误报永久不可用。Retry 通过同一个 SwiftUI `.task(id:)` 重启，随后台、账号或新点击变化取消；路由自己拥有的会话刷新也传递取消，仍不取消其他调用者拥有的共享请求。
 - 会话宿主持有输入区的 `ComposerPresentation`，统一配置浮层、Advanced sheet、附件预览与 Photos／Files／Camera 呈现状态；覆盖正文时暂停通知可见性和已读判定，同一会话通知打开后清理这些弹层而保留草稿。相机授权完成时检查关闭代次，避免已被通知关闭的流程重新呈现。新会话仍使用输入区自己的局部状态。
 - 移除 iPad UI 用例对固定 3 秒加载延迟的依赖，UI 保留已读基线／草稿与 workspace picker 的交互检查；新增受控原生视图回归，在覆盖 Settings 已实际呈现后才释放正文，检查关闭后恢复已读与可见性，并检查输入区覆盖页面上的同会话通知关闭及草稿保留。增加通知早期工作区切换、会话刷新失败重试、路由取消以及子代理增量排序／增长／删除回归。
 - 本轮 frozen-lockfile 安装、328 项 JavaScript 测试与 bundle 重建通过；iOS 27 Simulator 构建、93 项原生定向测试、10 项会话刷新测试通过，最终共享弹层版本的 Advanced／附件预览／Photos／Files 四种受控视图回归也通过。iPhone 的冷通知、子 tab、通知开关、配置编辑和子代理详情 5 项 UI 用例通过，iPad 的 Settings 已读基线／草稿与主题切换 2 项通过，最终附件选择与配置编辑复测 2 项通过，共 9 次 UI 执行、0 失败。截图检查确认输入区、子代理正文及 Settings 显示正常；iPad 横屏 XCTest attachment 有黑区和裁切，同轮 simctl 画面完整。专用模拟器已恢复原显示配置并关闭。通知 Cloud 开关仍关闭，未进行真实账号、APNs、iOS 26、真机相机授权或其他真机验证。
@@ -403,6 +403,7 @@
 - 官方方案核对（2026-10-04）：读取官方 main `e73d3109`，`components/src/lib/onesignal.ts` 确认 Web／原生 Cordova 由 `VITE_ONESIGNAL_APP_ID` 初始化，`routes/$workspaceName/_auth.tsx` 用 `currentUser.id` 登录 OneSignal；机器通知 action 的公开参数不包含 App ID／API key／第三方目标。官方完整 Git tree 不含 Cloud sender 或 Convex 后端实现，官方通知指南只说明官方客户端开关，未找到 `ONE_SIGNAL_APPS` 或第三方目标登记的官方公开协议。`NOTIFICATIONS.md` 已将官方已验证链路与 lody-ios 的候选配置分开；后者必须获得服务方兼容性确认，不能据此声称官方托管 Cloud 支持 Kurage。此次只修正文档，未修改客户端或 Cloud 配置。
 - 通知暂时隐藏（2026-10-04）：按用户要求，官方托管 Cloud 的 Kurage 发送目标确认前隐藏 Settings → Notifications；`OneSignalNotificationService.isCloudDeliveryEnabled` 暂置 `false`，正常启动不初始化 SDK，既有开启偏好不会自动恢复注册。现有实现、配置与偏好保留；`--fixture --fixture-notifications` 继续覆盖通知流程，普通 fixture 检查入口隐藏且 Theme／About 可用。本轮 iPhone 17／iOS 27 Simulator 测试构建、通知模型／路由 16 项原生测试及通知／Theme／工作区切换 7 项 UI 回归通过；浅／深色设置页截图确认通知入口隐藏且其余布局正常，`git diff --check` 通过。未修改 Cloud 配置，尚未更新真机安装或验证真实 APNs 投递；已有 provider 订阅不因隐藏入口而被删除。
 - PR #38 审查修复（2026-10-05）：通知归属与 generation 校验集中在 SDK 回调共用的值类型中；旧格式通知只保留启动时捕获的身份，未知身份、退出或账号切换后不再从新账号补写兜底，前台展示采用相同规则。带明确 recipient 的通知继续核对当前账号；同账号冷启动恢复允许最初已捕获的点击，其它跨 generation 点击丢弃。新增 7 项身份策略测试（8 个用例），覆盖直接切账号、退出再登录、切回原账号、冷启动恢复与延迟回调。此次 iPhone 17／iOS 27 Simulator 构建及身份／通知模型／路由三个 suite 共 26 项原生测试通过，`git diff --check` 通过；未修改 bridge 或 UI，未运行 JS／UI 测试，真实 SDK 回调时序与 APNs 投递仍待真机验证。
+- PR #38 工作区刷新审查修复（2026-10-05）：`refreshWorkspaces` 只在当前账号／请求实际提交目录后返回成功；失败、取消或被更新请求取代均返回失败。通知路由检查此结果，未提交时保留点击和 Retry，避免从空／旧目录推断无权访问；已有手动切工作区、账号变化和后台取消检查保留。新增可独立释放两个工作区请求的回归，以空缓存／仅缓存旧工作区及后续刷新成功／失败形成四种组合，检查旧请求先返回时仍保留点击，再用同一点击重试成功；工作区测试补查提交结果。修复前四种组合均复现错误清除，基线 xcodebuild 在记录断言失败后日志收尾停滞，仅结束本轮专属基线测试进程。修复后 iPhone 17／iOS 27 Simulator 构建、四个 suite 共 36 项原生专项测试及冷通知／子 tab／工作区刷新重试 3 项 fixture UI 测试完整通过，`git diff --check` 通过。未修改或复测 bridge；真实账号、SDK 回调时序与 APNs 投递仍待真机验证。
 
 ## Session 多 tab（2026-09-29）
 

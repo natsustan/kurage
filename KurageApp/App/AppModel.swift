@@ -250,9 +250,9 @@ final class AppModel {
             await refreshWorkspaces()
         } else {
             // Cached workspace selection lets the list load without waiting for HTTP discovery.
-            async let workspaceRefresh: Void = refreshWorkspaces()
+            async let workspaceRefresh: Bool = refreshWorkspaces()
             await refreshSessions()
-            await workspaceRefresh
+            _ = await workspaceRefresh
         }
         guard !Task.isCancelled, isCurrentAuthentication(generation) else { return }
         if workspaceID == nil || selectedWorkspaceID != workspaceID {
@@ -386,8 +386,10 @@ final class AppModel {
         currentStatusNote = nil
     }
 
-    func refreshWorkspaces() async {
-        guard !Task.isCancelled, account != nil else { return }
+    /// Reports success only when this request commits the current account's workspace catalog.
+    @discardableResult
+    func refreshWorkspaces() async -> Bool {
+        guard !Task.isCancelled, account != nil else { return false }
         let generation = authenticationGeneration
         workspaceRefreshGeneration += 1
         let refreshGeneration = workspaceRefreshGeneration
@@ -399,7 +401,7 @@ final class AppModel {
         do {
             let loaded = try await client.workspaces()
             guard !Task.isCancelled, isCurrentAuthentication(generation),
-                  refreshGeneration == workspaceRefreshGeneration else { return }
+                  refreshGeneration == workspaceRefreshGeneration else { return false }
             workspaces = loaded
             workspaceStatusNote = nil
             if !loaded.contains(where: { $0.id == selectedWorkspaceID }) {
@@ -427,17 +429,19 @@ final class AppModel {
             freshSearchBodies = freshSearchBodies.filter { workspaceIDs.contains($0.key) }
             dirtySearchBodies = dirtySearchBodies.filter { workspaceIDs.contains($0.key) }
             persistSession()
+            return true
         } catch LodyClientError.signedOut {
             guard !Task.isCancelled, isCurrentAuthentication(generation),
-                  refreshGeneration == workspaceRefreshGeneration else { return }
+                  refreshGeneration == workspaceRefreshGeneration else { return false }
             signOut()
         } catch is CancellationError {
-            return
+            return false
         } catch {
             guard !Task.isCancelled, isCurrentAuthentication(generation),
-                  refreshGeneration == workspaceRefreshGeneration else { return }
+                  refreshGeneration == workspaceRefreshGeneration else { return false }
             workspaceStatusNote = StatusNote(tone: .failure, text: "Could not load workspaces.")
         }
+        return false
     }
 
     func openPendingNotification() async {
@@ -452,9 +456,9 @@ final class AppModel {
                 notifications.pendingClick?.id == click.id && notifications.userID == userID
         }
         do {
-            await refreshWorkspaces()
+            let workspacesRefreshed = await refreshWorkspaces()
             guard isCurrent() else { return }
-            guard workspaceLoadStatusNote == nil else { throw LodyClientError.notConnected }
+            guard workspacesRefreshed else { throw LodyClientError.notConnected }
             let matches = workspaces.filter { $0.id == click.route.workspace || $0.slug == click.route.workspace }
             guard matches.count == 1, let workspace = matches.first else {
                 notifications.routingError = "You no longer have access to this workspace."

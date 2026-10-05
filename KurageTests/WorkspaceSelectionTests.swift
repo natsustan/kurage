@@ -17,10 +17,10 @@ struct WorkspaceSelectionTests {
         let second = Task { await model.refreshWorkspaces() }
         let secondID = try #require(await requests.next())
         client.complete(secondID, with: [studio])
-        await second.value
+        #expect(await second.value)
         if fails { client.fail(firstID) }
         else { client.complete(firstID, with: [demo]) }
-        await first.value
+        #expect(await first.value == false)
         #expect(model.workspaces == [studio])
         #expect(model.selectedWorkspaceID == studio.id)
         #expect(model.workspaceLoadStatusNote == nil)
@@ -36,11 +36,11 @@ struct WorkspaceSelectionTests {
         let second = Task { await model.refreshWorkspaces() }
         let secondID = try #require(await requests.next())
         client.complete(firstID, with: [demo])
-        await first.value
+        #expect(await first.value == false)
         #expect(model.isRefreshingWorkspaces)
         #expect(model.workspaces.isEmpty)
         client.complete(secondID, with: [studio])
-        await second.value
+        #expect(await second.value)
         #expect(!model.isRefreshingWorkspaces)
         #expect(model.workspaces == [studio])
     }
@@ -53,7 +53,7 @@ struct WorkspaceSelectionTests {
         let id = try #require(await requests.next())
         refresh.cancel()
         client.complete(id, with: [demo])
-        await refresh.value
+        #expect(await refresh.value == false)
         #expect(model.workspaces.isEmpty)
         #expect(model.selectedWorkspaceID == nil)
         #expect(model.workspaceLoadStatusNote == nil)
@@ -69,10 +69,11 @@ struct WorkspaceSelectionTests {
         model.signOut()
         #expect(!model.isRefreshingWorkspaces)
         client.complete(id, with: [demo])
-        await refresh.value
+        #expect(await refresh.value == false)
         #expect(!model.isSignedIn)
         #expect(model.workspaces.isEmpty)
         #expect(model.selectedWorkspaceID == nil)
+        #expect(await model.refreshWorkspaces() == false)
     }
 
     @Test func refreshFailureKeepsSelectionAndCachedListThenRecovers() async throws {
@@ -81,17 +82,17 @@ struct WorkspaceSelectionTests {
         var requests = client.requests.makeAsyncIterator()
         let initial = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo, studio])
-        await initial.value
+        #expect(await initial.value)
         let failing = Task { await model.refreshWorkspaces() }
         client.fail(try #require(await requests.next()))
-        await failing.value
+        #expect(await failing.value == false)
         #expect(model.workspaces == [demo, studio])
         #expect(model.selectedWorkspaceID == demo.id)
         #expect(model.workspaceLoadStatusNote != nil)
         #expect(!model.isRefreshingWorkspaces)
         let retry = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo, studio])
-        await retry.value
+        #expect(await retry.value)
         #expect(model.workspaceLoadStatusNote == nil)
     }
 
@@ -101,7 +102,7 @@ struct WorkspaceSelectionTests {
         var requests = client.requests.makeAsyncIterator()
         let initial = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo, studio])
-        await initial.value
+        #expect(await initial.value)
         await model.refreshSessions()
         let generation = model.workspaceGeneration
         await model.selectWorkspace(demo.id)
@@ -120,7 +121,7 @@ struct WorkspaceSelectionTests {
         var requests = client.requests.makeAsyncIterator()
         let initial = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo, studio])
-        await initial.value
+        #expect(await initial.value)
         client.failingSessionWorkspaceID = studio.id
         await model.selectWorkspace(studio.id)
         #expect(model.selectedWorkspaceID == studio.id)
@@ -135,11 +136,11 @@ struct WorkspaceSelectionTests {
         var requests = client.requests.makeAsyncIterator()
         let initial = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo, studio])
-        await initial.value
+        #expect(await initial.value)
         await model.selectWorkspace(studio.id)
         let refresh = Task { await model.refreshWorkspaces() }
         client.complete(try #require(await requests.next()), with: [demo])
-        await refresh.value
+        #expect(await refresh.value)
         #expect(model.selectedWorkspaceID == demo.id)
         #expect(!model.sessions.contains { $0.id == "session-ws-studio" })
     }
