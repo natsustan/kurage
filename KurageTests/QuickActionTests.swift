@@ -26,7 +26,8 @@ struct QuickActionTests {
         #expect(ordinary["title"] is NSNull)
     }
 
-    @Test func taskUsesANamedTabAndIndependentModelWithoutChangingParentHistory() async throws {
+    @Test(arguments: QuickAction.allCases)
+    func taskUsesANamedTabAndIndependentModelWithoutChangingParentHistory(action: QuickAction) async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
@@ -36,16 +37,16 @@ struct QuickActionTests {
         var config = try #require(options.runConfig)
         config.selectModel("gpt-5.4-mini")
         config.selectReasoning("low")
-        let id = try model.stageQuickAction(.createBranchAndCommit, rootID: rootID, options: options,
+        let id = try model.stageQuickAction(action, rootID: rootID, options: options,
             runConfig: config, workspaceGeneration: model.workspaceGeneration)
-        #expect(model.sessionSummary(id)?.title == "Create Branch & Commit")
+        #expect(model.sessionSummary(id)?.title == String(localized: action.title))
         #expect(model.sessionSummary(id)?.projectID == model.sessionSummary(rootID)?.projectID)
         #expect(model.sessionSummary(id)?.parentSessionID == rootID)
         #expect(!model.sessions.contains { $0.id == id })
         #expect(!model.shouldFocusSessionStartComposer(sessionID: id))
         try await model.deliverOutgoingMessage(sessionID: id)
         try await model.observeConversation(sessionID: id, rootSessionID: rootID) { update in
-            #expect(update.conversation.turns.first?.text == QuickAction.createBranchAndCommit.prompt)
+            #expect(update.conversation.turns.first?.text == action.prompt)
             #expect(update.runConfig?.model?.value == "gpt-5.4-mini")
             #expect(update.runConfig?.reasoning?.value == "low")
         }
@@ -110,6 +111,11 @@ struct QuickActionTests {
         let relaunched = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
         await relaunched.adoptExistingAccount()
         #expect(relaunched.quickActionPreference(rootID: "session-pr") == preference)
+        let loaded = try await QuickActionConfigurationState.load(model: relaunched, rootID: "session-pr")
+        #expect(loaded.isReady)
+        #expect(loaded.options?.agentConfigID == "codex")
+        #expect(loaded.runConfig?.model?.value == "gpt-5.4-mini")
+        #expect(loaded.runConfig?.selectedReasoning?.value == "low")
         let account = try #require(model.account)
         let key = QuickActionPreference.storageKey(account: account, workspaceID: "ws-demo", machineID: "machine-1")
         #expect(key != QuickActionPreference.storageKey(account: account, workspaceID: "other", machineID: "machine-1"))

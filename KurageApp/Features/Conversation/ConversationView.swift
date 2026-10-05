@@ -63,7 +63,8 @@ struct ConversationContent: View {
     let rootSessionID: SessionSummary.ID
     var onArchived: (() -> Void)? = nil
     var onNewTab: (() -> Void)? = nil
-    var onQuickActions: (() -> Void)? = nil
+    var onQuickActionStarted: ((String) -> Void)? = nil
+    var quickActionPreparation: Binding<Bool> = .constant(false)
     var dismissesComposerFocus = false
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
@@ -226,10 +227,9 @@ struct ConversationContent: View {
         .toolbar {
             if !isReadOnly, let session {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if let onQuickActions {
-                        Button("Quick Actions", systemImage: "bolt", action: onQuickActions)
-                            .labelStyle(.iconOnly)
-                            .accessibilityIdentifier("quick-actions-button")
+                    if let onQuickActionStarted {
+                        QuickActionsMenu(rootID: rootSessionID, workspaceGeneration: workspaceGeneration,
+                            model: model, isPreparing: quickActionPreparation, onStarted: onQuickActionStarted)
                             .disabled(isStarting)
                     }
                     if let onNewTab {

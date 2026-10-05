@@ -45,7 +45,7 @@ struct ConversationTabsContent: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var localDrafts = ConversationDraftStore()
     @State private var showsNewTab = false
-    @State private var quickActionRoute: QuickActionRoute?
+    @State private var preparingQuickAction = false
     @State private var restoredTabMessage: OutgoingMessage?
     @State private var errorMessage: String?
     @State private var changingTab = false
@@ -89,10 +89,12 @@ struct ConversationTabsContent: View {
                         restoredTabMessage = nil
                         showsNewTab = true
                     } : nil,
-                    onQuickActions: !isReadOnly && model.supportsQuickActions(rootID: rootID) ? {
-                        quickActionRoute = QuickActionRoute(rootID: rootID, workspaceGeneration: workspaceGeneration)
+                    onQuickActionStarted: !isReadOnly && model.supportsQuickActions(rootID: rootID) ? { id in
+                        guard model.workspaceGeneration == workspaceGeneration else { return }
+                        model.setActiveSessionTab(id, rootID: rootID)
                     } : nil,
-                    dismissesComposerFocus: quickActionRoute != nil,
+                    quickActionPreparation: $preparingQuickAction,
+                    dismissesComposerFocus: preparingQuickAction,
                     closedTabs: closedTabs, onReopenTab: { setClosed(false, tab: $0) },
                     onEditSessionStart: { message in
                         if activeID == rootID {
@@ -118,12 +120,6 @@ struct ConversationTabsContent: View {
         .alert("Could not update tab", isPresented: Binding(
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
-        .sheet(item: $quickActionRoute) { route in
-            QuickActionsView(route: route, model: model) { id in
-                guard model.workspaceGeneration == workspaceGeneration else { return }
-                model.setActiveSessionTab(id, rootID: rootID)
-            }
-        }
         .onChange(of: openTabs.map(\.id)) { _, ids in
             if activeID != rootID, !ids.contains(activeID) { model.setActiveSessionTab(rootID, rootID: rootID) }
         }

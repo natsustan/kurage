@@ -1,10 +1,19 @@
 # Kurage 会话功能
 
+## Quick Actions 按钮菜单与 Review／PR（2026-10-06）
+
+- 闪电按钮改为原生 Menu，移除 Quick Actions sheet。菜单提供 Review Changes、Create Branch、Commit、Create Branch & Commit、Create PR 和 Create Draft PR；只有名称与图标，没有目录、执行选择或逐项注释。选择后才加载 Settings 中按账号／工作区／机器保存的配置，按钮显示加载状态并禁用重复触发；选择任务时收起键盘，创建后切换到命名子 tab，保留主会话草稿和原配置。
+- 同项目运行／未确认新建时禁用动作，菜单内按需打开原因提示。加载或创建失败以 alert 提供 Retry；保存的设置失效时也可恢复会话默认值。后台、工作区变化或离开详情取消准备中的请求，旧请求不能创建任务或覆盖新范围的状态；提交后的传输继续由 model outbox 持有。
+- Review Changes 是只读 agent 任务，优先检查暂存、未暂存和相关未跟踪源码；工作树无改动时检查当前分支相对已核实基线的变更，返回具体发现，不自动修改或发布评论。Create PR／Create Draft PR 也是 agent 任务，只发布当前已提交分支，保留未提交改动，不隐式提交、切分支、force push、合并或添加以后每轮自动提交推送的规则；查询已有 PR 避免重复，并核对 PR head。GitHub 工具、认证、目标或分支不满足条件时由任务说明原因。
+- 沿用现有子 tab／首轮 `inputConfig` 协议，没有新增 GitHub RPC、自动 review 引擎或后台服务能力。参考本机 Lody `packages/components/src/components/sessions/session-chat-interface.tsx` 的 `handleCreatePr`／`handleCreateDraftPr` 和 `packages/shared/src/review-prompts.ts`，仅核对 agent prompt 派发方式；Kurage 使用当前共享目录和单次动作范围，不继承 Lody 的持续 PR upkeep 指令。普通工具权限响应仍未接入 live。
+- 本次最终 Simulator 构建、6 项 QuickActionTests（其中命名／首轮配置用例参数化覆盖六种动作）和浅色 3 项 QuickActionsFlowTests 通过；系统深色 accessibility-medium 的禁用菜单／原因提示回归另通过 1 项。截图与 AX 层级确认按钮直接展开菜单、六种动作与长名称完整显示、键盘状态及主草稿保留、Settings 配置重启恢复、新增 Review／PR 的任务创建和切换、禁用状态与按需原因提示。首轮 UI 查询沿用 sheet 行标识失败；原生 Menu 不传递 ForEach 行标识，改为在菜单容器内按动作名称定位后全部复测通过，行为断言保持。首轮 Xcode 卡在失败日志收集，已终止该测试进程；最终成功结果 bundle 和截图正常导出。专属模拟器已关闭并删除，`git diff --check` 通过。本次没有在真实仓库执行 review、push 或创建 PR；机器 GitHub 工具／认证、真实账号、弱网／后台恢复、iOS 26、iPad、真机、最大辅助字号和 VoiceOver 实际操作未验证。未改 JavaScript bridge，未运行 JavaScript 测试。
+
 ## Quick Actions 任务 tab（2026-10-05）
 
 - 本地项目的会话详情右上角新增 Quick Actions（闪电）入口，提供 Create Branch、Commit 和 Create Branch & Commit。每次动作在根会话下创建命名子 tab，提交独立首轮指令并切换过去；继承根会话的工作目录与当前分支，保留主会话的历史、草稿和原模型配置。打开面板收起编辑焦点，快捷任务不自动弹出键盘。
 - 辅助字号下 tab 标题允许最多三行、扩大文字宽度并增加竖向留白，避免 Create Branch & Commit 被截成 Create Branch…，与单独创建分支的任务混淆；普通字号保持原单行尺寸。
-- Settings → Quick Actions 可按机器设置 Agent、Model 和 Reasoning，面板也能修改同一组默认值。设置保存在本机，按账号／工作区／机器隔离，重启后恢复；Use Session Defaults 清除该组设置。通过现有新会话能力投影加载选项，保存的模型或推理档位失效时阻止执行并提示重选；没有模型能力的 agent 继承只读配置。后台取消加载，工作区变化关闭面板，旧请求不能写回新工作区。
+- Settings → Quick Actions 可按机器设置 Agent、Model 和 Reasoning。动作面板仅展示三个动作的图标与名称，移除目录信息、执行选择、逐项说明和底部注释；普通字号默认半屏并可上拉展开，辅助字号默认全屏。执行时自动加载 Settings 保存的配置，设置保存在本机，按账号／工作区／机器隔离，重启后恢复；Use Session Defaults 清除该组设置。通过现有新会话能力投影加载选项，保存的模型或推理档位失效时阻止执行，并可在面板恢复会话默认值；没有模型能力的 agent 继承只读配置。后台取消加载，工作区变化关闭面板，旧请求不能写回新工作区。
+- 本次面板精简验证：iPhone 17／iOS 27 Simulator 构建、6 项 QuickActionTests 和浅色的 2 项 QuickActionsFlowTests 通过；系统深色 accessibility-medium 的运行项目禁用回归另通过 1 项。截图与 AX 层级确认普通字号半屏展示完整的三个动作，辅助字号展开后长名称完整换行、禁用原因可见；Settings 配置、重启恢复、任务创建与主草稿保留通过。未改协议或 JavaScript bridge，未运行 JavaScript 测试；未在真实账号或项目中执行 Git 动作，iOS 26、iPad、真机、最大辅助字号与 VoiceOver 实际操作本次未验证。专属测试模拟器已删除。
 - 使用现有 `parentSessionId` 子 tab、共享目录及新 turn `inputConfig` 协议，无新增后端。`SessionTabStart` 将可选标题传给原生 bridge，首轮发布 metadata 时同时写 `title`／`titleSource: user`，避免自动标题覆盖任务名；普通新建仍从 prompt 生成 draft 标题。outbox 保留 session ID、turn ID、标题和首轮配置，未确认的重试不重复创建，用户随后重命名也不被重试覆盖。协议参考沿用 Lody `use-session-actions.ts`、`schema.ts` 与 CLI `session-manager.ts`。
 - 同一项目已知有运行中的根／子会话或未确认的新建时禁用动作，并在按钮前解释原因；这是客户端已观察状态的检查，不是机器侧 Git 锁。指令要求先检查 diff，优先只提交已暂存文件，排除 secrets／构建产物／无关文件，保留工作内容，禁止 push／PR／amend／reset／丢弃更改，并遵循 agent 现有权限配置。实际执行结果显示在任务 tab 中；普通工具权限审批仍未接入 live。
 - 本轮 frozen lockfile 安装、329 项 JavaScript 测试及 bundle 重建通过，XcodeGen 已重新生成工程；Simulator 构建和 42 项 Swift 定向测试通过，覆盖首轮独立模型、命名、原历史保留、同 ID 重试、工作区隔离、设置持久化／能力失效校验和原生 bridge 的标题／配置请求编码。Swift 测试在 tab 大字换行调整后再次通过；最后只调整 SwiftUI 多行标签的尺寸测量，未修改模型或 bridge。
