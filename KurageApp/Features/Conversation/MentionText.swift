@@ -67,14 +67,15 @@ enum MentionText {
         return result
     }
 
-    static func message(_ text: String, font: UIFont, color: UIColor) -> NSAttributedString {
+    static func message(_ text: String, font: UIFont, color: UIColor,
+                        textColor: UIColor = .label) -> NSAttributedString {
         let source = text as NSString
         let result = NSMutableAttributedString(string: "")
         var position = 0
         for reference in references(in: text) {
             result.append(NSAttributedString(string: source.substring(with: NSRange(
                 location: position, length: reference.range.location - position
-            )), attributes: [.font: font, .foregroundColor: UIColor.label]))
+            )), attributes: [.font: font, .foregroundColor: textColor]))
             let chip = NSMutableAttributedString(attributedString: icon(reference.symbol, original: "", font: font, color: color))
             chip.append(NSAttributedString(string: reference.label, attributes: [.font: font, .foregroundColor: color]))
             // Copying any selection that includes this complete reference keeps
@@ -85,7 +86,7 @@ enum MentionText {
             position = NSMaxRange(reference.range)
         }
         result.append(NSAttributedString(string: source.substring(from: position),
-                                         attributes: [.font: font, .foregroundColor: UIColor.label]))
+                                         attributes: [.font: font, .foregroundColor: textColor]))
         return result
     }
 

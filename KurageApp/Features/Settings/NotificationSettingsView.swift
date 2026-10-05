@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NotificationSettingsView: View {
     let model: NotificationModel
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
     @Environment(\.openURL) private var openURL
     @State private var isEnabled = false
 
@@ -9,6 +10,7 @@ struct NotificationSettingsView: View {
         Form {
             Section {
                 Toggle("Push notifications", isOn: $isEnabled)
+                    .tint(accent.color)
                     .disabled(!model.isConfigured || model.userID == nil || model.isUpdating)
                     .accessibilityIdentifier("notifications-toggle")
                 if model.isUpdating {

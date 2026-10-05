@@ -2,52 +2,60 @@ import SwiftUI
 
 struct WorkspacePickerView: View {
     let model: AppModel
-    let maximumInitialHeight: CGFloat
     @Environment(\.dismiss) private var dismiss
-    @State private var contentHeight: CGFloat = 220
     @State private var refreshAttempt = 0
     @State private var selectingWorkspaceID: WorkspaceSummary.ID?
+    @State private var isPullRefreshing = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Workspaces").font(.headline).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.plain)
-                        .frame(width: 44, height: 44)
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityIdentifier("workspace-picker-close")
+        List {
+            ForEach(model.workspaces) { workspace in
+                WorkspaceOptionRow(workspace: workspace, isSelected: workspace.id == model.selectedWorkspaceID) {
+                    select(workspace.id)
                 }
-                .padding(.horizontal, 18)
+                .disabled(selectingWorkspaceID != nil)
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                .listRowSeparator(.hidden)
+                .listRowBackground(SettingsPalette.background)
+            }
 
-                ForEach(model.workspaces) { workspace in
-                    WorkspaceOptionRow(workspace: workspace, isSelected: workspace.id == model.selectedWorkspaceID) {
-                        select(workspace.id)
-                    }
-                    .disabled(selectingWorkspaceID != nil)
-                }
-
-                WorkspaceLoadStatus(isLoading: model.isRefreshingWorkspaces,
-                                    isEmpty: model.workspaces.isEmpty,
+            if model.workspaceLoadStatusNote != nil || model.workspaces.isEmpty && !model.isRefreshingWorkspaces {
+                WorkspaceLoadStatus(isEmpty: model.workspaces.isEmpty,
                                     error: model.workspaceLoadStatusNote?.text,
                                     onRetry: { refreshAttempt += 1 })
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(SettingsPalette.background)
             }
-            .padding(.top, 18)
-            .padding(.bottom, 20)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
         }
-        .scrollBounceBehavior(.basedOnSize)
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .contentMargins(.vertical, 18, for: .scrollContent)
+        .scrollBounceBehavior(.always, axes: .vertical)
+        .frame(maxWidth: 600)
+        .frame(maxWidth: .infinity)
         .background(SettingsPalette.background)
-        .presentationBackground(SettingsPalette.background)
-        .presentationDetents([.height(min(max(180, contentHeight), maximumInitialHeight)), .large])
+        .overlay {
+            if model.workspaces.isEmpty && model.isRefreshingWorkspaces && !isPullRefreshing {
+                ProgressView()
+                    .accessibilityLabel("Loading workspaces")
+                    .accessibilityIdentifier("workspace-loading")
+            }
+        }
+        .navigationTitle("Workspace")
+        .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("workspace-picker")
         .task(id: refreshAttempt) { await model.refreshWorkspaces() }
+        .refreshable { await refreshFromGesture() }
         .onChange(of: model.selectedWorkspaceID) { _, selected in
             if let selectingWorkspaceID, selected == selectingWorkspaceID { dismiss() }
         }
+    }
+
+    private func refreshFromGesture() async {
+        isPullRefreshing = true
+        defer { isPullRefreshing = false }
+        await model.refreshWorkspaces()
     }
 
     private func select(_ id: WorkspaceSummary.ID) {
@@ -117,17 +125,13 @@ private struct WorkspaceOptionRow: View {
 }
 
 private struct WorkspaceLoadStatus: View {
-    let isLoading: Bool
     let isEmpty: Bool
     let error: String?
     let onRetry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if isLoading {
-                ProgressView("Refreshing workspaces…")
-                    .accessibilityIdentifier("workspace-loading")
-            } else if let error {
+            if let error {
                 Text(error).font(.subheadline).foregroundStyle(.secondary)
                     .accessibilityIdentifier("workspace-error")
                 Button("Retry", action: onRetry)

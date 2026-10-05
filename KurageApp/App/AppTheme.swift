@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum AppTheme: String {
+enum AppTheme: String, CaseIterable {
     case system
     case light
     case dark
@@ -10,8 +10,8 @@ enum AppTheme: String {
     var title: LocalizedStringResource {
         switch self {
         case .system: "System"
-        case .light: "Light"
-        case .dark: "Dark"
+        case .light: "Day"
+        case .dark: "Night"
         }
     }
 
@@ -22,6 +22,67 @@ enum AppTheme: String {
         case .dark: .dark
         }
     }
+
+    var symbolName: String {
+        switch self {
+        case .system: "circle.righthalf.filled"
+        case .light: "sun.max.fill"
+        case .dark: "moon.fill"
+        }
+    }
+}
+
+enum AppAccent: String, CaseIterable {
+    case black
+    case blue
+
+    static let storageKey = "appAccent"
+
+    var title: LocalizedStringResource {
+        switch self {
+        case .black: "Black"
+        case .blue: "Blue"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .black: Color(uiColor: .label)
+        case .blue: .blue
+        }
+    }
+
+    var foregroundColor: Color {
+        switch self {
+        case .black: Color(uiColor: .systemBackground)
+        case .blue: .white
+        }
+    }
+
+    var userMessageBackgroundColor: UIColor {
+        UIColor { traits in
+            switch self {
+            case .black:
+                if traits.userInterfaceStyle == .dark {
+                    return UIColor.systemGray5.resolvedColor(with: traits)
+                }
+                return UIColor.label.resolvedColor(with: traits).withAlphaComponent(0.06)
+            case .blue:
+                return UIColor(red: 0, green: 108.0 / 255, blue: 235.0 / 255, alpha: 1)
+            }
+        }
+    }
+
+    var userMessageForegroundColor: UIColor {
+        switch self {
+        case .black: .label
+        case .blue: .white
+        }
+    }
+}
+
+enum AppHaptics {
+    static let storageKey = "hapticsEnabled"
 }
 
 struct WindowThemeView: UIViewRepresentable {

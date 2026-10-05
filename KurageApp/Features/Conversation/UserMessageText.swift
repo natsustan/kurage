@@ -4,19 +4,24 @@ import UIKit
 /// Starts with a bubble menu, then hands selection and its handles to UIKit.
 struct UserMessageText: UIViewRepresentable {
     let text: String
+    @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
 
     func makeUIView(context: Context) -> UserMessageTextView {
         UserMessageTextView()
     }
 
     func updateUIView(_ view: UserMessageTextView, context: Context) {
+        view.backgroundColor = accent.userMessageBackgroundColor
         let font = UIFont.preferredFont(forTextStyle: .body, compatibleWith: view.traitCollection)
-        if view.originalText != text || view.renderedFont != font || view.renderedStyle != view.traitCollection.userInterfaceStyle {
+        if view.originalText != text || view.renderedFont != font ||
+            view.renderedStyle != view.traitCollection.userInterfaceStyle || view.renderedAccent != accent {
             view.endSelection()
             view.originalText = text
             view.renderedFont = font
             view.renderedStyle = view.traitCollection.userInterfaceStyle
-            view.attributedText = MentionText.message(text, font: font, color: view.tintColor)
+            view.renderedAccent = accent
+            let foregroundColor = accent.userMessageForegroundColor
+            view.attributedText = MentionText.message(text, font: font, color: foregroundColor, textColor: foregroundColor)
         }
         view.accessibilityLabel = view.attributedText.string.replacingOccurrences(of: "\u{FFFC}", with: "")
     }
@@ -42,6 +47,7 @@ final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, U
     var originalText = ""
     var renderedFont: UIFont?
     var renderedStyle: UIUserInterfaceStyle = .unspecified
+    var renderedAccent: AppAccent?
     private var selectsAfterMenu = false
     private var isSelectingAll = false
     private let selectionMenu = UIEditMenuInteraction(delegate: nil)
@@ -56,12 +62,6 @@ final class UserMessageTextView: UITextView, UIContextMenuInteractionDelegate, U
         textContainerInset = UIEdgeInsets(top: 12, left: 15, bottom: 12, right: 15)
         textContainer.lineFragmentPadding = 0
         textColor = .label
-        backgroundColor = UIColor { traits in
-            if traits.userInterfaceStyle == .dark {
-                return UIColor.systemGray5.resolvedColor(with: traits)
-            }
-            return UIColor.label.resolvedColor(with: traits).withAlphaComponent(0.06)
-        }
         layer.cornerRadius = 20
         accessibilityHint = "Your message"
         accessibilityCustomActions = [

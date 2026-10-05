@@ -26,7 +26,16 @@ struct SessionActionButtons: View {
         Button("Copy Session URL", systemImage: "link") { perform(.copyURL) }
             .disabled(model.sessionURL(sessionID: session.id) == nil)
         if model.supportsSessionArchiving {
-            Button("Archive", systemImage: "archivebox", role: .destructive) { perform(.archive) }
+            Button(role: .destructive) { perform(.archive) } label: {
+                Label {
+                    Text("Archive")
+                } icon: {
+                    // Native menus can tint template symbols independently of the destructive title.
+                    if let image = UIImage(systemName: "archivebox") {
+                        Image(uiImage: image.withTintColor(.systemRed, renderingMode: .alwaysOriginal))
+                    }
+                }
+            }
         }
     }
 }

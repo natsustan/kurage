@@ -2,35 +2,23 @@ import SwiftUI
 
 struct SettingsView: View {
     let model: AppModel
-    @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
     @Environment(\.dismiss) private var dismiss
-    @State private var showsWorkspaces = false
     @State private var confirmsSignOut = false
-    @State private var availableHeight: CGFloat = 700
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 28) {
                     if let account = model.account {
-                        SettingsAccountSection(account: account, workspaceName: model.selectedWorkspace?.name,
-                                               onWorkspace: { showsWorkspaces = true })
+                        SettingsAccountSection(model: model, account: account)
                     }
-                    SettingsThemeRow(theme: $theme)
+                    SettingsPreferencesSection()
                     if model.notifications.isConfigured {
                         NavigationLink {
                             NotificationSettingsView(model: model.notifications)
                         } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "bell")
-                                    .frame(width: 28, height: 28)
-                                Text("Notifications")
-                                Spacer()
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }
-                            .padding(18)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+                            SettingsNavigationRow(title: "Notifications")
+                                .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("settings-notifications")
@@ -38,17 +26,8 @@ struct SettingsView: View {
                     NavigationLink {
                         AboutView()
                     } label: {
-                        HStack(spacing: 12) {
-                            SettingsRowIcon(name: "settings-about-icon")
-                            Text("About Kurage")
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+                        SettingsNavigationRow(title: "About Kurage")
+                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("settings-about")
@@ -63,6 +42,7 @@ struct SettingsView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 24)
             }
+            .accessibilityIdentifier("settings-content")
             .background(SettingsPalette.background)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -73,12 +53,6 @@ struct SettingsView: View {
                         .keyboardShortcut(.cancelAction)
                         .accessibilityIdentifier("settings-close")
                 }
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { availableHeight = $0 }
-            .sheet(isPresented: $showsWorkspaces) {
-                WorkspacePickerView(model: model, maximumInitialHeight: max(180, availableHeight * 0.65))
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(36)
             }
             .confirmationDialog("Sign out of Kurage?", isPresented: $confirmsSignOut, titleVisibility: .visible) {
                 Button("Sign out", role: .destructive) { model.signOut() }
@@ -91,99 +65,86 @@ struct SettingsView: View {
     }
 }
 
+private struct SettingsPreferencesSection: View {
+    @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
+    @AppStorage(AppHaptics.storageKey) private var hapticsEnabled = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            NavigationLink {
+                AppearanceSettingsView()
+            } label: {
+                SettingsNavigationRow(title: "Appearance", value: Text(theme.title))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Appearance")
+            .accessibilityValue(Text(theme.title))
+            .accessibilityIdentifier("settings-theme")
+
+            Divider().overlay(SettingsPalette.separator).padding(.leading, 18)
+
+            NavigationLink {
+                HapticsSettingsView()
+            } label: {
+                SettingsNavigationRow(title: "Haptics", value: Text(hapticsEnabled ? "On" : "Off"))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Haptics")
+            .accessibilityValue(hapticsEnabled ? "On" : "Off")
+            .accessibilityIdentifier("settings-haptics")
+        }
+        .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+    }
+}
+
 private struct SettingsAccountSection: View {
+    let model: AppModel
     let account: Account
-    let workspaceName: String?
-    let onWorkspace: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             SettingsAccountSummary(account: account)
             Divider().overlay(SettingsPalette.separator).padding(.leading, 18)
-            Button(action: onWorkspace) {
-                HStack(spacing: 12) {
-                    SettingsRowIcon(name: "settings-workspace-icon")
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) {
-                            Text("Workspace")
-                            Spacer(minLength: 12)
-                            Text(workspaceName ?? "None selected").foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Workspace")
-                            HStack {
-                                Text(workspaceName ?? "None selected").foregroundStyle(.secondary)
-                                Spacer(minLength: 12)
-                                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                            }
-                        }
-                    }
-                }
-                .padding(18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+            NavigationLink {
+                WorkspacePickerView(model: model)
+            } label: {
+                SettingsNavigationRow(title: "Workspace", value: Text(model.selectedWorkspace?.name ?? "None selected"))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Workspace")
-            .accessibilityValue(workspaceName ?? "None selected")
+            .accessibilityValue(model.selectedWorkspace?.name ?? "None selected")
             .accessibilityIdentifier("settings-workspace")
         }
         .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
     }
 }
 
-private struct SettingsThemeRow: View {
-    @Binding var theme: AppTheme
+private struct SettingsNavigationRow: View {
+    let title: LocalizedStringResource
+    var value: Text? = nil
 
     var body: some View {
-        Menu {
-            Picker("Theme", selection: $theme) {
-                Text("System").tag(AppTheme.system)
-                Text("Light").tag(AppTheme.light)
-                Text("Dark").tag(AppTheme.dark)
-            }
-        } label: {
-            HStack(spacing: 12) {
-                SettingsRowIcon(name: "settings-theme-icon")
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        Text("Theme")
-                        Spacer(minLength: 12)
-                        Text(theme.title).foregroundStyle(.secondary)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Theme")
-                        Text(theme.title).foregroundStyle(.secondary)
-                    }
+        HStack(spacing: 12) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    Text(title)
+                    Spacer(minLength: 12)
+                    value.foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                    value.foregroundStyle(.secondary)
+                }
             }
-            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
-            .contentShape(Rectangle())
+            Image(systemName: "chevron.right")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Theme")
-        .accessibilityValue(Text(theme.title))
-        .accessibilityIdentifier("settings-theme")
-    }
-}
-
-private struct SettingsRowIcon: View {
-    let name: String
-    @ScaledMetric(relativeTo: .body) private var size = 24.0
-
-    var body: some View {
-        Image(name)
-            .resizable()
-            .scaledToFit()
-            .frame(width: min(size, 40), height: min(size, 40))
-            .accessibilityHidden(true)
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -227,6 +188,13 @@ enum SettingsPalette {
             return UIColor.secondarySystemBackground.resolvedColor(with: traits)
         }
         return UIColor(white: 242.0 / 255, alpha: 1)
+    })
+
+    static let selectionBackground = Color(uiColor: UIColor { traits in
+        if traits.userInterfaceStyle == .dark {
+            return UIColor.tertiarySystemBackground.resolvedColor(with: traits)
+        }
+        return UIColor(white: 236.0 / 255, alpha: 1)
     })
 
     static let separator = Color(uiColor: UIColor { traits in
