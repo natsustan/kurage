@@ -15,7 +15,10 @@ final class SignInFlowTests: XCTestCase {
         let account = app.buttons["account-menu"]
         XCTAssertTrue(account.waitForExistence(timeout: 8))
         account.tap()
-        app.buttons["Sign out"].tap()
+        app.buttons["sign-out-button"].tap()
+        let confirm = app.buttons["sign-out-confirm"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
         XCTAssertTrue(getStarted.waitForExistence(timeout: 8))
         XCTAssertEqual(getStarted.label, "Get Started")
         XCTAssertFalse(app.descendants(matching: .any)["session-session-tests"].exists)

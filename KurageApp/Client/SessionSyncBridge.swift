@@ -105,6 +105,24 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return try JSONDecoder().decode(MentionSkillSnapshot.self, from: Data(json.utf8)).skills
     }
 
+    func notificationDestination(sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> NotificationSessionDestination? {
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageNotificationDestination(workspaceID, sessionID, baseURL, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        struct Response: Decodable { let destination: NotificationSessionDestination? }
+        return try JSONDecoder().decode(Response.self, from: Data(json.utf8)).destination
+    }
+
     func conversation(
         sessionID: SessionSummary.ID,
         workspaceID: WorkspaceSummary.ID,

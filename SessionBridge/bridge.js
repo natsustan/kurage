@@ -1,3 +1,4 @@
+import { notificationSessionDestination } from './notification-session.mjs';
 import { sessionProjects } from './session-projects.mjs';
 import { projectGitSource, readProjectGit } from './project-git.mjs';
 import { respondQuestion } from './conversation-questions.mjs';
@@ -284,6 +285,19 @@ function withWorkspaceReadRepo(workspaceID, gatewayBaseURL, work, operationID, c
   workspaceOperation = operation.catch(() => {});
   return operation;
 }
+
+window.kurageNotificationDestination = async (workspaceID, sessionID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo =>
+      JSON.stringify({ destination: await notificationSessionDestination(repo, sessionID, controller.signal) }),
+      operationID, controller, true);
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
   const controller = new AbortController();

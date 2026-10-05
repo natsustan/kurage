@@ -511,21 +511,23 @@ test('task history updates stay independent from session tabs', async () => {
   history.push({ id: 'a', role: 'assistant', items: [{ type: 'subagent_task', taskId: 'worker', status: 'in_progress' }] });
   h.doc.commit();
   await h.flush();
-  assert.equal(h.updates.at(-1).subtasks[0].status, 'in_progress');
+  assert.equal(h.updates.at(-1).changedSubtasks[0].status, 'in_progress');
   history.delete(0, 1);
   history.push({ id: 'a', role: 'assistant', items: [{ type: 'subagent_task', taskId: 'worker', status: 'completed', summary: 'Done' }] });
   h.doc.commit();
   await h.flush();
-  assert.equal(h.updates.at(-1).subtasks[0].summary, 'Done');
+  assert.equal(h.updates.at(-1).changedSubtasks[0].summary, 'Done');
   history.push({ id: 'text', role: 'assistant', items: [{ type: 'text', text: 'Parent output' }] });
   h.doc.commit();
   await h.flush();
   assert.equal(h.updates.at(-1).replacesSubtasks, undefined);
+  assert.equal(h.updates.at(-1).subtaskOrder, undefined);
 
   history.delete(0, 1);
   h.doc.commit();
   await h.flush();
-  assert.deepEqual(h.updates.at(-1).subtasks, []);
+  assert.deepEqual(h.updates.at(-1).subtaskOrder, []);
+  assert.deepEqual(h.updates.at(-1).changedSubtasks, []);
   h.controller.abort();
   const count = h.updates.length;
   h.metadataChanged();
@@ -829,4 +831,61 @@ test('metadata changes update the tab group while history changes do not rescan 
   await h.flush();
   assert.equal(h.updates.length, published + 1);
   h.controller.abort();
+});
+
+test('subagent transcript growth and deletion emit patches without changing parent content', async () => {
+  const h = harness();
+  const history = h.doc.getList('history');
+  const entry = text => ({ id: 'parent', role: 'assistant', items: [
+    { type: 'text', text: 'Parent answer' },
+    { type: 'subagent_task', taskId: 'run', status: 'in_progress', run: { sessionId: 'acp',
+      snapshot: { state: 'running', support: { stream: ['text'] } },
+      items: text ? [{ type: 'text', text }] : [] } },
+  ] });
+  history.push(entry('First'));
+  h.doc.commit();
+  await h.start();
+  const id = h.updates.at(-1).subtasks[0].run.turns[0].id;
+  for (const text of ['First and second', '']) {
+    history.delete(0, 1);
+    history.push(entry(text));
+    h.doc.commit();
+    await h.flush();
+    const patch = h.updates.at(-1);
+    assert.equal(patch.replacesSubtasks, undefined);
+    assert.deepEqual(patch.subtaskOrder, [h.updates[0].subtasks[0].id]);
+    assert.deepEqual(patch.changed, []);
+    assert.equal(patch.changedSubtasks[0].run.turns[0].id, id);
+    assert.equal(patch.changedSubtasks[0].run.turns[0].text, text);
+  }
+  h.controller.abort();
+  const count = h.updates.length;
+  history.push(entry('After cancel'));
+  h.doc.commit();
+  await h.flush();
+  assert.equal(h.updates.length, count);
+  assert.equal(h.releases(), 2);
+});
+
+
+test('one growing subagent sends only its changed transcript, preserving order and deletions', () => {
+  const tasks = Array.from({ length: 10 }, (_, index) => ({ id: `run-${index}`,
+    run: { turns: [{ id: `output-${index}`, text: 'x'.repeat(100_000),
+      parts: [{ type: 'text', text: 'x'.repeat(100_000) }] }] } }));
+  const previous = { sessionID: 'parent', turns: [], subtasks: tasks };
+  const grown = structuredClone(tasks);
+  grown[0].run.turns[0].text += 'y';
+  grown[0].run.turns[0].parts[0].text += 'y';
+  const patch = conversationPatch(previous, { ...previous, subtasks: grown });
+  assert.deepEqual(patch.subtaskOrder, tasks.map(task => task.id));
+  assert.deepEqual(patch.changedSubtasks.map(task => task.id), ['run-0']);
+  assert.equal(patch.subtasks, undefined);
+  assert.ok(Buffer.byteLength(JSON.stringify(patch)) < 210_000);
+  const removed = conversationPatch({ ...previous, subtasks: grown },
+    { ...previous, subtasks: [grown[2], grown[0]] });
+  assert.deepEqual(removed.subtaskOrder, ['run-2', 'run-0']);
+  assert.deepEqual(removed.changedSubtasks, []);
+  const unchanged = conversationPatch(previous, { ...previous, subtasks: structuredClone(tasks) });
+  assert.equal(unchanged.subtaskOrder, undefined);
+  assert.equal(unchanged.changedSubtasks, undefined);
 });

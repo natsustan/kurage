@@ -1,5 +1,5 @@
 {
-  "originHash" : "7f7bea2365da520b21ac2b87947469919190cfb1b0d22d9962287e3ed67e440a",
+  "originHash" : "4b9a3f894baf905b6c35c91027e0d5362b1a1a84b9990f7c38d98d2b32300fbc",
   "pins" : [
     {
       "identity" : "highlightr",
@@ -16,6 +16,15 @@
       "location" : "https://github.com/natsustan/MarkdownView.git",
       "state" : {
         "revision" : "b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed"
+      }
+    },
+    {
+      "identity" : "onesignal-ios-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OneSignal/OneSignal-iOS-SDK.git",
+      "state" : {
+        "revision" : "eaddea701f04d5a572c7835dfbed493d695c736a",
+        "version" : "5.5.1"
       }
     },
     {

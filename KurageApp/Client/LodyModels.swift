@@ -418,12 +418,27 @@ struct PermissionPrompt: Identifiable, Codable, Equatable, Sendable {
     var detail: String
 }
 
-/// One subagent the session spawned. Codex reports its lifecycle activities as
-/// separate history tasks, so the bridge groups them here: `steps` keeps what
-/// the subagent ran through, while the remaining fields describe it as a whole.
-struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable {
+/// One subagent projected from parent history. Normalized runs carry their own
+/// transcript; legacy Codex lifecycle activities are grouped into `steps`.
+struct ConversationSubtask: Codable, Equatable, Sendable, Identifiable {
     enum Status: String, Codable, Sendable {
-        case pending, running = "in_progress", completed, failed
+        case pending, running = "in_progress", completed, failed, cancelled, unknown
+    }
+
+    /// Projected from the normalized run embedded in parent history, not a child Session.
+    struct Run: Codable, Equatable, Sendable {
+        struct PlanEntry: Codable, Equatable, Sendable {
+            enum Status: String, Codable, Sendable {
+                case pending, inProgress = "in_progress", completed
+            }
+            var content: String
+            var status: Status
+        }
+
+        var turns: [ConversationTurn]
+        var streamsOutput: Bool
+        var outputIncomplete: Bool
+        var plan: [PlanEntry] = []
     }
 
     struct Step: Codable, Equatable, Hashable, Sendable, Identifiable {
@@ -445,6 +460,8 @@ struct ConversationSubtask: Codable, Equatable, Hashable, Sendable, Identifiable
     var totalTokens: Int? = nil
     var toolUses: Int? = nil
     var steps: [Step]? = nil
+    var run: Run? = nil
+    var progressSummary: String? = nil
 }
 
 struct Conversation: Codable, Equatable, Sendable {
@@ -662,6 +679,8 @@ struct ConversationPatch: Decodable {
     var fileChanges: [ConversationFileChangeGroup]? = nil
     var latestTurnNumber: Int? = nil
     var subtasks: [ConversationSubtask]? = nil
+    var subtaskOrder: [ConversationSubtask.ID]? = nil
+    var changedSubtasks: [ConversationSubtask]? = nil
     var questions: [ConversationQuestionRequest]? = nil
     let activity: String
     let syncState: ConversationSyncState
@@ -680,11 +699,21 @@ struct ConversationPatch: Decodable {
             guard let turn = turns[id] else { throw LodyClientError.notConnected }
             return turn
         }
+        var updatedSubtasks = replacesSubtasks == true ? subtasks : previous.subtasks
+        if let subtaskOrder {
+            guard Set(subtaskOrder).count == subtaskOrder.count else { throw LodyClientError.notConnected }
+            var tasks = Dictionary((updatedSubtasks ?? []).map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+            for task in changedSubtasks ?? [] { tasks[task.id] = task }
+            updatedSubtasks = try subtaskOrder.map { id in
+                guard let task = tasks[id] else { throw LodyClientError.notConnected }
+                return task
+            }
+        }
         return ConversationUpdate(
             conversation: Conversation(sessionID: sessionID, turns: ordered, permission: permission,
                                        fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges,
                                        latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
-                                       subtasks: replacesSubtasks == true ? subtasks : previous.subtasks,
+                                       subtasks: updatedSubtasks,
                                        questions: questions),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt, sessionTabs: sessionTabs

@@ -1217,6 +1217,11 @@ struct StreamFetchHandlerTests {
         try await verifyCancellingNativeBridgeRequest(operation: "conversation")
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingNotificationDestinationStopsTheNativeBridgeRequest() async throws {
+        try await verifyCancellingNativeBridgeRequest(operation: "notification-destination")
+    }
+
     private func verifyCancellingNativeBridgeRequest(operation: String) async throws {
         let (started, startedSignal) = AsyncStream<Void>.makeStream()
         let (stopped, stoppedSignal) = AsyncStream<Void>.makeStream()
@@ -1252,6 +1257,8 @@ struct StreamFetchHandlerTests {
                     workspaceID: "workspace", access: access)
             } else if operation == "conversation" {
                 _ = try await bridge.conversation(sessionID: "chat", workspaceID: "workspace", access: access)
+            } else if operation == "notification-destination" {
+                _ = try await bridge.notificationDestination(sessionID: "chat", workspaceID: "workspace", access: access)
             } else {
                 _ = try await bridge.sessionProjects(templateSessionID: "template",
                     action: try #require(SessionProjectAction(rawValue: operation)), path: "/projects", cursor: nil,

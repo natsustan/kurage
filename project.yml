@@ -21,17 +21,36 @@ packages:
     url: https://github.com/natsustan/MarkdownView.git
     revision: b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed
 
+  OneSignal:
+    url: https://github.com/OneSignal/OneSignal-iOS-SDK.git
+    exactVersion: 5.5.1
+
 targets:
   Kurage:
     type: application
     platform: iOS
+    info:
+      path: KurageApp/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        KurageOneSignalAppID: $(KURAGE_ONESIGNAL_APP_ID)
+        OneSignal_suppress_launch_urls: true
+        UIBackgroundModes: [remote-notification]
     sources:
       - path: KurageApp
     dependencies:
       - package: MarkdownView
+      - package: OneSignal
+        product: OneSignalFramework
+      - target: KurageNotificationService
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage
+        CODE_SIGN_ENTITLEMENTS: KurageApp/Kurage.entitlements
+        APS_ENVIRONMENT: development
+        KURAGE_ONESIGNAL_APP_ID: "199f71a9-c5a2-42c9-ac88-4b8b7593b06f"
         PRODUCT_NAME: Kurage
         PRODUCT_MODULE_NAME: Kurage
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -48,12 +67,42 @@ targets:
         DEVELOPMENT_TEAM: V6GTS74AND
         ENABLE_PREVIEWS: YES
       configs:
+        Release:
+          APS_ENVIRONMENT: production
         Debug:
           ENABLE_TESTABILITY: YES
     scheme:
       testTargets:
         - KurageTests
         - KurageUITests
+
+  KurageNotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: KurageNotificationService
+        excludes: ["*.entitlements"]
+    dependencies:
+      - package: OneSignal
+        product: OneSignalExtension
+    info:
+      path: KurageNotificationService/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage.notification-service
+        CODE_SIGN_ENTITLEMENTS: KurageNotificationService/KurageNotificationService.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: V6GTS74AND
+        MARKETING_VERSION: "0.4.2"
+        CURRENT_PROJECT_VERSION: "10"
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
 
   KurageTests:
     type: bundle.unit-test

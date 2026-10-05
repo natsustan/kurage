@@ -26,6 +26,8 @@ struct SessionNavigation {
 
 struct SessionListView: View {
     let model: AppModel
+    var isReading = true
+    var onOpenSettings: () -> Void = {}
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.displayScale) private var displayScale
     @State private var navigation = SessionNavigation()
@@ -40,6 +42,7 @@ struct SessionListView: View {
                 selectedSessionID: navigation.selectedSessionID,
                 isCompactWindow: horizontalSizeClass == .compact,
                 isDetailPresented: navigation.preferredCompactColumn == .detail,
+                onOpenSettings: onOpenSettings,
                 onOpen: { id in
                     if navigation.selectedSessionID == id {
                         navigation.preferredCompactColumn = .detail
@@ -62,7 +65,7 @@ struct SessionListView: View {
             }
             .navigationSplitViewColumnWidth(min: 280, ideal: 360, max: 400)
         } detail: {
-            SessionDetailView(route: navigation.selection, model: model, drafts: drafts,
+            SessionDetailView(route: navigation.selection, model: model, drafts: drafts, isReading: isReading,
                 onStaged: { id in
                     if id == nil, let discardedID = navigation.stagedSessionID {
                         drafts.removeRoots([discardedID], workspaceGeneration: model.workspaceGeneration)
@@ -92,6 +95,11 @@ struct SessionListView: View {
                 }
         }
         .navigationSplitViewStyle(.balanced)
+        .onChange(of: model.notificationNavigation, initial: true) { _, target in
+            guard let target, target.workspaceID == model.selectedWorkspaceID else { return }
+            navigation.open(.conversation(target.rootSessionID))
+            model.consumeNotificationNavigation(target.clickID)
+        }
         .onChange(of: model.sessions.map(\.id)) { previousIDs, ids in
             drafts.removeRoots(Set(previousIDs).subtracting(ids), workspaceGeneration: model.workspaceGeneration)
             guard let id = navigation.selectedSessionID,
@@ -121,6 +129,7 @@ private struct SessionDetailView: View {
     let route: SessionNavigation.Route?
     let model: AppModel
     let drafts: ConversationDraftStore
+    let isReading: Bool
     let onStaged: (SessionSummary.ID?) -> Void
     let onArchived: (SessionNavigation.Route) -> Void
 
@@ -128,9 +137,10 @@ private struct SessionDetailView: View {
         switch route {
         case .conversation(let id):
             ConversationView(sessionID: id, title: model.sessionSummary(id)?.title ?? "Session",
-                             model: model, draftStore: drafts, onArchived: { onArchived(.conversation(id)) })
+                             model: model, isReading: isReading, draftStore: drafts,
+                             onArchived: { onArchived(.conversation(id)) })
         case .newSession(let newSession):
-            NewSessionView(route: newSession, model: model, draftStore: drafts,
+            NewSessionView(route: newSession, model: model, isReading: isReading, draftStore: drafts,
                            onArchived: { onArchived(.newSession(newSession)) }, onStaged: onStaged)
                 .id(newSession.id)
         case nil:
@@ -146,6 +156,7 @@ private struct SessionSidebarView: View {
     let selectedSessionID: SessionSummary.ID?
     let isCompactWindow: Bool
     let isDetailPresented: Bool
+    let onOpenSettings: () -> Void
     let onOpen: (SessionSummary.ID) -> Void
     let onNewSession: (String) -> Void
     let onOpenPending: (NewSessionRoute) -> Void
@@ -256,39 +267,13 @@ private struct SessionSidebarView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
 
-                    Menu {
-                        if let email = model.account?.email {
-                            Label(email, systemImage: "person.crop.circle")
-                            Divider()
-                        }
-                        if model.workspaces.count > 1 {
-                            Menu {
-                                ForEach(model.workspaces) { workspace in
-                                    Button {
-                                        Task { await model.selectWorkspace(workspace.id) }
-                                    } label: {
-                                        if workspace.id == model.selectedWorkspaceID {
-                                            Label(workspace.name, systemImage: "checkmark")
-                                        } else {
-                                            Text(workspace.name)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                Label("Workspace · \(model.workspaceLabel)", systemImage: "square.stack")
-                            }
-                        }
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
-                            model.signOut()
-                        }
-                        .accessibilityIdentifier("sign-out-button")
-                    } label: {
+                    Button(action: onOpenSettings) {
                         AccountAvatar(account: model.account)
                             .frame(width: 44, height: 44)
                             .contentShape(Circle())
                     }
-                    .menuStyle(.button)
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Open settings")
                     .accessibilityIdentifier("account-menu")
                 }
                 .frame(width: 44, height: 44)
@@ -326,45 +311,6 @@ private struct SessionSidebarView: View {
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(36)
         }
-    }
-}
-
-private struct AccountAvatar: View {
-    let account: Account?
-
-    private var initial: String {
-        let name = account?.name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = account?.email.split(separator: "@", maxSplits: 1).first.map(String.init)
-        return String((name?.isEmpty == false ? name : fallback)?.prefix(1) ?? "?").uppercased()
-    }
-
-    var body: some View {
-        Group {
-            if let image = account?.image, let url = URL(string: image) {
-                AsyncImage(url: url) { phase in
-                    if let loadedImage = phase.image {
-                        loadedImage
-                            .resizable()
-                            .scaledToFill()
-                    } else {
-                        fallback
-                    }
-                }
-            } else {
-                fallback
-            }
-        }
-        .frame(width: 34, height: 34)
-        .background(.quaternary, in: Circle())
-        .clipShape(Circle())
-        .accessibilityLabel("Account")
-    }
-
-    private var fallback: some View {
-        Text(initial)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.primary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

@@ -66,6 +66,15 @@ export async function readSyncedConversation({ repo, workspaceID, sessionID, doc
 
 export function conversationPatch(previous, next) {
   const old = new Map(previous?.turns.map(turn => [turn.id, turn]) ?? []);
+  const subtasks = next.subtasks ?? [];
+  const oldSubtasks = new Map((previous?.subtasks ?? []).map(task => [task.id, task]));
+  const changedSubtasks = subtasks.filter(task => {
+    const before = oldSubtasks.get(task.id);
+    return !before || before !== task && JSON.stringify(before) !== JSON.stringify(task);
+  });
+  const subtaskOrder = subtasks.map(task => task.id);
+  const subtasksChanged = changedSubtasks.length > 0 ||
+    JSON.stringify((previous?.subtasks ?? []).map(task => task.id)) !== JSON.stringify(subtaskOrder);
   return {
     sessionID: next.sessionID,
     order: next.turns.map(turn => turn.id),
@@ -81,9 +90,8 @@ export function conversationPatch(previous, next) {
     permission: next.permission,
     questions: next.questions ?? [],
     latestTurnNumber: next.latestTurnNumber,
-    ...(!previous || (previous.subtasks !== next.subtasks &&
-      JSON.stringify(previous.subtasks ?? []) !== JSON.stringify(next.subtasks ?? []))
-      ? { replacesSubtasks: true, subtasks: next.subtasks ?? [] } : {}),
+    ...(!previous ? { replacesSubtasks: true, subtasks }
+      : subtasksChanged ? { subtaskOrder, changedSubtasks } : {}),
     ...(!previous || (previous.fileChanges !== next.fileChanges &&
       JSON.stringify(previous.fileChanges ?? null) !== JSON.stringify(next.fileChanges ?? null))
       ? { replacesFileChanges: true, fileChanges: next.fileChanges ?? null } : {}),

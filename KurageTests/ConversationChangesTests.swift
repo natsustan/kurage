@@ -171,6 +171,75 @@ struct ConversationChangesTests {
         }
     }
 
+    @Test func normalizedSubtaskTranscriptDecodesAndReplacesWithoutLosingParentTurns() throws {
+        let previous = Conversation(sessionID: "parent", turns: [
+            ConversationTurn(id: "parent-answer", author: .agent, text: "Parent answer"),
+        ], permission: nil)
+        func patch(_ text: String, status: String = "completed") throws -> ConversationPatch {
+            try JSONDecoder().decode(ConversationPatch.self, from: Data("""
+            {"sessionID":"parent","order":["parent-answer"],"changed":[],"permission":null,"activity":"idle","syncState":"live",
+             "replacesSubtasks":true,"subtasks":[{"id":"run","title":"Review","agentName":"Review",
+             "status":"\(status)","run":{"turns":[{"id":"output","author":"agent","text":"\(text)",
+             "parts":[{"type":"text","text":"\(text)"}],"work":{"durationMs":54000,"parts":[
+             {"type":"activity","id":"read","reads":1,"steps":[{"id":"tool","kind":"read","title":"Read helper.swift"}]}]}}],
+             "streamsOutput":true,"outputIncomplete":true,"plan":[{"content":"Check isolation","status":"completed"}]}}]}
+            """.utf8))
+        }
+        let initial = try patch("First").applying(to: previous).conversation
+        let run = try #require(initial.subtasks?.first?.run)
+        #expect(run.turns.first?.displayedWork?.title == "Worked for 54s")
+        #expect(run.plan.first?.content == "Check isolation")
+        #expect(run.outputIncomplete)
+        let grown = try patch("First and second", status: "unknown").applying(to: initial).conversation
+        #expect(grown.subtasks?.first?.status == .unknown)
+        #expect(grown.subtasks?.first?.run?.turns.first?.id == run.turns.first?.id)
+        #expect(grown.subtasks?.first?.run?.turns.first?.text == "First and second")
+        let cancelled = try patch("Stopped", status: "cancelled").applying(to: grown).conversation
+        #expect(cancelled.subtasks?.first?.status == .cancelled)
+        #expect(cancelled.turns == previous.turns)
+        let empty = try JSONDecoder().decode(ConversationPatch.self, from: Data("""
+        {"sessionID":"parent","order":["parent-answer"],"changed":[],"permission":null,"activity":"idle","syncState":"live",
+         "replacesSubtasks":true,"subtasks":[]}
+        """.utf8)).applying(to: cancelled).conversation
+        #expect(empty.subtasks == [])
+        #expect(empty.turns == previous.turns)
+    }
+
+    @Test func incrementalSubtasksPreserveUnchangedRunsAndApplyGrowthOrderAndDeletion() throws {
+        let parent = ConversationTurn(id: "parent", author: .agent, text: "Parent answer")
+        let one = ConversationSubtask(id: "one", title: "One", agentName: "Agent", status: .running,
+            run: .init(turns: [ConversationTurn(id: "output", author: .agent, text: "First")],
+                       streamsOutput: true, outputIncomplete: false))
+        let two = ConversationSubtask(id: "two", title: "Two", agentName: "Agent", status: .completed,
+            run: .init(turns: [ConversationTurn(id: "answer", author: .agent, text: "Unchanged")],
+                       streamsOutput: true, outputIncomplete: false))
+        let previous = Conversation(sessionID: "parent", turns: [parent], permission: nil, subtasks: [one, two])
+        var grown = one
+        grown.run?.turns[0].text = "First and second"
+        func patch(_ order: [String], changed: [ConversationSubtask]) throws -> ConversationPatch {
+            let taskData = try JSONEncoder().encode(changed)
+            let json = """
+            {"sessionID":"parent","order":["parent"],"changed":[],"permission":null,"activity":"idle","syncState":"live",
+             "subtaskOrder":\(String(data: try JSONEncoder().encode(order), encoding: .utf8)!),
+             "changedSubtasks":\(String(data: taskData, encoding: .utf8)!)}
+            """
+            return try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))
+        }
+        let updated = try patch(["two", "one"], changed: [grown]).applying(to: previous).conversation
+        #expect(updated.subtasks == [two, grown])
+        #expect(updated.turns == previous.turns)
+        let removed = try patch(["one"], changed: []).applying(to: updated).conversation
+        #expect(removed.subtasks == [grown])
+        let empty = try patch([], changed: []).applying(to: removed).conversation
+        #expect(empty.subtasks == [])
+        #expect(throws: LodyClientError.notConnected) {
+            try patch(["missing"], changed: []).applying(to: previous)
+        }
+        #expect(throws: LodyClientError.notConnected) {
+            try patch(["one", "one"], changed: []).applying(to: previous)
+        }
+    }
+
     @Test func latestTurnSurvivesPatchesEvenWhenItsUserMessageIsNotDisplayable() throws {
         let previous = Conversation(sessionID: "s", turns: [], permission: nil,
                                     fileChanges: [.fixture], latestTurnNumber: 21)

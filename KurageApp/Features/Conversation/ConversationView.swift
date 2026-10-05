@@ -6,12 +6,14 @@ struct ConversationView: View {
     let title: String
     let model: AppModel
     var isReadOnly = false
+    var isReading = true
     var draftStore: ConversationDraftStore? = nil
     var onArchived: (() -> Void)? = nil
 
     var body: some View {
         ConversationTabsContent(rootID: sessionID, title: title, model: model,
                                     workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly,
+                                    isReading: isReading,
                                     draftStore: draftStore, onArchived: onArchived)
             .id(ConversationScope(sessionID: sessionID, workspaceGeneration: model.workspaceGeneration, isReadOnly: isReadOnly))
     }
@@ -70,6 +72,8 @@ struct ConversationContent: View {
     @State private var selectedSubtask: ConversationSubtask?
     @State private var observedActivity: SessionActivity?
     @State private var isVisible = false
+    @State private var notificationVisibilityOwner = UUID()
+    @State var composerPresentation = ComposerPresentation()
     @State private var bottomMessageAt: Double?
     @State private var loadedMessageAt: Double?
 
@@ -77,10 +81,16 @@ struct ConversationContent: View {
     /// projection, which both lag behind a turn that just started or ended.
     private var isRunning: Bool { (observedActivity ?? session?.activity) == .running }
 
+    private var isNotificationSessionVisible: Bool {
+        isVisible && isReading && displayedConversation != nil && connectionStatus == nil &&
+            scenePhase == .active && isCurrentWorkspace &&
+            selectedSubtask == nil && previewImage == nil && changesSelection == nil && !composerPresentation.isPresented
+    }
+
     private var readReceiptTimestamp: Double? {
         guard isVisible, isReading, scenePhase == .active, isCurrentWorkspace,
               connectionStatus == nil, selectedSubtask == nil,
-              previewImage == nil, changesSelection == nil,
+              previewImage == nil, changesSelection == nil, !composerPresentation.isPresented,
               bottomMessageAt == loadedMessageAt else { return nil }
         return loadedMessageAt
     }
@@ -163,8 +173,9 @@ struct ConversationContent: View {
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
+                composerPresentation: composerPresentation,
                 focusesComposerOnAppear: isStarting,
-                dismissComposerFocus: changesSelection != nil,
+                dismissComposerFocus: changesSelection != nil || selectedSubtask != nil,
                 mentionSourceID: "\(workspaceGeneration):\(sessionID):\(isStarting)",
                 loadMentionSessions: {
                     guard let projectID = session?.projectID else { return [] }
@@ -191,7 +202,10 @@ struct ConversationContent: View {
             }
         }
         .sheet(item: $selectedSubtask) { subtask in
-            ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id })
+            ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id },
+                                     projectName: session?.projectName ?? model.sessionSummary(rootSessionID)?.projectName,
+                                     machineName: session?.machineName ?? model.sessionSummary(rootSessionID)?.machineName,
+                                     onRefresh: { refreshID += 1 })
         }
         .sheet(item: $changesSelection) { selection in
             let loadPreview: FilePreviewLoader = { group, file in
@@ -255,7 +269,21 @@ struct ConversationContent: View {
             }
         }
         .onAppear { isVisible = true }
-        .onDisappear { isVisible = false }
+        .onDisappear {
+            isVisible = false
+            model.notifications.setVisibleSession(owner: notificationVisibilityOwner, workspace: nil, sessionID: nil)
+        }
+        .onChange(of: model.notificationOpenGeneration) { _, _ in
+            composerPresentation.dismiss()
+            previewImage = nil
+            selectedSubtask = nil
+            changesSelection = nil
+            actionRequest = nil
+        }
+        .onChange(of: isNotificationSessionVisible, initial: true) { _, visible in
+            model.notifications.setVisibleSession(owner: notificationVisibilityOwner,
+                workspace: visible ? model.selectedWorkspace : nil, sessionID: visible ? sessionID : nil)
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { suppressesInitialTabConnection = false }
         }
@@ -802,6 +830,7 @@ private struct ConversationFooter: View {
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
+    let composerPresentation: ComposerPresentation
     var focusesComposerOnAppear = false
     var dismissComposerFocus = false
     let mentionSourceID: String
@@ -847,6 +876,7 @@ private struct ConversationFooter: View {
                 }
                 if supportsTextSending || supportsSessionCancellation && isSessionRunning {
                     SessionComposer(draft: $draft, mentions: $mentions, attachments: $attachments,
+                                    presentation: composerPresentation,
                                     isSending: isSending, allowsEditingWhileSending: true, isCancelling: isCancelling,
                                     isSessionRunning: isSessionRunning,
                                     supportsTextSending: supportsTextSending,
