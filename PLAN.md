@@ -1,5 +1,13 @@
 # Kurage 会话功能
 
+## Markdown 超链接标记（2026-10-05）
+
+- 回复中的文字链接保留语义正文色，以次要文字色的圆点下划线与末尾小号单色 `↗︎` 标记区分；不随 Blue／Black 强调色变化。标记和链接共用目标，以不换行空格贴住末词，正文、列表、表格与子任务复用相同渲染入口。
+- MarkdownView fork 增加可配置下划线模式与行内 attributed suffix。保留链接在原有 AttributedString 中，以支持自然换行、粗体／行内代码、点击和文字选择；iOS 18+ 的 MarkdownView 文字路径用 TextRenderer 按每行实际布局绘制圆点，避免系统 `.dot` 显示成短矩形划线。普通无链接段落直接保留原 Text，未改自定义 URL renderer、图片链接或复制整条消息的原文。
+- 依赖固定到 `7d7127ec6f516c41ca7b6101fd97139d1e4591a3`，工程已用 XcodeGen 重新生成；其它依赖不变。新增的库回归覆盖链接仍处于同一段落、目的地址／标记和内联样式保留、普通文本与代码不被装饰。
+- 本轮库的 19 项定向测试通过，覆盖文本转换、链接装饰和 Markdown 异步缓存状态；原项目按远程固定版本完成 iOS Simulator 构建，`git diff --check` 通过。独立验证副本使用同一最终提交，在 iPhone 18 Pro／iOS 27 上完成 6 项 fixture UI 检查：浅色、真实系统深色、Accessibility XL、打开完整链接目标、原生文字选择和已有长会话最新位置／向上阅读回归均通过。已核对截图与 hierarchy，圆点随字号缩放、每行位置统一且不压到下伸字形，标记不下划线并贴住末词；连续正文、粗体／代码、列表与表格排版正常。临时模拟器已关闭并删除。
+- 首轮系统 `.dot` 视觉呈短矩形划线，随后改为圆点绘制并重新构建、复验；最初深色启动参数未真正改变系统外观，最终通过切换模拟器系统外观并检查黑底白字截图验证。未新增客户端测试或修改同步协议，未运行模型／JavaScript 测试；iOS 26、iPad、真机、VoiceOver 实际操作与真实账号本轮尚未验证。
+
 ## Settings 固定高度与实心 Blue 气泡（2026-10-05）
 
 - Settings 按新参考图固定在实际屏幕约 85% 高度，使用单一 `.fraction(0.95)` 系统可用区域高度，隐藏拖动指示器，取消 medium／large 切换；普通与辅助字号都在同一高度内滚动，二级页面沿用同一个 sheet 与导航栈。此项取代上一轮默认半屏、上拉展开的方案。
@@ -459,7 +467,7 @@
 ## Markdown 渲染（2026-09-29）
 
 - 会话正文仍用 `MarkdownView`。围栏代码块字号通过公开的 `.font(.system(.footnote, design: .monospaced), for: .codeBlock)` 调小，不改库。行内代码底色没有公开样式，上游在 `MarkdownViewRenderer` 和 `MarkdownTextConverter` 里写死 10% 背景。
-- 依赖改为 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/plain-inline-code`，钉在 `b30f9bb05e0ae1738b836bdfe0ab26c849ef75ed`（基于上游 3.0.0 / `6f452b5`，去掉这两处背景，并为两条渲染路径的行内代码设置 `.code` presentation intent 以使用等宽字体）。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
+- 依赖使用 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/neutral-link-decoration`，钉在 `7d7127ec6f516c41ca7b6101fd97139d1e4591a3`。它保留原 `feat/plain-inline-code` 的无行内代码底色与 `.code` 等宽 presentation intent（原提交 `b30f9bb`，基于上游 3.0.0 / `6f452b5`），并加入本页所述的文字链接装饰。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
 - 未改围栏代码块的底色、圆角和描边。行内代码使用等宽字体，字号仍跟正文。真实会话里的行内代码和代码块字号尚未在模拟器核对。
 - 行内代码等宽字体修订（2026-10-01）：MarkdownView 的 14 项文本转换测试通过，客户端 Simulator 构建通过；尚未在模拟器或真实账号核对视觉效果。
 
