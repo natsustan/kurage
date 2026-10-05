@@ -1,5 +1,11 @@
 # Kurage 会话功能
 
+## 新建 tab 首次实时订阅竞态（2026-10-06）
+
+- Quick Action 与手动新建 tab 共用写入和实时订阅协议。新会话由独立短生命周期副本写入后，共享阅读副本的 workspace metadata 可能尚未出现它；旧 observer 会把缺失的 tab 当作已移除的旧 tab，发布空正文并释放订阅，原生端继续停在首条本地指令，直到重新进入页面。
+- observer 在首次读不到会话 metadata 时先执行可取消的云端 metadata 同步，再判断是否确实不可用并加入实时房间。同步失败保留现有重连路径；已确认被移除、归档或关闭的 tab 仍按原规则处理。原生消息合约与新建配置不变。
+- 新增 3 项 JavaScript 回归覆盖阅读副本落后时不重开页面也能接收同一回答的连续增长、metadata 同步失败保持可重试，以及取消同步后不发布旧快照或加入房间。本轮 frozen lockfile 安装、332 项 JavaScript 测试、bundle 重建、iPhone 17／iOS 27 Simulator 构建及 4 项 fixture UI 回归通过；截图与 AX 层级确认命名任务 tab 自动选中、首条指令、无键盘阅读、Main 草稿与独立配置重启保留，普通新 tab 首条消息／下一草稿同步正常。专属模拟器已关闭并删除，`git diff --check` 通过。本次 fixture UI 未验证 live metadata 竞态；真实账号的持续输出、弱网和后台恢复尚未复验。
+
 ## Quick Actions 按钮菜单与 Review／PR（2026-10-06）
 
 - 闪电按钮改为原生 Menu，移除 Quick Actions sheet。菜单提供 Review Changes、Create Branch、Commit、Create Branch & Commit、Create PR 和 Create Draft PR；只有名称与图标，没有目录、执行选择或逐项注释。选择后才加载 Settings 中按账号／工作区／机器保存的配置，按钮显示加载状态并禁用重复触发；选择任务时收起键盘，创建后切换到命名子 tab，保留主会话草稿和原配置。
