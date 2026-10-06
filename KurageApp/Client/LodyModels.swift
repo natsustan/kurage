@@ -253,6 +253,7 @@ enum ConversationPart: Equatable, Sendable {
     case image(ConversationImage)
     case file(ConversationFile)
     case activity(ConversationActivity)
+    case error(ConversationError)
 
     /// Hides blank text and images this client cannot display.
     var displayable: ConversationPart? {
@@ -263,7 +264,7 @@ enum ConversationPart: Equatable, Sendable {
             image.isDisplayable ? self : nil
         case .activity(let activity):
             activity.isEmpty ? nil : self
-        case .file:
+        case .file, .error:
             self
         }
     }
@@ -377,6 +378,10 @@ private struct PartBox: Codable {
             if let activity = try? ConversationActivity(from: decoder), !activity.isEmpty {
                 part = .activity(activity)
             }
+        case "error":
+            if let error = try? ConversationError(from: decoder), !error.id.isEmpty {
+                part = .error(error)
+            }
         default:
             break
         }
@@ -402,6 +407,9 @@ private struct PartBox: Codable {
         case .activity(let activity):
             try container.encode("activity", forKey: .type)
             try activity.encode(to: encoder)
+        case .error(let error):
+            try container.encode("error", forKey: .type)
+            try error.encode(to: encoder)
         case nil:
             break
         }

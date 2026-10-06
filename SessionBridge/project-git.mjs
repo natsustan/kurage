@@ -30,7 +30,61 @@ export async function projectGitSource(repo, workspaceID, templateSessionID, pro
   if (!catalog.known || !catalog.projects.has(localProjectID) || catalog.pending.has(localProjectID)) {
     throw new Error('Project is unavailable');
   }
-  return { machineID, localProjectID };
+  const matchesProject = template.meta.project?.kind === 'local' &&
+    template.meta.project.localProjectId === localProjectID && template.meta.isWorktree !== true;
+  // Only the root owns the shared directory's Git hints. Never borrow metadata
+  // from a different selected project or a worktree at another path.
+  const meta = matchesProject ? template.meta : null;
+  const related = rows.filter(row => !row.deleted && !row.meta?.isArchived &&
+    !row.meta?.parentSessionId && row.meta?.machineId === machineID &&
+    row.meta?.project?.kind === 'local' && row.meta.project.localProjectId === localProjectID &&
+    row.meta.isWorktree !== true);
+  return { machineID, localProjectID, sessionGit: {
+    matchesProject,
+    branchName: meta?.branchName,
+    repoFullName: meta?.project?.githubRepoFullName ?? meta?.repoFullName,
+    unpushed: meta?.workspaceUnpushed,
+    allChange: meta?.diffStats?.allChange,
+    pullRequests: related.map(row => ({ branchName: row.meta.branchName,
+      repoFullName: row.meta.project.githubRepoFullName ?? row.meta.repoFullName,
+      items: row.meta.pullRequests })),
+  } };
+}
+
+function branchName(selector) {
+  if (typeof selector !== 'string' || !selector.length) return null;
+  // Lody leaves ordinary local names unqualified. It emits exact selectors
+  // only when refs need disambiguation; plain names must not be URI-decoded.
+  if (!selector.startsWith('lody:branch:')) return selector;
+  const local = 'lody:branch:local:';
+  if (!selector.startsWith(local)) return null;
+  try { return decodeURIComponent(selector.slice(local.length)) || null; } catch { return null; }
+}
+
+function projectGitHints(source, state) {
+  const result = { sessionDirectoryMatchesProject: source.sessionGit?.matchesProject === true };
+  const context = source.sessionGit;
+  const branch = branchName(state.currentBranch);
+  if (!context?.matchesProject || !branch || context.branchName !== branch) return result;
+  if (typeof context.repoFullName === 'string' &&
+      context.repoFullName.toLowerCase() !== state.githubRepoFullName?.toLowerCase()) return result;
+  if (typeof context.unpushed === 'boolean') result.hasUnpushedCommits = context.unpushed;
+  const change = context.allChange;
+  // Only a clean live tree makes these counts a committed-change hint.
+  // Zero counts cannot rule out binary, mode-only or empty-file changes.
+  if (state.workingTree?.clean === true && Number.isFinite(change?.add) && change.add >= 0 &&
+      Number.isFinite(change?.del) && change.del >= 0 && change.add + change.del > 0) {
+    result.hasBranchChanges = true;
+  }
+  const repo = state.githubRepoFullName?.toLowerCase();
+  if (repo && typeof context.repoFullName === 'string' && context.repoFullName.toLowerCase() === repo) {
+    result.hasOpenPR = (context.pullRequests ?? []).some(record => record.branchName === branch &&
+      typeof record.repoFullName === 'string' && record.repoFullName.toLowerCase() === repo &&
+      Array.isArray(record.items) && record.items.some(pr =>
+        (pr?.status === 'open' || pr?.status === 'draft') &&
+        typeof pr.url === 'string' && pr.url.toLowerCase().startsWith(`https://github.com/${repo}/pull/`)));
+  }
+  return result;
 }
 
 function rpcFailure(error) {
@@ -62,5 +116,19 @@ export async function readProjectGit(source, access, workspaceID, userID, signal
       state.currentBranch !== null && (typeof state.currentBranch !== 'string' || !state.currentBranch.length)) {
     return { failure: 'unavailable' };
   }
-  return { state: { git: true, currentBranch: state.currentBranch } };
+  const projected = { git: true, currentBranch: state.currentBranch };
+  if (state.defaultBranch === null || typeof state.defaultBranch === 'string' && state.defaultBranch.length) {
+    projected.defaultBranch = state.defaultBranch;
+  }
+  if (state.githubRepoFullName === null || typeof state.githubRepoFullName === 'string' &&
+      /^[^/\s]+\/[^/\s]+$/.test(state.githubRepoFullName)) {
+    projected.githubRepoFullName = state.githubRepoFullName;
+  }
+  const tree = state.workingTree;
+  const flags = ['clean', 'staged', 'unstaged', 'untracked', 'conflicted'];
+  if (tree && flags.every(key => typeof tree[key] === 'boolean') &&
+      tree.clean === !(tree.staged || tree.unstaged || tree.untracked || tree.conflicted)) {
+    projected.workingTree = Object.fromEntries(flags.map(key => [key, tree[key]]));
+  }
+  return { state: { ...projected, ...projectGitHints(source, projected) } };
 }

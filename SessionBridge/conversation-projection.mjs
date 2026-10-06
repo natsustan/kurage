@@ -5,7 +5,8 @@ import { projectAssistantBlocks } from './conversation-work.mjs';
 import { deliveryOutcome } from './conversation-delivery.mjs';
 
 // Project ordinary chat text, session images, and file metadata. Tool calls are
-// summarized as explicit activity parts; thoughts and other item types need
+// summarized as explicit activity parts; chat failures have their own error
+// parts. Thoughts and other item types need
 // their own UI, and rendering them as prose would misrepresent them.
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -68,6 +69,23 @@ function projectItemParts(item) {
   return [];
 }
 
+// Lody persists agent failures as chat_failed system notices, not chat text.
+// Preserve the raw message for inspection/copying; never expose arbitrary meta.
+function projectErrorParts(item, index) {
+  if (item?.type !== 'system_notice' || item.name !== 'chat_failed') return [];
+  const error = { type: 'error', id: `notice-${index}` };
+  for (const field of ['reason', 'code', 'message']) {
+    const value = visibleText(item.meta?.[field]);
+    if (value) error[field] = value;
+  }
+  return [error];
+}
+
+function projectAssistantItemParts(item, index) {
+  const errors = projectErrorParts(item, index);
+  return errors.length ? errors : projectItemParts(item);
+}
+
 export function projectConversation(sessionID, history, meta = {}) {
   const turns = [];
   const questions = projectQuestions(history);
@@ -75,11 +93,12 @@ export function projectConversation(sessionID, history, meta = {}) {
   const changedTurnIDs = new Set(fileChanges.map(group => group.id));
   const latestTurnNumber = Math.max(1, history.filter(entry => entry?.role === 'user').length);
   for (const entry of history) {
-    if (entry?.role !== 'user' && entry?.role !== 'assistant') continue;
+    if (!['user', 'assistant', 'system'].includes(entry?.role)) continue;
     if (typeof entry.id !== 'string') continue;
     const { parts, work } = entry.role === 'assistant'
-      ? projectAssistantBlocks(entry, projectItemParts)
-      : { parts: (Array.isArray(entry.items) ? entry.items : []).flatMap(projectItemParts) };
+      ? projectAssistantBlocks(entry, projectAssistantItemParts)
+      : { parts: (Array.isArray(entry.items) ? entry.items : [])
+        .flatMap(entry.role === 'system' ? projectErrorParts : projectItemParts) };
     const live = entry === history.at(-1) && entry.role === 'assistant' &&
       entry.finished !== true && entry.endedAt == null;
     const startedAtMs = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;

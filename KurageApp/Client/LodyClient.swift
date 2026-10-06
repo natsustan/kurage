@@ -16,6 +16,8 @@ struct SessionTabStart: Equatable, Sendable {
     var selections: [RunConfigChoice] = []
     /// Another agent on the parent's machine; `nil` keeps the parent's.
     var agentConfigID: String?
+    /// A user-selected task title; ordinary tabs derive theirs from the prompt.
+    var title: String? = nil
 }
 
 /// A process-local creation that must resume its existing session and first turn.

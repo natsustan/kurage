@@ -84,6 +84,74 @@ test('a missing-history negative ACK patches unchanged history and removes posit
   h.controller.abort();
 });
 
+test('a newly authored tab refreshes stale metadata and keeps streaming without reopening', async () => {
+  const meta = { parentSessionId: 'root', status: { type: 'running' }, lastMessageAt: 100 };
+  const h = harness({ rootSessionID: 'root', meta });
+  const root = { docId: 'session-root', meta: { title: 'Main' } };
+  let visible = false;
+  let metadataPulls = 0;
+  h.repo.getDocMeta = async () => visible ? { meta } : undefined;
+  h.repo.listDoc = async () => [root, ...(visible ? [{ docId: 'session-abc', meta }] : [])];
+  h.repo.sync = async options => {
+    if (options.scope === 'meta') {
+      metadataPulls++;
+      visible = true;
+    }
+    return { ok: true };
+  };
+  const history = h.doc.getList('history');
+  history.push({ id: 'first', role: 'user', items: [{ type: 'text', text: 'Run task' }] });
+  h.doc.commit();
+  assert.equal(await h.start(), true);
+  assert.equal(metadataPulls, 1);
+  assert.deepEqual(h.updates[0].sessionTabs.map(tab => tab.id), ['root', 'abc']);
+  assert.deepEqual(h.updates[0].order, ['first']);
+  assert.equal(h.releases(), 0);
+
+  for (const text of ['Partial', 'Partial answer']) {
+    if (history.length > 1) history.delete(1, 1);
+    history.push({ id: 'answer', role: 'assistant', items: [{ type: 'text', text }] });
+    h.doc.commit();
+    await h.flush();
+    assert.deepEqual(h.updates.at(-1).order, ['first', 'answer']);
+    assert.equal(h.updates.at(-1).changed[0].id, 'answer');
+    assert.equal(h.updates.at(-1).changed[0].text, text);
+    assert.equal(h.updates.at(-1).syncState, 'live');
+  }
+  h.controller.abort();
+  assert.equal(h.releases(), 2);
+});
+
+test('an unavailable metadata refresh retries instead of declaring a new tab removed', async () => {
+  const h = harness({ rootSessionID: 'root' });
+  h.repo.getDocMeta = async () => undefined;
+  h.repo.listDoc = async () => [{ docId: 'session-root', meta: {} }];
+  h.repo.sync = async () => ({ ok: false });
+  await assert.rejects(h.start(), /metadata sync failed/);
+  assert.deepEqual(h.updates, []);
+  assert.equal(h.rooms.length, 0);
+});
+
+test('cancelling the new-tab metadata refresh cannot publish or join stale rooms', async () => {
+  const h = harness({ rootSessionID: 'root' });
+  h.repo.getDocMeta = async () => undefined;
+  const started = Promise.withResolvers();
+  const pull = Promise.withResolvers();
+  h.repo.sync = async options => {
+    assert.equal(options.scope, 'meta');
+    assert.equal(options.signal, h.controller.signal);
+    started.resolve();
+    return pull.promise;
+  };
+  const setup = h.start();
+  await started.promise;
+  h.controller.abort();
+  pull.resolve({ ok: true });
+  await setup;
+  assert.deepEqual(h.updates, []);
+  assert.equal(h.rooms.length, 0);
+});
+
 for (const state of ['missing', 'deleted', 'archived', 'closed']) {
   test(`a remembered ${state} tab publishes its root before opening the transcript`, async () => {
     const h = harness({ rootSessionID: 'root' });

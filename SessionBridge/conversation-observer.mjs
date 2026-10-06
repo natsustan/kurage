@@ -151,8 +151,18 @@ export async function observeConversation({ repo, workspaceID, sessionID, rootSe
     // Documents whose metadata can change this session's tab projection: the
     // session itself, its root, and the root's tabs. Grows with each projection.
     const tabScope = new Set([docID]);
-    const metadata = await repo.getDocMeta(docID);
+    let metadata = await repo.getDocMeta(docID);
     if (stopped) return;
+    // New sessions are authored by a separate short-lived replica. The shared
+    // reader can still be missing their metadata when native starts observing.
+    // Confirm absence with the cloud before ending a remembered tab's stream.
+    if (!metadata) {
+      const report = await repo.sync({ scope: 'meta', requireTransports: ['cloud'], signal });
+      if (stopped) return;
+      if (!report.ok) throw new Error('Workspace metadata sync failed');
+      metadata = await repo.getDocMeta(docID);
+      if (stopped) return;
+    }
     if (await publishUnavailableTab(metadata)) return false;
     if (!metadata || metadata.deleted) throw new Error('Session is missing from this workspace');
     const handle = await repo.openPersistedDoc(docID);

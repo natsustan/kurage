@@ -8,7 +8,9 @@ struct KurageApp: App {
     init() {
         let usesFixtures = ProcessInfo.processInfo.arguments.contains("--fixture")
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
-            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-subtask-statuses")
+            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-agent-error")
+                ? [SessionRecord.errorSample] + SessionRecord.samples
+                : ProcessInfo.processInfo.arguments.contains("--fixture-subtask-statuses")
                 ? SessionRecord.samplesWithSubtaskStatuses
                 : ProcessInfo.processInfo.arguments.contains("--fixture-subtasks")
                     ? SessionRecord.samplesWithSubtasks
@@ -46,6 +48,7 @@ struct KurageApp: App {
                     ? .seconds(3) : .milliseconds(200),
                 filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"),
                 projectGitFailureOnce: ProcessInfo.processInfo.arguments.contains("--fixture-project-git-failure") ? .accessDenied : nil,
+                projectGitStates: FixtureLodyClient.quickActionGitStates(arguments: ProcessInfo.processInfo.arguments),
                 workspaceSummaries: ProcessInfo.processInfo.arguments.contains("--fixture-empty-workspaces") ? []
                     : ProcessInfo.processInfo.arguments.contains("--fixture-many-workspaces")
                         ? [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")] + (1...12).map {

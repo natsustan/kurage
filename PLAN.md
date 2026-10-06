@@ -1,5 +1,71 @@
 # Kurage 会话功能
 
+## 暂停按钮配色修复（2026-10-06）
+
+- 输入区暂停按钮的圆形底色改为显式系统 `label` 色，避免 `Color.primary` 在玻璃输入区内受图标前景色影响而呈灰色。启用时浅色为黑底白色方块，深色为浅底深色方块；继续使用中性配色，禁用时保留低透明度。
+- 本轮 iPhone／iOS 27 Simulator 构建与 3 项 fixture UI 验证通过（2 项现有配色／steer／停止回归，1 项仅位于临时验证副本的外观检查）；逐张核对 Day／Night × Blue／Black 的收起／聚焦共 8 张暂停截图，确认黑白底色与方块对比正确，按钮可用。`git diff --check` 通过，专用模拟器已关闭；未修改发送／停止协议与状态逻辑，未复测 iOS 26、真机、真实账号或辅助大字号。
+
+## Agent 错误展示（2026-10-06）
+
+- 接入 Lody `system_notice / chat_failed`，支持机器写入的独立 `system` turn 与 assistant turn 内的失败事件。错误使用独立内容类型，保留历史顺序、turn ID 和完整 `reason`／`code`／`message`；只有错误的 turn 也可见，assistant 内的错误不会被收入 “Worked for …” 折叠。其它 system 文字与未知 notice 仍不作为聊天正文显示。
+- 会话内按 iPhone 参考图展示单一错误消息块：body 字号的橙色完整原文、灰暖色 1pt 细边框、浅暖底色、18pt 圆角和四边 12pt 留白，不再增加图标、标题分区、正文缩进或常驻操作栏。浅色颜色从参考图转换至 sRGB 后采样，深色模式单独调整边框与底色透明度。点击整块消息打开详情，沿用 subagent 的不透明系统背景色、默认半屏、可上拉展开和可见拖动条；长报告可滚动查看。长按菜单或详情页工具栏复制完整错误报告；原因、诊断码和未截断原文仍保留。无原文时显示失败标题，AX 提供失败类型与完整原文；不增加认证、重试或普通工具权限服务能力。
+- 协议参考：本机 Lody `packages/shared/src/ai.ts` 的 `ChatFailedMeta`，CLI `apps/cli/src/lib/message-handler.ts` 的 `recordChatFailure`（写入 `role: system`），以及 `packages/components/src/components/ai-gui/view.tsx`／`chat-failed-error-report.ts` 的标题与可读消息提取规则。
+- 初次接入的验证（样式优化前）：frozen lockfile 安装、346 项 JavaScript 测试、bundle 重建、Simulator 构建和 37 项 Swift 定向测试通过，工程已用 XcodeGen 重新生成。iPhone 17／iOS 27 的浅色默认字号、系统深色 accessibility-medium 各通过 1 项 fixture UI 流程；截图与 AX 层级确认标题／正文换行、按钮自适应纵向排列、详情关闭和重开会话正常，系统剪贴板核对了完整原文。首轮发现父卡片标识覆盖按钮标识，已通过独立 AX 容器修复并复验；首轮 Xcode 自动诊断收集被安全终止，成功轮保留了截图和 hierarchy。专属模拟器已关闭并删除，`git diff --check` 通过。真实账号的失败同步、连续输出、弱网／后台恢复、其它长标题枚举、iOS 26、iPad、最大辅助字号、VoiceOver 实际操作与真机尚未验证。
+- 上一轮无边框行内样式的 Simulator 构建及浅色默认字号／系统深色 accessibility-medium 两轮 fixture UI 验证通过（各 1 项）。截图与 AX 层级核对了图标基线、正文／详情缩进、自然换行、44pt 点击区域、独立按钮标识、完整详情、复制反馈和重开会话；系统剪贴板确认两轮均保留完整错误报告。仅修改 SwiftUI 展示，该轮未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号和 VoiceOver 实际操作仍未验证。
+- 上一轮保留通知卡片结构、恢复边框后的 iPhone 17／iOS 27 Simulator 构建通过，浅色默认字号与系统深色 accessibility-medium 各通过 1 项 fixture UI 测试。截图与 AX 层级核对了边框、圆角、浅底、内边距、自然换行和 44pt 操作区域；详情、复制反馈及重开会话正常，系统剪贴板保留完整错误报告。该轮只调整 SwiftUI 样式，未重跑 JavaScript 或 Swift 单元测试；随后按用户反馈改为上面的单一消息块结构。
+- 上一轮单一消息块的 iPhone 17／iOS 27 Simulator 构建通过，更新后的 fixture UI 流程在浅色默认字号与系统深色 accessibility-medium 各通过 1 项，覆盖整块点击详情、详情页复制反馈、长按菜单复制和重开会话。逐张对照参考图核查了无图标／标题／操作栏的结构、等距留白、细边框与完整原文；浅色截图的文字／底色／边框与参考转换至 sRGB 后的三组像素值一致。深色大字号下卡片四边及 status:400 结尾完整可见，AX 核对无截断或安全区遮挡；两轮剪贴板保留完整原因和原文。该轮未改模型或同步协议，未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号、VoiceOver 实际操作与真机尚未验证。
+- 上一轮详情默认半屏的 Simulator 构建及浅色默认字号／深色 accessibility-medium 各 1 项现有 fixture UI 测试通过；两轮截图与 AX 均确认 Sheet Grabber 为 Half screen（iPhone 17／iOS 27，451pt sheet／874pt 屏幕）。常规字号报告完整可见，大字号报告保留全文并提供滚动区域，复制、关闭、长按菜单与重开会话正常。未实操拖动展开或手势滚动，未复测真机；未改同步协议或模型，也未重跑 JavaScript／Swift 单元测试。
+- 本轮补齐与 ConversationSubtaskSheet 相同的 `presentationBackground(Color(uiColor: .systemBackground))`，Simulator 构建及 1 项浅色默认字号 fixture UI 测试通过。截图确认整张 sheet 为不透明白色，空白区域采样为 RGB 255/255/255，无下层橙色透入；AX 仍为 Half screen，复制、关闭、长按菜单与重开会话正常。只补一项背景设置，本轮未复测深色、真机或展开手势，未重跑 JavaScript／Swift 单元测试。
+
+## Quick Actions 零行数分支变更修复（2026-10-06）
+
+- `diffStats.allChange` 是行数统计，`0/0` 无法排除二进制、文件权限或空文件变更。桥接仅在工作树干净且行数非零时确认 `hasBranchChanges: true`；零值保留未知。已核实的工作分支在差异未知时仍提供 Review，且仓库匹配、PR 状态提示为无开放 PR 时提供 Regular／Draft PR；执行 agent 按现有 prompt 再核实实际 diff、基线、认证和重复 PR。
+- 默认分支、非 Git、冲突、目录不匹配、Git 读取失败及已有 PR 的限制继续生效；未推送标记独立判断，零行数不会自动启用 Push。协议字段及后端 API 不变，新增 JavaScript 投影、Swift 菜单／执行前重查及 fixture UI 回归。
+- 协议参考：Lody `apps/cli/src/lib/git/git-diff-stats.ts` 的 `parseGitNumstat`／`sumLineChange` 与 `getGitDiffStats`，二进制 numstat 的 `-` 会被汇总为零行数。
+- 本轮 frozen lockfile 安装、340 项 JavaScript 测试、bundle 重建及 `git diff --check` 通过。iPhone 17／iOS 27 Simulator 构建、17 项 QuickAction／ProjectGit Swift 测试与 2 项 fixture UI 回归通过，覆盖零行数保留 Review／两种 PR、执行前重查后创建命名任务 tab、已有 PR 隐藏及 Git 读取失败重试。本次未在真实账号执行 Review、Push 或创建 PR；真机、iOS 26 和真实网络／metadata 更新延迟尚未验证。
+
+## Quick Actions 发布状态识别与刷新修复（2026-10-06）
+
+- Lody 的本地分支列表通常直接返回普通分支名，仅在引用需要消歧时返回 `lody:branch:local:` selector。旧投影只接受后一种格式，普通工作分支的未推送、相对基线统计和 PR 提示全部被丢弃，干净工作树因此一直显示 Publishing status unavailable。投影现在兼容两种格式；普通名称中的百分号保持原样，仅解码带前缀的 selector，仍检查项目、仓库和分支匹配。
+- 每次读取 Git 状态先用独立副本同步最新 workspace metadata 和机器项目目录，再释放 metadata 锁并读取机器实时状态。Refresh Actions、进入详情、前台恢复及执行前重新检查都能读到更新后的发布提示，不再沿用会话列表的旧缓存；同步失败保持可重试，取消不启动后续机器请求、不影响共享会话订阅。
+- 协议参考：Lody `packages/shared/src/node/local-project.cjs` 的 `listLocalProjectBranchesAtRootPath`，以及现有 `LocalProjectGitStateSchema` 和目录所有者 metadata。未增加后端 API，Swift／JavaScript 消息字段不变；未推送、基线和 PR 提示仍取决于机器发布的 metadata。
+- 本轮 frozen lockfile 安装、339 项 JavaScript 测试和 bundle 重建通过，新增普通／编码分支、百分号保留、最新发布提示、同步失败重试和 metadata 取消回归；测试用例收尾后 72 项 bridge 测试复验通过。iPhone 17／iOS 27 Simulator 编译、16 项 QuickAction／ProjectGit Swift 测试、1 项原生桥接取消测试的 9 个操作参数（含 project-git），以及 1 项已有 PR／Git 读取失败重试 fixture UI 回归通过。只读核对本机真实分支返回普通名称，并用现有目录所有者 metadata 重放客户端投影，确认发布提示不再因格式被丢弃。`git diff --check` 通过，专属验证模拟器已关闭并删除。真机新版本安装后的云端刷新与实际 Push／PR 尚未验证。
+
+## Quick Actions 按 Git 状态精简（2026-10-06）
+
+- 快捷菜单根据实际工作树和当前／默认分支展示下一步，主要动作最多三项。默认分支干净时显示 Create Branch，有改动时显示 Review Changes 与 Create Branch & Commit；工作分支有改动时显示 Review Changes 与 Commit…，子菜单选择 Commit only／Commit & Push。干净工作分支按状态显示 Review、Push 和 Create PR…；Regular PR／Draft PR 收入同一子菜单，已有开放或草稿 PR 时隐藏创建入口。工作分支的单独 Create Branch 与 Refresh Actions 放入 More Actions。
+- 增加 Push／Commit & Push 的独立命名任务 tab，沿用原有首轮派发及按机器保存的执行配置。推送只授权当前动作，要求执行 agent 核实远端、认证和非默认分支；禁止 force push、自动 pull／rebase／merge 或以后每轮自动推送。普通 Commit 保持仅本地提交。
+- 项目运行／新建未确认时只展示按需原因入口；非 Git、目录无法核实、冲突、读取失败及无下一步分别显示状态，读取失败可重试。进入详情、恢复前台、项目活动变化及手动刷新重新读取；提交任务前再读取和检查，仓库状态变化不会通过旧菜单创建不适用的任务。
+- 扩展现有 `local-project/git-state` 的客户端投影，保留工作树、默认分支和 GitHub 仓库。未推送标记与相对基线统计读取目录所有者的 `workspaceUnpushed`／`diffStats.allChange`，开放 PR 来自同机器、同项目、同分支的根会话 `pullRequests`；项目、分支或仓库不匹配时不借用这些提示。只有实时工作树干净时才用统计提示已提交的分支变更。RPC 读取的是注册项目目录，因此 worktree 会话不展示可能作用于另一目录的动作。没有增加后端 API 或 GitHub 查询；同步 metadata 缺失／落后时可能暂不展示 Push／PR，agent 执行时仍核实真实状态和重复 PR。远端领先、分叉、认证及未记录的 PR 由 agent 在执行前检查。
+- 协议参考：Lody `packages/shared/src/message-schemas.ts` 的 `LocalProjectGitStateSchema`、`schema.ts` 的 Git／PR metadata，CLI `turn-post-processing-service.ts` 的目录所有者分支与未推送更新，以及 `components/src/lib/session-github-state.ts` 的基线统计与未推送标记分离。
+- 本轮 frozen lockfile 安装、336 项 JavaScript 测试及 bundle 重建通过；Simulator 编译、29 项 QuickAction／ProjectGit／SessionTabs Swift 测试通过，含八种动作的独立 task、同 ID 重试、状态筛选、旧选项重新检查，以及读取期间后台／取消／账号／工作区／项目变化不创建任务。另通过 1 项原生桥接取消测试的 9 个操作参数（包含 project-git）。浅色 5 项 QuickActionsFlowTests 与 1 项普通新 tab 首条消息／后续草稿隔离回归通过；scope／状态提示／alert 收尾后，最终源码在系统深色 accessibility-medium 下的 Commit／More Actions、Review／Push／PR 和运行项目状态共 3 项 UI 定向回归也通过。截图与 AX 层级确认两个子菜单、长名称、原因提示、任务切换、草稿与配置保留正常；两台专属模拟器已关闭并删除，`git diff --check` 通过。本次没有在真实账号执行 Git、push 或创建 PR；同步 metadata 的真实更新延迟、认证、远端领先／分叉、弱网／后台恢复、worktree、iOS 26、iPad、真机、最大辅助字号和 VoiceOver 实际操作尚未验证。
+
+## 新建 tab 首次实时订阅竞态（2026-10-06）
+
+- Quick Action 与手动新建 tab 共用写入和实时订阅协议。新会话由独立短生命周期副本写入后，共享阅读副本的 workspace metadata 可能尚未出现它；旧 observer 会把缺失的 tab 当作已移除的旧 tab，发布空正文并释放订阅，原生端继续停在首条本地指令，直到重新进入页面。
+- observer 在首次读不到会话 metadata 时先执行可取消的云端 metadata 同步，再判断是否确实不可用并加入实时房间。同步失败保留现有重连路径；已确认被移除、归档或关闭的 tab 仍按原规则处理。原生消息合约与新建配置不变。
+- 新增 3 项 JavaScript 回归覆盖阅读副本落后时不重开页面也能接收同一回答的连续增长、metadata 同步失败保持可重试，以及取消同步后不发布旧快照或加入房间。本轮 frozen lockfile 安装、332 项 JavaScript 测试、bundle 重建、iPhone 17／iOS 27 Simulator 构建及 4 项 fixture UI 回归通过；截图与 AX 层级确认命名任务 tab 自动选中、首条指令、无键盘阅读、Main 草稿与独立配置重启保留，普通新 tab 首条消息／下一草稿同步正常。专属模拟器已关闭并删除，`git diff --check` 通过。本次 fixture UI 未验证 live metadata 竞态；真实账号的持续输出、弱网和后台恢复尚未复验。
+
+## Quick Actions 按钮菜单与 Review／PR（2026-10-06）
+
+- 闪电按钮改为原生 Menu，移除 Quick Actions sheet。菜单提供 Review Changes、Create Branch、Commit、Create Branch & Commit、Create PR 和 Create Draft PR；只有名称与图标，没有目录、执行选择或逐项注释。选择后才加载 Settings 中按账号／工作区／机器保存的配置，按钮显示加载状态并禁用重复触发；选择任务时收起键盘，创建后切换到命名子 tab，保留主会话草稿和原配置。
+- 同项目运行／未确认新建时禁用动作，菜单内按需打开原因提示。加载或创建失败以 alert 提供 Retry；保存的设置失效时也可恢复会话默认值。后台、工作区变化或离开详情取消准备中的请求，旧请求不能创建任务或覆盖新范围的状态；提交后的传输继续由 model outbox 持有。
+- Review Changes 是只读 agent 任务，优先检查暂存、未暂存和相关未跟踪源码；工作树无改动时检查当前分支相对已核实基线的变更，返回具体发现，不自动修改或发布评论。Create PR／Create Draft PR 也是 agent 任务，只发布当前已提交分支，保留未提交改动，不隐式提交、切分支、force push、合并或添加以后每轮自动提交推送的规则；查询已有 PR 避免重复，并核对 PR head。GitHub 工具、认证、目标或分支不满足条件时由任务说明原因。
+- 沿用现有子 tab／首轮 `inputConfig` 协议，没有新增 GitHub RPC、自动 review 引擎或后台服务能力。参考本机 Lody `packages/components/src/components/sessions/session-chat-interface.tsx` 的 `handleCreatePr`／`handleCreateDraftPr` 和 `packages/shared/src/review-prompts.ts`，仅核对 agent prompt 派发方式；Kurage 使用当前共享目录和单次动作范围，不继承 Lody 的持续 PR upkeep 指令。普通工具权限响应仍未接入 live。
+- 本次最终 Simulator 构建、6 项 QuickActionTests（其中命名／首轮配置用例参数化覆盖六种动作）和浅色 3 项 QuickActionsFlowTests 通过；系统深色 accessibility-medium 的禁用菜单／原因提示回归另通过 1 项。截图与 AX 层级确认按钮直接展开菜单、六种动作与长名称完整显示、键盘状态及主草稿保留、Settings 配置重启恢复、新增 Review／PR 的任务创建和切换、禁用状态与按需原因提示。首轮 UI 查询沿用 sheet 行标识失败；原生 Menu 不传递 ForEach 行标识，改为在菜单容器内按动作名称定位后全部复测通过，行为断言保持。首轮 Xcode 卡在失败日志收集，已终止该测试进程；最终成功结果 bundle 和截图正常导出。专属模拟器已关闭并删除，`git diff --check` 通过。本次没有在真实仓库执行 review、push 或创建 PR；机器 GitHub 工具／认证、真实账号、弱网／后台恢复、iOS 26、iPad、真机、最大辅助字号和 VoiceOver 实际操作未验证。未改 JavaScript bridge，未运行 JavaScript 测试。
+
+## Quick Actions 任务 tab（2026-10-05）
+
+- 本地项目的会话详情右上角新增 Quick Actions（闪电）入口，提供 Create Branch、Commit 和 Create Branch & Commit。每次动作在根会话下创建命名子 tab，提交独立首轮指令并切换过去；继承根会话的工作目录与当前分支，保留主会话的历史、草稿和原模型配置。打开面板收起编辑焦点，快捷任务不自动弹出键盘。
+- 辅助字号下 tab 标题允许最多三行、扩大文字宽度并增加竖向留白，避免 Create Branch & Commit 被截成 Create Branch…，与单独创建分支的任务混淆；普通字号保持原单行尺寸。
+- Settings → Quick Actions 可按机器设置 Agent、Model 和 Reasoning。动作面板仅展示三个动作的图标与名称，移除目录信息、执行选择、逐项说明和底部注释；普通字号默认半屏并可上拉展开，辅助字号默认全屏。执行时自动加载 Settings 保存的配置，设置保存在本机，按账号／工作区／机器隔离，重启后恢复；Use Session Defaults 清除该组设置。通过现有新会话能力投影加载选项，保存的模型或推理档位失效时阻止执行，并可在面板恢复会话默认值；没有模型能力的 agent 继承只读配置。后台取消加载，工作区变化关闭面板，旧请求不能写回新工作区。
+- 本次面板精简验证：iPhone 17／iOS 27 Simulator 构建、6 项 QuickActionTests 和浅色的 2 项 QuickActionsFlowTests 通过；系统深色 accessibility-medium 的运行项目禁用回归另通过 1 项。截图与 AX 层级确认普通字号半屏展示完整的三个动作，辅助字号展开后长名称完整换行、禁用原因可见；Settings 配置、重启恢复、任务创建与主草稿保留通过。未改协议或 JavaScript bridge，未运行 JavaScript 测试；未在真实账号或项目中执行 Git 动作，iOS 26、iPad、真机、最大辅助字号与 VoiceOver 实际操作本次未验证。专属测试模拟器已删除。
+- 使用现有 `parentSessionId` 子 tab、共享目录及新 turn `inputConfig` 协议，无新增后端。`SessionTabStart` 将可选标题传给原生 bridge，首轮发布 metadata 时同时写 `title`／`titleSource: user`，避免自动标题覆盖任务名；普通新建仍从 prompt 生成 draft 标题。outbox 保留 session ID、turn ID、标题和首轮配置，未确认的重试不重复创建，用户随后重命名也不被重试覆盖。协议参考沿用 Lody `use-session-actions.ts`、`schema.ts` 与 CLI `session-manager.ts`。
+- 同一项目已知有运行中的根／子会话或未确认的新建时禁用动作，并在按钮前解释原因；这是客户端已观察状态的检查，不是机器侧 Git 锁。指令要求先检查 diff，优先只提交已暂存文件，排除 secrets／构建产物／无关文件，保留工作内容，禁止 push／PR／amend／reset／丢弃更改，并遵循 agent 现有权限配置。实际执行结果显示在任务 tab 中；普通工具权限审批仍未接入 live。
+- 本轮 frozen lockfile 安装、329 项 JavaScript 测试及 bundle 重建通过，XcodeGen 已重新生成工程；Simulator 构建和 42 项 Swift 定向测试通过，覆盖首轮独立模型、命名、原历史保留、同 ID 重试、工作区隔离、设置持久化／能力失效校验和原生 bridge 的标题／配置请求编码。Swift 测试在 tab 大字换行调整后再次通过；最后只调整 SwiftUI 多行标签的尺寸测量，未修改模型或 bridge。
+- iPhone 17／iOS 27 的浅色主流程、运行项目禁用与普通新 tab 首轮／下一草稿同步回归通过；系统深色 accessibility-medium 的两项 Quick Actions 回归也通过。截图与 AX 层级确认独立模型及重启设置、主草稿、无键盘任务阅读与禁用原因。大字截图发现标题截断后调整 tab 换行；初次换行后胶囊仍按单行高度测量，最终给横向滚动中的多行标签明确宽度并复验主流程通过，任务胶囊增至 77pt、完整包住两行标题和留白，Main 仍为 46pt 并垂直居中。普通字号在换行调整后已复测，保持单行外观。测试初轮修正了缺少目标工作区的 fixture、Picker 的 AX label 断言和按需滚动显露元素，没有放宽行为断言。
+- 两台本轮专属模拟器已恢复浅色／默认字号后关闭并删除，`git diff --check` 通过。本轮仅用 fixture 验证客户端流程，没有在真实项目执行 Git 动作。真实账号下的创建／执行、普通工具权限交互、弱网和后台恢复，以及 iOS 26、iPad、最大辅助字号与 VoiceOver 实际操作仍未验证。
+
 ## Markdown 超链接标记（2026-10-05）
 
 - 回复中的文字链接保留语义正文色，以次要文字色的圆点下划线与末尾小号单色 `↗︎` 标记区分；不随 Blue／Black 强调色变化。标记和链接共用目标，以不换行空格贴住末词，正文、列表、表格与子任务复用相同渲染入口。

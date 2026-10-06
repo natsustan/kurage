@@ -275,14 +275,7 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
     func startSessionTab(_ request: SessionTabStart, attachments: [UploadedAttachment], parentSessionID: String, userID: String,
                          workspaceID: String, access: StreamsAccess) async throws -> String {
         // A tab's parent doubles as the template that supplies machine and project.
-        let value: [String: Any] = [
-            "templateSessionID": parentSessionID, "parentSessionID": parentSessionID,
-            "agentConfigID": request.agentConfigID ?? NSNull(),
-            "sessionID": request.sessionID, "turnID": request.turnID,
-            "attachments": try attachments.map { try $0.bridgeValue() },
-            "userID": userID, "text": request.text, "timestamp": request.timestamp,
-            "selections": request.selections.map { $0.bridgeValue() },
-        ]
+        let value = try request.bridgeValue(attachments: attachments, parentSessionID: parentSessionID, userID: userID)
         return try await callBridge(
             "return await window.kurageBridgeReady.then(() => window.kurageStartSession(workspaceID, baseURL, request))",
             workspaceID: workspaceID, access: access, arguments: ["request": value]
@@ -817,6 +810,19 @@ final class StreamFetchHandler: NSObject, WKScriptMessageHandlerWithReply {
         _ = try await webView.callAsyncJavaScript(
             "await window.kurageFetchEvent(event)", arguments: ["event": payload], in: nil, contentWorld: .page
         )
+    }
+}
+
+extension SessionTabStart {
+    func bridgeValue(attachments: [UploadedAttachment], parentSessionID: String, userID: String) throws -> [String: Any] {
+        [
+            "templateSessionID": parentSessionID, "parentSessionID": parentSessionID,
+            "title": title ?? NSNull(), "agentConfigID": agentConfigID ?? NSNull(),
+            "sessionID": sessionID, "turnID": turnID,
+            "attachments": try attachments.map { try $0.bridgeValue() },
+            "userID": userID, "text": text, "timestamp": timestamp,
+            "selections": selections.map { $0.bridgeValue() },
+        ]
     }
 }
 

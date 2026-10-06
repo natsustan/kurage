@@ -63,6 +63,9 @@ struct ConversationContent: View {
     let rootSessionID: SessionSummary.ID
     var onArchived: (() -> Void)? = nil
     var onNewTab: (() -> Void)? = nil
+    var onQuickActionStarted: ((String) -> Void)? = nil
+    var quickActionPreparation: Binding<Bool> = .constant(false)
+    var dismissesComposerFocus = false
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
     var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
@@ -174,8 +177,8 @@ struct ConversationContent: View {
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
                 composerPresentation: composerPresentation,
-                focusesComposerOnAppear: isStarting,
-                dismissComposerFocus: changesSelection != nil || selectedSubtask != nil,
+                focusesComposerOnAppear: model.shouldFocusSessionStartComposer(sessionID: sessionID),
+                dismissComposerFocus: dismissesComposerFocus || changesSelection != nil || selectedSubtask != nil,
                 mentionSourceID: "\(workspaceGeneration):\(sessionID):\(isStarting)",
                 loadMentionSessions: {
                     guard let projectID = session?.projectID else { return [] }
@@ -224,6 +227,11 @@ struct ConversationContent: View {
         .toolbar {
             if !isReadOnly, let session {
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if let onQuickActionStarted {
+                        QuickActionsMenu(rootID: rootSessionID, workspaceGeneration: workspaceGeneration,
+                            model: model, isPreparing: quickActionPreparation, onStarted: onQuickActionStarted)
+                            .disabled(isStarting)
+                    }
                     if let onNewTab {
                         Button(action: onNewTab) {
                             Image("add")
@@ -694,6 +702,8 @@ struct TurnRow: View {
             )
         case .activity(let activity):
             ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
+        case .error(let error):
+            ConversationErrorCard(turnID: turn.id, error: error)
         }
     }
 

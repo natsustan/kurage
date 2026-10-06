@@ -115,6 +115,7 @@ final class FixtureLodyClient: LodyClient {
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
         projectGitFailureOnce: ProjectGitFailure? = nil,
+        projectGitStates: [String: ProjectGitState] = [:],
         workspaceSummaries: [WorkspaceSummary] = [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
         workspaceRefreshDelay: Duration? = nil,
         failWorkspaceRefreshOnce: Bool = false,
@@ -125,6 +126,7 @@ final class FixtureLodyClient: LodyClient {
         self.workspaceRefreshDelay = workspaceRefreshDelay
         self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
         self.projectGitFailureOnce = projectGitFailureOnce
+        self.projectGitStates = projectGitStates
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.filePreviewDelay = filePreviewDelay
@@ -386,7 +388,7 @@ final class FixtureLodyClient: LodyClient {
                                                   isTab: true, workspaceID: workspaceID)
         let config = try appliedRunConfig(options, selections: request.selections)
         let summary = SessionSummary(id: request.sessionID,
-                                 title: String((request.text.isEmpty ? request.attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
+                                 title: request.title ?? String((request.text.isEmpty ? request.attachments.first?.fileName ?? "New session" : request.text).prefix(50)),
                                  agentName: options.agentConfigID, activity: .idle, preview: request.text,
                                  projectID: parent.summary.projectID, projectName: parent.summary.projectName,
                                  machineName: parent.summary.machineName, parentSessionID: parentSessionID)
@@ -528,7 +530,31 @@ final class FixtureLodyClient: LodyClient {
             return ProjectGitResult(failure: failure)
         }
         return ProjectGitResult(state: projectGitStates[projectID] ?? ProjectGitState(
-            git: true, currentBranch: "lody:branch:local:main"))
+            git: true, currentBranch: "lody:branch:local:main", defaultBranch: "lody:branch:local:main",
+            workingTree: ProjectWorkingTree(clean: true), sessionDirectoryMatchesProject: true))
+    }
+
+    static func quickActionGitStates(arguments: [String]) -> [String: ProjectGitState] {
+        guard let argument = arguments.first(where: { $0.hasPrefix("--fixture-git-") }) else { return [:] }
+        let scenario = String(argument.dropFirst("--fixture-git-".count))
+        var state = ProjectGitState(git: true, currentBranch: "lody:branch:local:feature%2Fclient",
+            defaultBranch: "lody:branch:local:main", githubRepoFullName: "demo/prism",
+            workingTree: ProjectWorkingTree(clean: true), hasUnpushedCommits: true, hasBranchChanges: true,
+            hasOpenPR: false, sessionDirectoryMatchesProject: true)
+        switch scenario {
+        case "main-dirty":
+            state.currentBranch = state.defaultBranch
+            state.workingTree = ProjectWorkingTree(clean: false, unstaged: true)
+        case "feature-dirty": state.workingTree = ProjectWorkingTree(clean: false, untracked: true)
+        case "existing-pr": state.hasOpenPR = true
+        case "synced": state.hasUnpushedCommits = false
+        case "zero-lines":
+            state.hasUnpushedCommits = false
+            state.hasBranchChanges = nil
+        case "non-git": state.git = false
+        default: break
+        }
+        return ["local:machine-1:prism": state]
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
@@ -904,6 +930,20 @@ enum FixtureImage {
 }
 
 extension SessionRecord {
+    static let errorSample = SessionRecord(
+        summary: SessionSummary(id: "session-error", title: "agent error demo", agentName: "codex",
+                                activity: .idle, preview: "Agent internal error",
+                                projectID: "local:machine-1:kurage", projectName: "kurage", machineName: "spike@mac"),
+        turns: [ConversationTurn(id: "error-user", author: .user, text: "Send a test message."),
+                ConversationTurn(id: "error-work", author: .agent, text: "Starting the test.",
+                                 work: ConversationWork(durationMs: 1_000, parts: [.text("Preparing the test message.")])),
+                ConversationTurn(id: "error-agent", author: .agent, text: "", parts: [
+                    .error(ConversationError(id: "notice-1", reason: "acp_internal_error",
+                        message: #"Internal error: API Error: 400 {"type":"error","error":{"message":"model 'sample-model' is not enabled in the provider","type":"invalid_request_error","param":null,"code":null},"status":400}"#)),
+                ])],
+        permission: nil
+    )
+
     static let questionSample = SessionRecord(
         summary: SessionSummary(id: "session-question", title: "question demo", agentName: "codex",
                                 activity: .running, preview: "Waiting for your answer",

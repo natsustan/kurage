@@ -279,6 +279,7 @@ struct OutgoingMessageTests {
         #expect(model.displayedTurns([], sessionID: id).map(\.id) == [message.id])
         #expect(message.delivery == .sending)
         #expect(model.isSessionStartPending(sessionID: id))
+        #expect(model.shouldFocusSessionStartComposer(sessionID: id))
         #expect(model.cachedConversation(sessionID: id) == nil)
         #expect(!model.sessions.contains { $0.id == id })
         if isTab {
