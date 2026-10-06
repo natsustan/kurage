@@ -1,5 +1,10 @@
 # Kurage 会话功能
 
+## Markdown 链接圆点加粗（2026-10-06）
+
+- 按参考截图将链接圆点直径从 `max(0.7, 行高 / 24)` 调整为 `max(1.3, 行高 / 13)`，常规字号直径约增加 85%；中心间距从直径的 2.8 倍改为 2.4 倍，使粗细与疏密更接近参考。圆点随正文与辅助字号缩放，保留语义灰色、每行位置与末尾单色箭头。改动位于现有 MarkdownView fork 的圆点绘制器，客户端依赖固定到 `39166ee72f79d61c00065544bf3b4938f084cef6`，XcodeGen 已重新生成工程。
+- 本轮最终 19 项既有 Markdown 库定向测试、客户端远程固定版本的 Simulator 构建与 6 项 fixture UI 检查通过。iPhone 18 Pro／iOS 27 的浅色、系统深色与 Accessibility XL 截图及 AX 层级确认 PR 链接圆点更清晰，换行、粗体／行内代码、列表、表格与下伸字母正常；原生链接点击精确打开完整目标、文字选择与长会话最新位置／向上阅读回归通过。验证 harness 仅在临时副本，专属模拟器已关闭并删除。初轮加粗 50% 仍略细，最终按参考继续调整直径与间距后复测；临时 harness 的字符串缩进及 Safari 首次启动定位问题已修正，最终断言保持完整目标验证。`git diff --check` 通过。未修改模型、同步协议或 JavaScript bridge，未运行 JavaScript 测试；真机、iOS 26、iPad、VoiceOver 实操和真实账号本轮未验证。
+
 ## 暂停按钮配色修复（2026-10-06）
 
 - 输入区暂停按钮的圆形底色改为显式系统 `label` 色，避免 `Color.primary` 在玻璃输入区内受图标前景色影响而呈灰色。启用时浅色为黑底白色方块，深色为浅底深色方块；继续使用中性配色，禁用时保留低透明度。
@@ -533,7 +538,7 @@
 ## Markdown 渲染（2026-09-29）
 
 - 会话正文仍用 `MarkdownView`。围栏代码块字号通过公开的 `.font(.system(.footnote, design: .monospaced), for: .codeBlock)` 调小，不改库。行内代码底色没有公开样式，上游在 `MarkdownViewRenderer` 和 `MarkdownTextConverter` 里写死 10% 背景。
-- 依赖使用 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/neutral-link-decoration`，钉在 `7d7127ec6f516c41ca7b6101fd97139d1e4591a3`。它保留原 `feat/plain-inline-code` 的无行内代码底色与 `.code` 等宽 presentation intent（原提交 `b30f9bb`，基于上游 3.0.0 / `6f452b5`），并加入本页所述的文字链接装饰。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
+- 依赖使用 [natsustan/MarkdownView](https://github.com/natsustan/MarkdownView) 的 `feat/neutral-link-decoration`，钉在 `39166ee72f79d61c00065544bf3b4938f084cef6`。它保留原 `feat/plain-inline-code` 的无行内代码底色与 `.code` 等宽 presentation intent（原提交 `b30f9bb`，基于上游 3.0.0 / `6f452b5`），并加入本页所述的文字链接装饰。MIT 版权保留，模块名不变。RichText 及其他依赖仍指向上游。
 - 未改围栏代码块的底色、圆角和描边。行内代码使用等宽字体，字号仍跟正文。真实会话里的行内代码和代码块字号尚未在模拟器核对。
 - 行内代码等宽字体修订（2026-10-01）：MarkdownView 的 14 项文本转换测试通过，客户端 Simulator 构建通过；尚未在模拟器或真实账号核对视觉效果。
 
