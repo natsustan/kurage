@@ -305,10 +305,11 @@ private struct SessionSidebarView: View {
             await model.refreshSessionsWhileVisible()
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest))
-        .fullScreenCover(isPresented: $showArchivedSessions) {
-            FloatingSheet(initialDetent: .expanded, allowsExpansion: false, showsDragIndicator: false) {
-                ArchivedSessionsView(model: model)
-            }
+        .sheet(isPresented: $showArchivedSessions) {
+            ArchivedSessionsView(model: model)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(36)
         }
     }
 }

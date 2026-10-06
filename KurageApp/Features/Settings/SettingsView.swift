@@ -68,6 +68,7 @@ struct SettingsView: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
+        .presentationBackground(SettingsPalette.background)
         .accessibilityIdentifier("settings-screen")
     }
 }

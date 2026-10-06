@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 153B4F2F19120EAF70238123 /* ConversationView.swift */; };
-		094BCC5643DDDD6691456212 /* FloatingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AE7C372A08A7E262CFA6AD /* FloatingSheet.swift */; };
 		0C0998CE1A432AEC62D96496 /* NotificationFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */; };
 		0C663DB3711058970CAE7C5C /* ShellFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BC76F24C9369A1E353300CC /* ShellFlowTests.swift */; };
 		0CF5D421D7F018861F917B9B /* ComposerMentionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5B6A1D4A107B17DF5D6024 /* ComposerMentionsTests.swift */; };
@@ -214,7 +213,6 @@
 		B09603AA87686803FEDC7688 /* QuickActionsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsFlowTests.swift; sourceTree = "<group>"; };
 		B2B912BC7E896A7425EDF22F /* Kurage.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Kurage.entitlements; sourceTree = "<group>"; };
 		B366CEB77792BB4C07117803 /* ConversationLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationLayout.swift; sourceTree = "<group>"; };
-		B3AE7C372A08A7E262CFA6AD /* FloatingSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingSheet.swift; sourceTree = "<group>"; };
 		B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsTests.swift; sourceTree = "<group>"; };
 		B8C3BB4C1DDB7576249430C5 /* ArchivedSessionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedSessionsView.swift; sourceTree = "<group>"; };
 		BDD892265209B29FFAD608EE /* ConversationErrorFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationErrorFlowTests.swift; sourceTree = "<group>"; };
@@ -323,7 +321,6 @@
 				8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */,
 				84497201224F3906A5EACF8A /* AppModel.swift */,
 				1C9B8587C8EDC7D324885094 /* AppTheme.swift */,
-				B3AE7C372A08A7E262CFA6AD /* FloatingSheet.swift */,
 				DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */,
 				6F430299504D793272188A53 /* NotificationModel.swift */,
 				4A6AC2AF5662316492B81CF0 /* OutgoingMessage.swift */,
@@ -662,7 +659,6 @@
 				058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */,
 				FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */,
 				731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */,
-				094BCC5643DDDD6691456212 /* FloatingSheet.swift in Sources */,
 				C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */,
 				9DAE8CC58A1F116D4BFFAA22 /* HapticsSettingsView.swift in Sources */,
 				7E484F8425F4B58EF5AF6FED /* KurageApp.swift in Sources */,

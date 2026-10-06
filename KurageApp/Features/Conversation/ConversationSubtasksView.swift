@@ -155,76 +155,78 @@ struct ConversationSubtaskSheet: View {
     var machineName: String? = nil
     var onRefresh: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
+    @State private var detent: PresentationDetent = .medium
     @State private var showsInfo = false
 
     var body: some View {
-        FloatingSheet {
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Button("Close", systemImage: "xmark") { dismiss() }
-                        .labelStyle(.iconOnly)
-                        .font(.title3)
-                        .frame(width: 44, height: 44)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                        .accessibilityIdentifier("close-subtask")
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text(subtask?.title ?? "Agent task")
-                                .font(.headline)
-                                .lineLimit(2)
-                                .accessibilityIdentifier("subtask-title")
-                            if subtask?.status == .running || subtask?.status == .pending {
-                                Circle()
-                                    .fill(subtask?.status.color ?? .secondary)
-                                    .frame(width: 6, height: 6)
-                                    .accessibilityHidden(true)
-                            }
-                        }
-                        let subtitle = [projectName, machineName].compactMap { value in
-                            value?.isEmpty == false ? value : nil
-                        }.joined(separator: " · ")
-                        if !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .accessibilityIdentifier("subtask-context")
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Button("Close", systemImage: "xmark") { dismiss() }
+                    .labelStyle(.iconOnly)
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityIdentifier("close-subtask")
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(subtask?.title ?? "Agent task")
+                            .font(.headline)
+                            .lineLimit(2)
+                            .accessibilityIdentifier("subtask-title")
+                        if subtask?.status == .running || subtask?.status == .pending {
+                            Circle()
+                                .fill(subtask?.status.color ?? .secondary)
+                                .frame(width: 6, height: 6)
+                                .accessibilityHidden(true)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    if let subtask, subtask.run != nil {
-                        Button { showsInfo.toggle() } label: {
-                            Label("Agent info", systemImage: "ellipsis")
-                                .labelStyle(.iconOnly)
-                                .frame(width: 44, height: 44)
-                                .contentShape(.rect)
-                        }
-                        .accessibilityIdentifier("subtask-info")
-                        .accessibilityValue(subtask.status.label)
-                        .popover(isPresented: $showsInfo) {
-                            ConversationSubtaskMetadata(subtask: subtask)
-                                .padding(16)
-                                .frame(width: 280, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .presentationCompactAdaptation(.popover)
-                        }
+                    let subtitle = [projectName, machineName].compactMap { value in
+                        value?.isEmpty == false ? value : nil
+                    }.joined(separator: " · ")
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .accessibilityIdentifier("subtask-context")
                     }
                 }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 12)
-                Group {
-                    if let subtask, let run = subtask.run {
-                        ConversationSubtaskTranscript(subtask: subtask, run: run, onRefresh: onRefresh)
-                    } else {
-                        ConversationSubtaskLegacyDetails(subtask: subtask)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let subtask, subtask.run != nil {
+                    Button { showsInfo.toggle() } label: {
+                        Label("Agent info", systemImage: "ellipsis")
+                            .labelStyle(.iconOnly)
+                            .frame(width: 44, height: 44)
+                            .contentShape(.rect)
+                    }
+                    .accessibilityIdentifier("subtask-info")
+                    .accessibilityValue(subtask.status.label)
+                    .popover(isPresented: $showsInfo) {
+                        ConversationSubtaskMetadata(subtask: subtask)
+                            .padding(16)
+                            .frame(width: 280, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .presentationCompactAdaptation(.popover)
                     }
                 }
             }
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("subtask-transcript")
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+            Group {
+                if let subtask, let run = subtask.run {
+                    ConversationSubtaskTranscript(subtask: subtask, run: run, onRefresh: onRefresh)
+                } else {
+                    ConversationSubtaskLegacyDetails(subtask: subtask)
+                }
+            }
         }
+        .presentationBackground(Color(uiColor: .systemBackground))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("subtask-transcript")
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDragIndicator(.visible)
     }
 }
 

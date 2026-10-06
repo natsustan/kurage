@@ -205,13 +205,13 @@ struct ConversationContent: View {
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             }
         }
-        .fullScreenCover(item: $selectedSubtask) { subtask in
+        .sheet(item: $selectedSubtask) { subtask in
             ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id },
                                      projectName: session?.projectName ?? model.sessionSummary(rootSessionID)?.projectName,
                                      machineName: session?.machineName ?? model.sessionSummary(rootSessionID)?.machineName,
                                      onRefresh: { refreshID += 1 })
         }
-        .fullScreenCover(item: $changesSelection) { selection in
+        .sheet(item: $changesSelection) { selection in
             let loadPreview: FilePreviewLoader = { group, file in
                 guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
                 return try await model.filePreview(sessionID: sessionID, turnID: group.id,

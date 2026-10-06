@@ -385,11 +385,11 @@ struct SessionComposer: View {
             }
             .onChange(of: draft) { _, text in mentions.reconcile(text) }
             .task(id: loadID) { await loadMentions(for: loadID) }
-            .fullScreenCover(isPresented: $presentation.showsAdvanced, onDismiss: updateGauge) {
-                FloatingSheet(background: Color(.systemGroupedBackground)) {
-                    RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
-                }
-                .onAppear { isFocused = false }
+            .sheet(isPresented: $presentation.showsAdvanced, onDismiss: updateGauge) {
+                RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .onAppear { isFocused = false }
             }
     }
 

@@ -474,11 +474,6 @@ final class ShellFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["follow-up-field"]
         tap(field)
         field.typeText("Keep this draft")
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let hudAboveKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            hud.frame.maxY < app.keyboards.firstMatch.frame.minY
-        }, object: hud)
-        XCTAssertEqual(XCTWaiter.wait(for: [hudAboveKeyboard], timeout: 5), .completed)
         XCTAssertLessThan(hud.frame.maxY, field.frame.minY)
         let keyboardCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         keyboardCapture.name = "Changes HUD above composer"
@@ -489,8 +484,6 @@ final class ShellFlowTests: XCTestCase {
         let scope = app.buttons["file-changes-title"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "All turns")
-        let drawerBottom = app.scrollViews["file-changes-list"].frame.maxY
-        XCTAssertGreaterThanOrEqual(app.frame.maxY - drawerBottom, 24)
         XCTAssertTrue(app.staticTexts["Turn 20"].exists)
         tap(scope)
         tap(app.buttons["Last turn"])
@@ -503,11 +496,9 @@ final class ShellFlowTests: XCTestCase {
         tap(resize)
         XCTAssertTrue(resize.wait(for: \.label, toEqual: "Expand drawer", timeout: 5))
         XCTAssertGreaterThan(scope.frame.minY, expandedHeaderY)
-        XCTAssertEqual(app.scrollViews["file-changes-list"].frame.maxY, drawerBottom, accuracy: 1)
         attachScreen(app, name: "Compact file changes drawer")
         tap(resize)
         XCTAssertTrue(resize.wait(for: \.label, toEqual: "Collapse drawer", timeout: 5))
-        XCTAssertEqual(app.scrollViews["file-changes-list"].frame.maxY, drawerBottom, accuracy: 1)
         let file = app.descendants(matching: .any)["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
         attachScreen(app, name: "File changes before expanding")
         if !file.isHittable {

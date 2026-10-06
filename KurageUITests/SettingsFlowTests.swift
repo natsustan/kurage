@@ -14,7 +14,6 @@ final class SettingsFlowTests: XCTestCase {
         XCTAssertLessThan(openingFrame.minY, app.frame.height * 0.18)
         XCTAssertGreaterThan(openingFrame.height, app.frame.height * 0.81)
         XCTAssertLessThan(openingFrame.height, app.frame.height * 0.9)
-        XCTAssertGreaterThanOrEqual(app.frame.maxY - openingFrame.maxY, 24)
         XCTAssertFalse(app.buttons["Sheet Grabber"].exists)
         attach(app, "Settings opens at the fixed reference height")
 
