@@ -89,6 +89,7 @@ export function conversationPatch(previous, next) {
     }),
     permission: next.permission,
     questions: next.questions ?? [],
+    cacheUsage: next.cacheUsage ?? null,
     latestTurnNumber: next.latestTurnNumber,
     ...(!previous ? { replacesSubtasks: true, subtasks }
       : subtasksChanged ? { subtaskOrder, changedSubtasks } : {}),

@@ -86,11 +86,34 @@ function projectAssistantItemParts(item, index) {
   return errors.length ? errors : projectItemParts(item);
 }
 
+// Lody's per-turn buckets are disjoint: ordinary input excludes cache reads
+// and writes. Sum recorded assistant turns, including ones without visible
+// content, and retain coverage rather than counting missing usage as zero.
+function projectCacheUsage(history) {
+  const totals = { inputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0,
+    reportedTurns: 0, totalTurns: 0 };
+  const fields = ['inputTokens', 'outputTokens', 'cacheReadInputTokens',
+    'cacheCreationInputTokens', 'reasoningOutputTokens'];
+  for (const entry of history) {
+    if (entry?.role !== 'assistant' || typeof entry.id !== 'string') continue;
+    totals.totalTurns++;
+    const usage = entry.tokenUsage;
+    if (!usage || !fields.every(field => Number.isSafeInteger(usage[field]) && usage[field] >= 0)) continue;
+    totals.reportedTurns++;
+    for (const field of ['inputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens']) {
+      totals[field] += usage[field];
+    }
+  }
+  const inputTotal = totals.inputTokens + totals.cacheReadInputTokens + totals.cacheCreationInputTokens;
+  return totals.reportedTurns > 0 && Number.isSafeInteger(inputTotal) ? totals : undefined;
+}
+
 export function projectConversation(sessionID, history, meta = {}) {
   const turns = [];
   const questions = projectQuestions(history);
   const fileChanges = projectFileChanges(history);
   const changedTurnIDs = new Set(fileChanges.map(group => group.id));
+  const cacheUsage = projectCacheUsage(history);
   const latestTurnNumber = Math.max(1, history.filter(entry => entry?.role === 'user').length);
   for (const entry of history) {
     if (!['user', 'assistant', 'system'].includes(entry?.role)) continue;
@@ -123,5 +146,7 @@ export function projectConversation(sessionID, history, meta = {}) {
       ...(timing ? { timing } : {}),
     });
   }
-  return { sessionID, turns, latestTurnNumber, subtasks: projectSubtasks(history), permission: null, ...(questions.length ? { questions } : {}), ...(fileChanges.length ? { fileChanges } : {}) };
+  return { sessionID, turns, latestTurnNumber, subtasks: projectSubtasks(history), permission: null,
+    ...(cacheUsage ? { cacheUsage } : {}),
+    ...(questions.length ? { questions } : {}), ...(fileChanges.length ? { fileChanges } : {}) };
 }

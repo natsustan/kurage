@@ -520,8 +520,36 @@ test('patch keeps turn identity and explicitly transmits ordering and removals',
   const previous = { sessionID: 'abc', turns: [a, b], permission: null };
   const next = { ...previous, turns: [b, { ...a, text: 'one more' }] };
   assert.deepEqual(conversationPatch(previous, next), {
-    sessionID: 'abc', latestTurnNumber: undefined, order: ['b', 'a'], changed: [{ ...a, text: 'one more' }], permission: null, questions: [],
+    sessionID: 'abc', latestTurnNumber: undefined, order: ['b', 'a'], changed: [{ ...a, text: 'one more' }], permission: null, questions: [], cacheUsage: null,
   });
+});
+
+test('late cache usage and its removal publish even when the visible transcript is unchanged', async () => {
+  const h = harness({ meta: { status: { type: 'idle' } } });
+  const history = h.doc.getList('history');
+  const entry = { id: 'a', role: 'assistant', finished: true, items: [{ type: 'text', text: 'Answer' }] };
+  history.push(entry);
+  h.doc.commit();
+  await h.start();
+  assert.equal(h.updates.at(-1).cacheUsage, null);
+  const usage = { inputTokens: 200, outputTokens: 100, cacheReadInputTokens: 700,
+    cacheCreationInputTokens: 100, reasoningOutputTokens: 0 };
+  for (const read of [700, 800]) {
+    history.delete(0, 1);
+    history.push({ ...entry, tokenUsage: { ...usage, cacheReadInputTokens: read } });
+    h.doc.commit();
+    await h.flush();
+    assert.deepEqual(h.updates.at(-1).changed, []);
+    assert.equal(h.updates.at(-1).cacheUsage.cacheReadInputTokens, read);
+    assert.equal(h.updates.at(-1).cacheUsage.reportedTurns, 1);
+  }
+  history.delete(0, 1);
+  history.push(entry);
+  h.doc.commit();
+  await h.flush();
+  assert.deepEqual(h.updates.at(-1).changed, []);
+  assert.equal(h.updates.at(-1).cacheUsage, null);
+  h.controller.abort();
 });
 
 test('patch transmits an image added to an unchanged text turn', () => {

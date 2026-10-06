@@ -28,12 +28,11 @@ struct RootView: View {
         }
         .allowsHitTesting(!showsLaunchCover)
         .accessibilityHidden(showsLaunchCover)
-        .sheet(isPresented: $showsSettings) {
-            SettingsView(model: model)
-                .presentationDetents([.fraction(0.95)])
-                .presentationDragIndicator(.hidden)
-                .presentationContentInteraction(.scrolls)
-                .presentationCornerRadius(36)
+        .fullScreenCover(isPresented: $showsSettings) {
+            FloatingSheet(initialDetent: .expanded, allowsExpansion: false, showsDragIndicator: false,
+                          background: SettingsPalette.background) {
+                SettingsView(model: model)
+            }
         }
         .overlay {
             if showsLaunchCover {

@@ -78,7 +78,7 @@ struct ConversationChangesView: View {
     let loadPreview: FilePreviewLoader?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
-    @State private var detent: PresentationDetent = .large
+    @State private var detent: FloatingSheetDetent = .expanded
     @State private var showsAllTurns: Bool
 
     init(groups: [ConversationFileChangeGroup], latestTurnNumber: Int, initialTurnNumber: Int? = nil,
@@ -99,34 +99,32 @@ struct ConversationChangesView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            FileChangesHeader(
-                summary: FileChangeSummary(visibleGroups),
-                showsAllTurns: $showsAllTurns,
-                turnTitle: initialTurnNumber == nil ? "Last turn" : "This turn",
-                expanded: detent == .large,
-                onResize: { detent = detent == .large ? .medium : .large },
-                onClose: { dismiss() }
-            )
-            Divider()
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if visibleGroups.isEmpty {
-                        ContentUnavailableView("No recorded changes", systemImage: "doc.text")
+        FloatingSheet(selection: $detent, showsDragIndicator: false, background: drawerBackground) {
+            VStack(spacing: 0) {
+                FileChangesHeader(
+                    summary: FileChangeSummary(visibleGroups),
+                    showsAllTurns: $showsAllTurns,
+                    turnTitle: initialTurnNumber == nil ? "Last turn" : "This turn",
+                    expanded: detent == .expanded,
+                    onResize: { detent = detent == .expanded ? .medium : .expanded },
+                    onClose: { dismiss() }
+                )
+                Divider()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        if visibleGroups.isEmpty {
+                            ContentUnavailableView("No recorded changes", systemImage: "doc.text")
+                        }
+                        ForEach(visibleGroups) { group in
+                            FileChangeTurnSection(group: group, showsHeading: showsAllTurns, loadPreview: loadPreview)
+                        }
                     }
-                    ForEach(visibleGroups) { group in
-                        FileChangeTurnSection(group: group, showsHeading: showsAllTurns, loadPreview: loadPreview)
-                    }
+                    .padding(16)
                 }
-                .padding(16)
+                .accessibilityIdentifier("file-changes-list")
             }
-            .accessibilityIdentifier("file-changes-list")
+            .background(drawerBackground)
         }
-        .background(drawerBackground)
-        .presentationBackground(drawerBackground)
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.hidden)
-        .presentationCornerRadius(40)
     }
 }
 

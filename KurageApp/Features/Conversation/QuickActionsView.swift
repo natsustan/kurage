@@ -6,17 +6,34 @@ struct QuickActionConfigurationState {
     var isLoading = true
     var error: String?
     var preferenceIssue: String?
+    var unavailableAgentID: String?
 
     var isReady: Bool { options != nil && !isLoading && error == nil && preferenceIssue == nil }
 
     @MainActor
-    static func load(model: AppModel, rootID: String, agentConfigID: String? = nil) async throws -> Self {
-        let preference = model.quickActionPreference(rootID: rootID)
+    static func load(model: AppModel, rootID: String, profile: QuickActionProfile,
+                     agentConfigID: String? = nil, allowsAgentRecovery: Bool = false) async throws -> Self {
+        let preference = model.quickActionPreference(rootID: rootID, profile: profile)
         let agentID = agentConfigID ?? preference?.agentConfigID
-        var options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: agentID, isTab: true)
-        if options.needsRefresh == true {
+        var options: NewSessionOptions
+        do {
             options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: agentID,
-                                                        isTab: true, refresh: true)
+                                                        isTab: true)
+            if options.needsRefresh == true {
+                options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: agentID,
+                                                            isTab: true, refresh: true)
+            }
+        } catch {
+            try Task.checkCancellation()
+            guard allowsAgentRecovery, let agentID else { throw error }
+            // Settings can offer the current catalog without applying a different
+            // agent to a task or silently replacing the saved preference.
+            let available = try await model.newSessionOptions(templateSessionID: rootID, isTab: true, refresh: true)
+            try Task.checkCancellation()
+            guard !available.providers.contains(where: { $0.value == agentID }) else { throw error }
+            return Self(options: available, isLoading: false,
+                preferenceIssue: "The selected agent is unavailable. Choose an available agent.",
+                unavailableAgentID: agentID)
         }
         try Task.checkCancellation()
         var config = options.runConfig
@@ -38,7 +55,6 @@ struct QuickActionsMenu: View {
     @State private var request: Request?
     @State private var failedAction: QuickAction?
     @State private var errorMessage: String?
-    @State private var canResetPreference = false
     @State private var availability: QuickActionAvailability?
     @State private var gitError: String?
     @State private var isLoadingGit = true
@@ -68,7 +84,6 @@ struct QuickActionsMenu: View {
             if let failure {
                 Button("Why are actions unavailable?", systemImage: "info.circle") {
                     failedAction = nil
-                    canResetPreference = false
                     errorMessage = failure.errorDescription
                 }
                 .accessibilityIdentifier("quick-action-blocked")
@@ -98,7 +113,7 @@ struct QuickActionsMenu: View {
             if isPreparing {
                 ProgressView()
             } else {
-                Image(systemName: "bolt")
+                Image("quick-actions")
             }
         }
         .menuOrder(.fixed)
@@ -112,14 +127,6 @@ struct QuickActionsMenu: View {
             if let failedAction {
                 Button("Retry") { prepare(failedAction) }
                     .accessibilityIdentifier("quick-action-retry")
-                if canResetPreference {
-                    Button("Use Session Defaults") {
-                        guard scenePhase == .active, model.workspaceGeneration == workspaceGeneration else { return }
-                        model.saveQuickActionPreference(nil, rootID: rootID, workspaceGeneration: workspaceGeneration)
-                        prepare(failedAction)
-                    }
-                    .accessibilityIdentifier("quick-action-reset")
-                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -198,7 +205,6 @@ struct QuickActionsMenu: View {
               let projectID = model.sessionSummary(rootID)?.projectID else { return }
         errorMessage = nil
         failedAction = nil
-        canResetPreference = false
         isPreparing = true
         request = Request(action: action, projectID: projectID)
     }
@@ -220,13 +226,13 @@ struct QuickActionsMenu: View {
             }
         }
         do {
-            let configuration = try await QuickActionConfigurationState.load(model: model, rootID: rootID)
+            let configuration = try await QuickActionConfigurationState.load(model: model, rootID: rootID,
+                                                                              profile: request.action.profile)
             try Task.checkCancellation()
             guard self.request?.id == request.id, scenePhase == .active,
                   model.workspaceGeneration == workspaceGeneration,
                   model.sessionSummary(rootID)?.projectID == request.projectID else { return }
             if let issue = configuration.preferenceIssue {
-                canResetPreference = true
                 errorMessage = issue
                 failedAction = request.action
                 return
@@ -244,142 +250,9 @@ struct QuickActionsMenu: View {
             guard !Task.isCancelled, self.request?.id == request.id,
                   model.workspaceGeneration == workspaceGeneration, scenePhase == .active else { return }
             let actionFailure = error as? QuickActionFailure
-            canResetPreference = model.quickActionPreference(rootID: rootID) != nil &&
-                (actionFailure == nil || actionFailure == .savedModelUnavailable || actionFailure == .savedReasoningUnavailable)
             errorMessage = error.localizedDescription
             failedAction = actionFailure == .stateChanged ? nil : request.action
             refreshAttempt += 1
         }
-    }
-}
-
-/// Settings for quick tasks use the new-turn capability projection, so both model
-/// and reasoning can be edited without changing a chat.
-struct QuickActionConfigurationSection: View {
-    let model: AppModel
-    let rootID: String
-    let workspaceGeneration: Int
-    @Binding var state: QuickActionConfigurationState
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var requestedAgentID: String?
-    @State private var attempt = 0
-    @State private var loadToken = UUID()
-
-    private struct LoadID: Equatable {
-        let agentID: String?
-        let attempt: Int
-        let isActive: Bool
-    }
-
-    var body: some View {
-        Section {
-            if let options = state.options {
-                if !options.providers.isEmpty {
-                    Picker("Agent", selection: Binding(get: { options.agentConfigID }, set: chooseAgent)) {
-                        ForEach(options.providers, id: \.value) { Text($0.label).tag($0.value) }
-                    }
-                    .accessibilityIdentifier("quick-action-agent")
-                }
-                if let config = state.runConfig, let modelOption = config.model, !modelOption.options.isEmpty {
-                    Picker("Model", selection: Binding(get: { modelOption.value }, set: chooseModel)) {
-                        ForEach(modelOption.options) { Text($0.label).tag($0.value) }
-                    }
-                    .accessibilityIdentifier("quick-action-model")
-                }
-                if let config = state.runConfig, !config.reasoningOptions.isEmpty {
-                    Picker("Reasoning", selection: Binding(
-                        get: { config.selectedReasoning?.value ?? "" }, set: chooseReasoning
-                    )) {
-                        if config.selectedReasoning == nil { Text("Automatic").tag("") }
-                        ForEach(config.reasoningOptions, id: \.value) { Text($0.label).tag($0.value) }
-                    }
-                    .accessibilityIdentifier("quick-action-reasoning")
-                }
-                if state.runConfig?.model == nil && state.runConfig?.reasoning == nil {
-                    Text("This agent's model settings are read-only. The task inherits its defaults.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            if state.isLoading {
-                ProgressView("Loading agent settings…")
-                    .accessibilityIdentifier("quick-action-loading")
-            }
-            if let error = state.error {
-                Text(error).foregroundStyle(.red)
-                Button("Retry") { attempt += 1 }
-                    .accessibilityIdentifier("quick-action-retry")
-            }
-            if let issue = state.preferenceIssue {
-                Text(issue).foregroundStyle(.red)
-                    .accessibilityIdentifier("quick-action-config-issue")
-            }
-            Button("Use Session Defaults", action: reset)
-                .accessibilityIdentifier("quick-action-reset")
-                .disabled(scenePhase != .active)
-        } header: {
-            Text("Execution")
-        } footer: {
-            Text("Your choices are saved for Quick Actions on this machine, in this workspace and account.")
-        }
-        .pickerStyle(.menu)
-        .task(id: LoadID(agentID: requestedAgentID, attempt: attempt, isActive: scenePhase == .active)) {
-            guard scenePhase == .active else { return }
-            await load()
-        }
-    }
-
-    private func load() async {
-        let token = UUID()
-        loadToken = token
-        state = QuickActionConfigurationState()
-        do {
-            let loaded = try await QuickActionConfigurationState.load(model: model, rootID: rootID,
-                                                                      agentConfigID: requestedAgentID)
-            guard !Task.isCancelled, token == loadToken, model.workspaceGeneration == workspaceGeneration else { return }
-            state = loaded
-            if requestedAgentID != nil, loaded.preferenceIssue == nil { save() }
-        } catch {
-            guard !Task.isCancelled, token == loadToken, model.workspaceGeneration == workspaceGeneration else { return }
-            state.isLoading = false
-            state.error = "Could not load this agent's settings. Retry or use session defaults."
-        }
-    }
-
-    private func chooseAgent(_ id: String) {
-        guard scenePhase == .active, model.workspaceGeneration == workspaceGeneration else { return }
-        loadToken = UUID()
-        state = QuickActionConfigurationState()
-        requestedAgentID = id
-        attempt += 1
-    }
-
-    private func chooseModel(_ value: String) {
-        guard scenePhase == .active, model.workspaceGeneration == workspaceGeneration else { return }
-        state.runConfig?.selectModel(value)
-        state.preferenceIssue = nil
-        save()
-    }
-
-    private func chooseReasoning(_ value: String) {
-        guard scenePhase == .active, model.workspaceGeneration == workspaceGeneration else { return }
-        if value.isEmpty { state.runConfig?.reasoning?.value = nil }
-        else { state.runConfig?.selectReasoning(value) }
-        state.preferenceIssue = nil
-        save()
-    }
-
-    private func save() {
-        guard let options = state.options, !state.isLoading, scenePhase == .active else { return }
-        model.saveQuickActionPreference(.init(options: options, runConfig: state.runConfig),
-            rootID: rootID, workspaceGeneration: workspaceGeneration)
-    }
-
-    private func reset() {
-        guard scenePhase == .active, model.workspaceGeneration == workspaceGeneration else { return }
-        loadToken = UUID()
-        state = QuickActionConfigurationState()
-        model.saveQuickActionPreference(nil, rootID: rootID, workspaceGeneration: workspaceGeneration)
-        requestedAgentID = nil
-        attempt += 1
     }
 }

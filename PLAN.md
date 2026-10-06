@@ -1,5 +1,26 @@
 # Kurage 会话功能
 
+## Sheet 底部外部留白（2026-10-06）
+
+- 应用自有面板统一使用 `FloatingSheet`：设置及其子页、归档会话、机器文件夹、Advanced、错误详情、文件修改和子代理详情共享 36pt 完整圆角。面板放在系统安全区内，竖向再留 12pt、横向留 8pt；展开后也保留底部外部间距。iPad 居中展示，宽度最多 600pt、展开高度最多 880pt。系统照片／文件选择、相机和 Safari 授权继续由对应系统界面管理。
+- 使用透明 `fullScreenCover` 承载背景遮罩与独立面板，避免原生 sheet 材质在留白区形成色带。原有关闭按钮、设置页内导航、半屏／展开切换、滚动和草稿保持；可从面板顶部上拖展开或下拖收回／关闭，点击遮罩关闭。拖动条支持点击和辅助功能调节，遵循系统 Reduce Motion；设置与归档保持固定展开高度。
+- 本轮 iPhone 16 Pro／iOS 27 Simulator 构建及 8 项浅色 fixture UI 检查通过，覆盖设置与 Quick Actions 配置、归档恢复、机器文件夹、Advanced、错误详情、文件修改和子代理详情；系统深色、最大辅助字号的设置／错误详情另通过 2 项。截图与 AX 层级确认 iPhone 面板底边固定在安全区上方 12pt（该设备距屏幕底边 46pt），半屏与展开均保留完整圆角；错误详情上拖展开、点击收回、下拖关闭以及文件修改两档切换均通过。
+- iPad mini／iOS 27 的设置保留 Read／草稿与错误详情另通过 2 项。横屏设置卡片居中，宽 600pt、底部留白 32pt；打开时父键盘收起，内容不被压缩。首轮文件修改测试取到键盘动画前的 HUD 坐标，增加几何等待后通过；iPad 错误测试末尾沿用了 iPhone 返回按钮定位，改为侧栏切换并重新打开后通过。专属模拟器已关闭并删除，`git diff --check` 通过。
+- 未修改模型、同步协议或 JavaScript bridge，未运行模型／JavaScript 测试。真机、iOS 26、VoiceOver 实际操作及真实账号的持续输出／后台恢复尚未复验；透明呈现保持父视图任务的检查只在独立原型中完成，不等同于 live 验证。
+
+## Quick Actions 分支图标（2026-10-06）
+
+- 会话右上角 Quick Actions 使用用户提供的 `git-branch.svg` 替换 SF Symbol 闪电。保留 SVG 的分支结构、圆形节点、圆角端点和线宽，24pt 原生尺寸与相邻加号一致；资源使用矢量与 template 渲染，继承工具栏前景色，随系统浅／深色外观变化。沿用 Quick Actions 的菜单、加载状态和辅助功能标识。
+- 按用户要求将 New tab 加号与 Quick Actions 对调，工具栏从左到右为加号、分支图标、会话选项省略号。
+- 本轮 iPhone 17／iOS 27 Simulator 编译及 3 项 fixture UI 验证通过（浅色默认字号 2 项、系统深色 accessibility-medium 1 项），覆盖 Quick Actions 菜单、PR 子菜单、任务创建，以及新位置加号的 New Tab／切换／关闭／重开与独立草稿。浅／深色截图和 AX 层级确认图标清晰、颜色正确、三个按钮对齐且顺序一致，辅助功能标识保留；SVG 几何逐项与用户附件核对一致，`git diff --check` 通过。初轮构建遇到并发更新的浮层工程引用及 UI 测试编译问题，现行文件更新后重新构建并完成验证。专属模拟器已关闭并删除；真机、iOS 26、iPad、最大辅助字号与 VoiceOver 实操本次未验证。
+
+## Quick Actions 样式与独立 Review 配置（2026-10-06）
+
+- Settings → Quick Actions 使用与其他设置页一致的背景、灰色 20pt 圆角卡片、16pt 页边距、18pt 行内留白和细分隔线，替换系统 Form。机器仅保留一行选择；菜单值使用次级颜色，长名称或辅助字号放不下时改为纵向排列。
+- 配置分为 Review 与 Git Actions。Review Changes 使用独立的 Agent／Model／Reasoning；创建分支、提交、推送和两种 PR 共用 Git Actions 配置。执行时按动作选择对应配置，仅影响新任务 tab 的首轮输入，不改变主会话。按用户要求不提供 Use Session Defaults 按钮，包括错误 alert。
+- 保存范围仍为本机的账号／工作区／机器。旧共享配置在读取时作为两组初始值，首次更新保存为独立组；修改其中一组保留另一组。失效配置只阻止对应动作组，界面提示到 Settings 更新。已保存的 Agent 被移除时，设置页刷新当前可用 Agent 目录并让用户重新选择，不静默改用另一 Agent 执行。保留能力校验、取消、工作区隔离和命名 tab 的既有协议。
+- 本轮 Simulator 编译、26 项 QuickAction／SessionTabs Swift 定向测试、3 项 fixture UI 验证通过（浅色默认字号 2 项，系统深色 accessibility-medium 1 项）。回归覆盖八种动作的首轮配置路由、旧配置迁移、持久化、失效配置组隔离、已移除 Agent 的设置恢复逻辑、两组独立修改、重启保存、命名任务 tab 与主草稿保留。截图及 AX 层级确认三行卡片、无默认按钮／尾线、辅助字号换行、滚动和底部菜单正常；没有新增 Swift 并发警告。`git diff --check` 通过，专属模拟器已关闭并删除。未修改 JavaScript bridge，未运行 JavaScript 测试；真实账号执行、真实长主机名、移除 Agent 的恢复 UI、真机、iOS 26、iPad、最大辅助字号与 VoiceOver 实操尚未验证。
+
 ## Markdown 链接圆点加粗（2026-10-06）
 
 - 按参考截图将链接圆点直径从 `max(0.7, 行高 / 24)` 调整为 `max(1.3, 行高 / 13)`，常规字号直径约增加 85%；中心间距从直径的 2.8 倍改为 2.4 倍，使粗细与疏密更接近参考。圆点随正文与辅助字号缩放，保留语义灰色、每行位置与末尾单色箭头。改动位于现有 MarkdownView fork 的圆点绘制器，客户端依赖固定到 `39166ee72f79d61c00065544bf3b4938f084cef6`，XcodeGen 已重新生成工程。
@@ -960,3 +981,10 @@
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
 
 - 2026-10-04 恢复账号访问后再次重试，现有 0.4.2（11）归档上传成功，日志确认 `Upload succeeded`。Apple 已开始处理，尚未确认 TestFlight 可安装状态；本次仅重试上传，未重新归档或运行测试。
+
+## Context window 会话缓存用量（2026-10-07）
+
+- Context window 浮层增加 Session cache，显示缓存命中率、读取 token、写入 token 和用量覆盖轮次；现有上下文窗口环及已用／总量保持原口径。命中率使用 `cacheReadInputTokens / (inputTokens + cacheReadInputTokens + cacheCreationInputTokens)`，没有输入 token 时显示未知，不把缺失用量当作零命中。普通字号保持紧凑浮层，辅助字号或键盘导致可用高度不足时改为可滚动内容。
+- 桥从当前会话 history 的 assistant `tokenUsage` 汇总已记录轮次，包括没有可见正文的结束轮次；不叠加子代理任务中的用量或其它 tab／会话。校验五类 token 为安全非负整数，缺失／无效记录只计入覆盖范围。每次 history 更新重新投影；用量晚到、修正或删除，即使正文不变也会发送最新统计，原生快照替换该字段，沿用现有账号／工作区／会话缓存隔离和 Codable 兼容。
+- 协议参考：官方 Lody main `72b118b5` 的 `packages/shared/src/session-data/token-usage.ts`、`apps/cli/src/lib/usage/turn-token-usage.ts` 与 `message-handler.ts`，以及固定 ACP Core `85ec3aba` 的 `ModelUsage` 互斥计数口径。当前界面展示已同步历史中的记录，不能补齐旧 daemon／不报告 delta 的 Agent 未写入的轮次，也不是云端账单汇总。
+- 本轮 frozen lockfile 安装、349 项 JavaScript 测试与 bundle 重建、iOS Simulator 构建及 32 项 FixtureLodyClient／ConversationStreaming 原生测试通过，回归覆盖隐藏轮次、无效／缺失／零值、数值边界、正文不变时的迟到／清除、Codable 往返与工作区隔离。iPhone 17／iOS 27 浅色 large 的缓存浮层及既有 composer 配置两项 fixture UI 检查、深色 accessibility-extra-large 的缓存浮层一项检查通过；截图与层级确认普通浮层紧凑、辅助字号可滚动读取顶部与完整覆盖说明，关闭后草稿保留。测试对键盘完成布局后按实测坐标点击／滚动，避免 XCTest 使用旧点击坐标或空滚动区域。生成 bundle 与 app 内资源哈希一致，`git diff --check` 通过；真实账号、真机、iOS 26、iPad 与 VoiceOver 实操尚未验证。

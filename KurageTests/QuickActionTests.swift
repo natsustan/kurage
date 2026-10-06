@@ -149,16 +149,22 @@ struct QuickActionTests {
 
     @Test(arguments: QuickAction.allCases)
     func taskUsesANamedTabAndIndependentModelWithoutChangingParentHistory(action: QuickAction) async throws {
+        let suite = "QuickActionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
         let client = FixtureLodyClient(startsSignedIn: true)
         client.projectGitStates["local:machine-1:prism"] = state(for: action)
-        let model = AppModel(client: client)
+        let model = AppModel(client: client, quickActionDefaults: defaults)
         await model.adoptExistingAccount()
         let rootID = "session-pr"
         let before = try await client.conversation(sessionID: rootID, workspaceID: "ws-demo")
-        let options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: "codex", isTab: true)
-        var config = try #require(options.runConfig)
-        config.selectModel("gpt-5.4-mini")
-        config.selectReasoning("low")
+        model.saveQuickActionPreference(.init(agentConfigID: "codex", modelID: "gpt-5.5", reasoning: "high"),
+            rootID: rootID, profile: .review, workspaceGeneration: model.workspaceGeneration)
+        model.saveQuickActionPreference(.init(agentConfigID: "codex", modelID: "gpt-5.4-mini", reasoning: "low"),
+            rootID: rootID, profile: .git, workspaceGeneration: model.workspaceGeneration)
+        let configuration = try await QuickActionConfigurationState.load(model: model, rootID: rootID, profile: action.profile)
+        let options = try #require(configuration.options)
+        let config = try #require(configuration.runConfig)
         let id = try await model.stageQuickAction(action, rootID: rootID, options: options,
             runConfig: config, workspaceGeneration: model.workspaceGeneration)
         #expect(model.sessionSummary(id)?.title == String(localized: action.title))
@@ -169,8 +175,8 @@ struct QuickActionTests {
         try await model.deliverOutgoingMessage(sessionID: id)
         try await model.observeConversation(sessionID: id, rootSessionID: rootID) { update in
             #expect(update.conversation.turns.first?.text == action.prompt)
-            #expect(update.runConfig?.model?.value == "gpt-5.4-mini")
-            #expect(update.runConfig?.reasoning?.value == "low")
+            #expect(update.runConfig?.model?.value == (action == .reviewChanges ? "gpt-5.5" : "gpt-5.4-mini"))
+            #expect(update.runConfig?.reasoning?.value == (action == .reviewChanges ? "high" : "low"))
         }
         #expect(try await client.conversation(sessionID: rootID, workspaceID: "ws-demo") == before)
     }
@@ -222,19 +228,20 @@ struct QuickActionTests {
         }
     }
 
-    @Test func preferencesPersistAcrossLaunchesShareOneMachineAndRespectScopes() async throws {
+    @Test(arguments: QuickActionProfile.allCases)
+    func preferencesPersistAcrossLaunchesShareOneMachineAndRespectScopes(profile: QuickActionProfile) async throws {
         let suite = "QuickActionTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
         await model.adoptExistingAccount()
         let preference = QuickActionPreference(agentConfigID: "codex", modelID: "gpt-5.4-mini", reasoning: "low")
-        model.saveQuickActionPreference(preference, rootID: "session-pr", workspaceGeneration: model.workspaceGeneration)
-        #expect(model.quickActionPreference(rootID: "session-long") == preference)
+        model.saveQuickActionPreference(preference, rootID: "session-pr", profile: profile, workspaceGeneration: model.workspaceGeneration)
+        #expect(model.quickActionPreference(rootID: "session-long", profile: profile) == preference)
         let relaunched = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
         await relaunched.adoptExistingAccount()
-        #expect(relaunched.quickActionPreference(rootID: "session-pr") == preference)
-        let loaded = try await QuickActionConfigurationState.load(model: relaunched, rootID: "session-pr")
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: profile) == preference)
+        let loaded = try await QuickActionConfigurationState.load(model: relaunched, rootID: "session-pr", profile: profile)
         #expect(loaded.isReady)
         #expect(loaded.options?.agentConfigID == "codex")
         #expect(loaded.runConfig?.model?.value == "gpt-5.4-mini")
@@ -246,11 +253,86 @@ struct QuickActionTests {
         #expect(key != QuickActionPreference.storageKey(account: Account(email: "other@example.test", id: "other"),
                                                        workspaceID: "ws-demo", machineID: "machine-1"))
         model.signOut()
-        #expect(model.quickActionPreference(rootID: "session-pr") == nil)
-        model.saveQuickActionPreference(nil, rootID: "session-pr", workspaceGeneration: model.workspaceGeneration)
-        #expect(relaunched.quickActionPreference(rootID: "session-pr") == preference)
-        relaunched.saveQuickActionPreference(nil, rootID: "session-pr", workspaceGeneration: relaunched.workspaceGeneration)
-        #expect(relaunched.quickActionPreference(rootID: "session-pr") == nil)
+        #expect(model.quickActionPreference(rootID: "session-pr", profile: profile) == nil)
+        model.saveQuickActionPreference(nil, rootID: "session-pr", profile: profile, workspaceGeneration: model.workspaceGeneration)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: profile) == preference)
+        relaunched.saveQuickActionPreference(nil, rootID: "session-pr", profile: profile, workspaceGeneration: relaunched.workspaceGeneration)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: profile) == nil)
+    }
+
+    @Test func legacyPreferencesMigrateWithoutCouplingProfilesOrRevivingResetValues() async throws {
+        let suite = "QuickActionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
+        await model.adoptExistingAccount()
+        let account = try #require(model.account)
+        let key = try #require(QuickActionPreference.storageKey(account: account, workspaceID: "ws-demo", machineID: "machine-1"))
+        let legacy = QuickActionPreference(agentConfigID: "codex", modelID: "gpt-5.4-mini", reasoning: "low")
+        defaults.set(try JSONEncoder().encode(legacy), forKey: key)
+        #expect(model.quickActionPreference(rootID: "session-pr", profile: .review) == legacy)
+        #expect(model.quickActionPreference(rootID: "session-pr", profile: .git) == legacy)
+        // Reset must migrate both profiles, retaining the other's original value.
+        model.saveQuickActionPreference(nil, rootID: "session-pr", profile: .review, workspaceGeneration: model.workspaceGeneration)
+        let relaunched = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
+        await relaunched.adoptExistingAccount()
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .review) == nil)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .git) == legacy)
+        let review = QuickActionPreference(agentConfigID: "claude", modelID: "opus")
+        relaunched.saveQuickActionPreference(review, rootID: "session-pr", profile: .review,
+            workspaceGeneration: relaunched.workspaceGeneration)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .git) == legacy)
+        let configuration = try await QuickActionConfigurationState.load(model: relaunched, rootID: "session-pr", profile: .review)
+        #expect(configuration.options?.agentConfigID == "claude")
+        #expect(configuration.runConfig?.model?.value == "opus")
+        relaunched.saveQuickActionPreference(nil, rootID: "session-pr", profile: .git,
+            workspaceGeneration: relaunched.workspaceGeneration)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .review) == review)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .git) == nil)
+        relaunched.saveQuickActionPreference(nil, rootID: "session-pr", profile: .review,
+            workspaceGeneration: relaunched.workspaceGeneration - 1)
+        #expect(relaunched.quickActionPreference(rootID: "session-pr", profile: .review) == review)
+    }
+
+    @Test func invalidReviewPreferenceDoesNotBlockOtherGitActions() async throws {
+        let suite = "QuickActionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
+        await model.adoptExistingAccount()
+        model.saveQuickActionPreference(.init(agentConfigID: "codex", modelID: "removed"),
+            rootID: "session-pr", profile: .review, workspaceGeneration: model.workspaceGeneration)
+        let review = try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .review)
+        #expect(!review.isReady)
+        #expect(review.preferenceIssue != nil)
+        let git = try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .git)
+        #expect(git.isReady)
+    }
+
+    @Test func settingsOfferAvailableAgentsWithoutSilentlyReplacingARemovedAgent() async throws {
+        let suite = "QuickActionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true), quickActionDefaults: defaults)
+        await model.adoptExistingAccount()
+        let preference = QuickActionPreference(agentConfigID: "removed-agent", modelID: "removed-model")
+        model.saveQuickActionPreference(preference, rootID: "session-pr", profile: .review,
+            workspaceGeneration: model.workspaceGeneration)
+        await #expect(throws: LodyClientError.notConnected) {
+            try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .review)
+        }
+        let settings = try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .review,
+            allowsAgentRecovery: true)
+        #expect(!settings.isReady)
+        #expect(settings.unavailableAgentID == "removed-agent")
+        #expect(settings.options?.providers.contains { $0.value == "codex" } == true)
+        #expect(settings.runConfig == nil)
+        #expect(model.quickActionPreference(rootID: "session-pr", profile: .review) == preference)
+        let selected = try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .review,
+            agentConfigID: "codex", allowsAgentRecovery: true)
+        #expect(selected.isReady)
+        #expect(selected.unavailableAgentID == nil)
+        #expect(selected.options?.agentConfigID == "codex")
     }
 
     @Test func savedConfigurationIsCheckedAgainstCurrentModelCapabilities() throws {

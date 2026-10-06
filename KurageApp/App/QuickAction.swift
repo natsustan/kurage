@@ -12,6 +12,8 @@ enum QuickAction: String, CaseIterable, Identifiable, Sendable {
 
     var id: String { rawValue }
 
+    var profile: QuickActionProfile { self == .reviewChanges ? .review : .git }
+
     var title: LocalizedStringResource {
         switch self {
         case .reviewChanges: "Review Changes"
@@ -130,6 +132,43 @@ struct QuickActionAvailability: Equatable, Sendable {
     }
 }
 
+enum QuickActionProfile: String, CaseIterable, Identifiable, Sendable {
+    case review, git
+
+    var id: String { rawValue }
+    var title: LocalizedStringResource { self == .review ? "Review" : "Git Actions" }
+    var description: LocalizedStringResource {
+        self == .review ? "Review changes for bugs and regressions."
+            : "Create branches, commit, push, and open pull requests."
+    }
+
+    func identifier(_ control: String) -> String {
+        self == .git ? "quick-action-\(control)" : "quick-action-review-\(control)"
+    }
+}
+
+/// Keep both profiles together so resetting one also finishes legacy migration.
+struct QuickActionPreferences: Codable, Equatable, Sendable {
+    var review: QuickActionPreference?
+    var git: QuickActionPreference?
+
+    subscript(profile: QuickActionProfile) -> QuickActionPreference? {
+        get { profile == .review ? review : git }
+        set {
+            if profile == .review { review = newValue }
+            else { git = newValue }
+        }
+    }
+
+    static func decode(_ data: Data) -> Self? {
+        let decoder = JSONDecoder()
+        if let legacy = try? decoder.decode(QuickActionPreference.self, from: data) {
+            return Self(review: legacy, git: legacy)
+        }
+        return try? decoder.decode(Self.self, from: data)
+    }
+}
+
 struct QuickActionPreference: Codable, Equatable, Sendable {
     var agentConfigID: String
     var modelID: String?
@@ -193,8 +232,8 @@ enum QuickActionFailure: Error, LocalizedError, Equatable {
         case .pending: "A session in this project has an unconfirmed start. Resolve it before starting a Git action."
         case .stateChanged: "The repository has changed. Refresh Quick Actions and choose an available action."
         case .gitUnavailable: "Could not read Git status. Refresh Quick Actions to retry."
-        case .savedModelUnavailable: "The saved model is no longer available. Update Quick Actions in Settings or use session defaults."
-        case .savedReasoningUnavailable: "The saved reasoning level is no longer available. Update Quick Actions in Settings or use session defaults."
+        case .savedModelUnavailable: "The saved model is no longer available. Update Quick Actions in Settings."
+        case .savedReasoningUnavailable: "The saved reasoning level is no longer available. Update Quick Actions in Settings."
         }
     }
 

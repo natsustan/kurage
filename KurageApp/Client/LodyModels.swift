@@ -480,10 +480,32 @@ struct Conversation: Codable, Equatable, Sendable {
     var latestTurnNumber: Int? = nil
     var subtasks: [ConversationSubtask]? = nil
     var questions: [ConversationQuestionRequest]? = nil
+    var cacheUsage: ConversationCacheUsage? = nil
 
     var lastTurnNumber: Int {
         latestTurnNumber ?? max(1, turns.filter { $0.author == .user }.count,
                                 fileChanges?.map(\.turnNumber).max() ?? 1)
+    }
+}
+
+/// Cache accounting from the recorded assistant turns of this conversation.
+/// Ordinary input excludes cache reads and writes in Lody's token protocol.
+struct ConversationCacheUsage: Codable, Equatable, Sendable {
+    var inputTokens: Int
+    var cacheReadInputTokens: Int
+    var cacheCreationInputTokens: Int
+    var reportedTurns: Int
+    var totalTurns: Int
+
+    var isValid: Bool {
+        inputTokens >= 0 && cacheReadInputTokens >= 0 && cacheCreationInputTokens >= 0 &&
+            reportedTurns > 0 && totalTurns >= reportedTurns
+    }
+
+    var hitFraction: Double? {
+        guard isValid else { return nil }
+        let input = Double(inputTokens) + Double(cacheReadInputTokens) + Double(cacheCreationInputTokens)
+        return input > 0 ? Double(cacheReadInputTokens) / input : nil
     }
 }
 
@@ -690,6 +712,7 @@ struct ConversationPatch: Decodable {
     var subtaskOrder: [ConversationSubtask.ID]? = nil
     var changedSubtasks: [ConversationSubtask]? = nil
     var questions: [ConversationQuestionRequest]? = nil
+    var cacheUsage: ConversationCacheUsage? = nil
     let activity: String
     let syncState: ConversationSyncState
     var runConfig: SessionRunConfig? = nil
@@ -722,7 +745,7 @@ struct ConversationPatch: Decodable {
                                        fileChanges: replacesFileChanges == true ? fileChanges : previous.fileChanges,
                                        latestTurnNumber: latestTurnNumber ?? previous.latestTurnNumber,
                                        subtasks: updatedSubtasks,
-                                       questions: questions),
+                                       questions: questions, cacheUsage: cacheUsage),
             activity: activity == "running" ? .running : .idle, syncState: syncState,
             runConfig: runConfig, contextWindowUsage: contextWindowUsage, lastMessageAt: lastMessageAt, sessionTabs: sessionTabs
         )

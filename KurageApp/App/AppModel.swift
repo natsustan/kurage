@@ -282,15 +282,19 @@ final class AppModel {
         return QuickActionPreference.storageKey(account: account, workspaceID: workspaceID, machineID: machineID)
     }
 
-    func quickActionPreference(rootID: String) -> QuickActionPreference? {
+    func quickActionPreference(rootID: String, profile: QuickActionProfile) -> QuickActionPreference? {
         _ = quickActionPreferenceRevision
         guard let key = quickActionPreferenceKey(rootID: rootID), let data = quickActionDefaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(QuickActionPreference.self, from: data)
+        return QuickActionPreferences.decode(data)?[profile]
     }
 
-    func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String, workspaceGeneration: Int) {
+    func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String,
+                                   profile: QuickActionProfile, workspaceGeneration: Int) {
         guard self.workspaceGeneration == workspaceGeneration, let key = quickActionPreferenceKey(rootID: rootID) else { return }
-        if let preference, let data = try? JSONEncoder().encode(preference) {
+        var preferences = quickActionDefaults.data(forKey: key).flatMap(QuickActionPreferences.decode) ?? .init()
+        preferences[profile] = preference
+        if preferences.review != nil || preferences.git != nil {
+            guard let data = try? JSONEncoder().encode(preferences) else { return }
             quickActionDefaults.set(data, forKey: key)
         } else {
             quickActionDefaults.removeObject(forKey: key)

@@ -51,13 +51,13 @@ struct SessionProjectMenu: View {
         .menuOrder(.fixed)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("new-session-project")
-        .sheet(item: $folderSource) { source in
-            NavigationStack {
-                MachineFolderPicker(model: model, templateSessionID: source.templateSessionID,
-                                    workspaceGeneration: workspaceGeneration, onChoose: onChoose)
+        .fullScreenCover(item: $folderSource) { source in
+            FloatingSheet(background: Color(.secondarySystemBackground)) {
+                NavigationStack {
+                    MachineFolderPicker(model: model, templateSessionID: source.templateSessionID,
+                                        workspaceGeneration: workspaceGeneration, onChoose: onChoose)
+                }
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
         }
         .task(id: "\(workspaceGeneration):\(current.templateSessionID):\(attempt):\(scenePhase)") {
             guard scenePhase == .active else { return }

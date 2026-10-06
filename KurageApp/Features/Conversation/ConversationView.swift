@@ -176,6 +176,7 @@ struct ConversationContent: View {
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed,
                 contextWindowUsage: contextWindowUsage,
+                cacheUsage: displayedConversation?.cacheUsage,
                 composerPresentation: composerPresentation,
                 focusesComposerOnAppear: model.shouldFocusSessionStartComposer(sessionID: sessionID),
                 dismissComposerFocus: dismissesComposerFocus || changesSelection != nil || selectedSubtask != nil,
@@ -204,13 +205,13 @@ struct ConversationContent: View {
                 try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
             }
         }
-        .sheet(item: $selectedSubtask) { subtask in
+        .fullScreenCover(item: $selectedSubtask) { subtask in
             ConversationSubtaskSheet(subtask: displayedConversation?.subtasks?.first { $0.id == subtask.id },
                                      projectName: session?.projectName ?? model.sessionSummary(rootSessionID)?.projectName,
                                      machineName: session?.machineName ?? model.sessionSummary(rootSessionID)?.machineName,
                                      onRefresh: { refreshID += 1 })
         }
-        .sheet(item: $changesSelection) { selection in
+        .fullScreenCover(item: $changesSelection) { selection in
             let loadPreview: FilePreviewLoader = { group, file in
                 guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
                 return try await model.filePreview(sessionID: sessionID, turnID: group.id,
@@ -227,11 +228,6 @@ struct ConversationContent: View {
         .toolbar {
             if !isReadOnly, let session {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    if let onQuickActionStarted {
-                        QuickActionsMenu(rootID: rootSessionID, workspaceGeneration: workspaceGeneration,
-                            model: model, isPreparing: quickActionPreparation, onStarted: onQuickActionStarted)
-                            .disabled(isStarting)
-                    }
                     if let onNewTab {
                         Button(action: onNewTab) {
                             Image("add")
@@ -239,6 +235,11 @@ struct ConversationContent: View {
                         .accessibilityLabel("New tab")
                         .accessibilityIdentifier("new-session-tab")
                         .disabled(!model.supportsSessionCreation || isStarting)
+                    }
+                    if let onQuickActionStarted {
+                        QuickActionsMenu(rootID: rootSessionID, workspaceGeneration: workspaceGeneration,
+                            model: model, isPreparing: quickActionPreparation, onStarted: onQuickActionStarted)
+                            .disabled(isStarting)
                     }
                     Menu {
                         if !closedTabs.isEmpty {
@@ -850,6 +851,7 @@ private struct ConversationFooter: View {
     let supportsPermissionResponses: Bool
     let runConfig: SessionRunConfig?
     let contextWindowUsage: ContextWindowUsage?
+    let cacheUsage: ConversationCacheUsage?
     let composerPresentation: ComposerPresentation
     var focusesComposerOnAppear = false
     var dismissComposerFocus = false
@@ -904,6 +906,7 @@ private struct ConversationFooter: View {
                                     supportsSessionCancellation: supportsSessionCancellation,
                                     runConfig: runConfig?.menu,
                                     contextWindowUsage: contextWindowUsage,
+                                    cacheUsage: cacheUsage,
                                     canSubmit: canSubmit,
                                     focusesOnAppear: focusesComposerOnAppear,
                                     dismissFocus: dismissComposerFocus,

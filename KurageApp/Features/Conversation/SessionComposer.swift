@@ -186,6 +186,7 @@ struct SessionComposer: View {
     let supportsSessionCancellation: Bool
     let runConfig: RunConfigMenu?
     var contextWindowUsage: ContextWindowUsage? = nil
+    var cacheUsage: ConversationCacheUsage? = nil
     var placeholder: LocalizedStringResource = "Send a follow-up"
     var identifiers: Identifiers = .followUp
     /// Blocks sending while prerequisites load, without blocking typing.
@@ -384,11 +385,11 @@ struct SessionComposer: View {
             }
             .onChange(of: draft) { _, text in mentions.reconcile(text) }
             .task(id: loadID) { await loadMentions(for: loadID) }
-            .sheet(isPresented: $presentation.showsAdvanced, onDismiss: updateGauge) {
-                RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
-                    .onAppear { isFocused = false }
+            .fullScreenCover(isPresented: $presentation.showsAdvanced, onDismiss: updateGauge) {
+                FloatingSheet(background: Color(.systemGroupedBackground)) {
+                    RunConfigAdvanced(runConfig: runConfig, onChoose: onChooseRunConfig)
+                }
+                .onAppear { isFocused = false }
             }
     }
 
@@ -596,7 +597,7 @@ struct SessionComposer: View {
             Spacer(minLength: 0)
             HStack(spacing: 0) {
                 if isExpanded, let contextWindowUsage, contextWindowUsage.isValid {
-                    ContextWindowButton(usage: contextWindowUsage)
+                    ContextWindowButton(usage: contextWindowUsage, cacheUsage: cacheUsage)
                 }
                 if isExpanded, let runConfig {
                     Button {
@@ -669,6 +670,7 @@ private struct ComposerSendFeedbackAnchor: UIViewRepresentable {
 
 private struct ContextWindowButton: View {
     let usage: ContextWindowUsage
+    let cacheUsage: ConversationCacheUsage?
     @State private var showsDetails = false
     @Environment(\.scenePhase) private var scenePhase
 
@@ -691,23 +693,38 @@ private struct ContextWindowButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Context window")
         .accessibilityValue("\(compactTokens(usage.used)) used of \(compactTokens(usage.size))")
-        .accessibilityHint("Show context window usage")
+        .accessibilityHint("Show context window and session cache usage")
         .accessibilityIdentifier("context-window-usage")
         .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Context window")
-                    .font(.subheadline.weight(.semibold))
-                Text("\(compactTokens(usage.used)) used / \(compactTokens(usage.size))")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("context-window-detail")
+            ViewThatFits(in: .vertical) {
+                details
+                ScrollView {
+                    details
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("context-window-scroll")
             }
-            .padding(14)
             .presentationCompactAdaptation(.popover)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { showsDetails = false }
         }
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Context window")
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("context-window-title")
+            Text("\(compactTokens(usage.used)) used / \(compactTokens(usage.size))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("context-window-detail")
+            Divider().padding(.vertical, 6)
+            SessionCacheUsageDetails(usage: cacheUsage)
+        }
+        .padding(14)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func compactTokens(_ value: Int) -> String {
@@ -716,6 +733,54 @@ private struct ContextWindowButton: View {
         }
         if value >= 1_000 { return "\(Int((Double(value) / 1_000).rounded()))K" }
         return "\(value)"
+    }
+}
+
+private struct SessionCacheUsageDetails: View {
+    let usage: ConversationCacheUsage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Session cache")
+                .font(.subheadline.weight(.semibold))
+            if let usage, usage.isValid {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Cache hit rate")
+                        Group {
+                            if let fraction = usage.hitFraction {
+                                Text(fraction, format: .percent.precision(.fractionLength(1)))
+                            } else {
+                                Text("—")
+                            }
+                        }
+                        .accessibilityIdentifier("session-cache-hit-rate")
+                    }
+                    GridRow {
+                        Text("Cache read tokens")
+                        Text(usage.cacheReadInputTokens, format: .number)
+                            .accessibilityIdentifier("session-cache-read-tokens")
+                    }
+                    GridRow {
+                        Text("Cache write tokens")
+                        Text(usage.cacheCreationInputTokens, format: .number)
+                            .accessibilityIdentifier("session-cache-write-tokens")
+                    }
+                }
+                .font(.footnote)
+                .monospacedDigit()
+                Text("Usage reported for \(usage.reportedTurns) of \(usage.totalTurns) turns.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("session-cache-coverage")
+            } else {
+                Text("Cache usage unavailable")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("session-cache-unavailable")
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

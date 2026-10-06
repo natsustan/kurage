@@ -2,6 +2,40 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { projectConversation } from './conversation-projection.mjs';
 
+const tokenUsage = (inputTokens, cacheReadInputTokens, cacheCreationInputTokens = 0) => ({
+  inputTokens, cacheReadInputTokens, cacheCreationInputTokens, outputTokens: 100, reasoningOutputTokens: 0,
+});
+
+test('session cache sums only recorded assistant turns, including invisible completed turns', () => {
+  const result = projectConversation('cache-chat', [
+    { id: 'user', role: 'user', tokenUsage: tokenUsage(999, 999), items: [{ type: 'text', text: 'Question' }] },
+    { id: 'a', role: 'assistant', finished: true, tokenUsage: tokenUsage(200, 700, 100),
+      items: [{ type: 'text', text: 'Answer' }] },
+    { id: 'hidden', role: 'assistant', finished: true, tokenUsage: tokenUsage(100, 900), items: [] },
+    { id: 'legacy', role: 'assistant', finished: true, items: [{ type: 'text', text: 'Old answer' }] },
+    { id: 'system', role: 'system', tokenUsage: tokenUsage(999, 999), items: [] },
+  ]);
+  assert.deepEqual(result.cacheUsage, { inputTokens: 300, cacheReadInputTokens: 1600,
+    cacheCreationInputTokens: 100, reportedTurns: 2, totalTurns: 3 });
+  assert.deepEqual(result.turns.map(turn => turn.id), ['user', 'a', 'legacy']);
+  assert.equal(projectConversation('other-chat', []).cacheUsage, undefined);
+});
+
+test('invalid or missing turn usage stays unknown, while explicitly reported zero stays recorded', () => {
+  const invalid = [undefined, {}, { ...tokenUsage(10, 20), cacheReadInputTokens: -1 },
+    { ...tokenUsage(10, 20), inputTokens: 1.5 }, { ...tokenUsage(10, 20), outputTokens: '100' },
+    { ...tokenUsage(10, 20), reasoningOutputTokens: Number.MAX_SAFE_INTEGER + 1 }];
+  for (const usage of invalid) {
+    assert.equal(projectConversation('chat', [{ id: 'a', role: 'assistant', finished: true,
+      tokenUsage: usage, items: [] }]).cacheUsage, undefined);
+  }
+  assert.deepEqual(projectConversation('zero', [{ id: 'a', role: 'assistant', finished: true,
+    tokenUsage: tokenUsage(0, 0), items: [] }]).cacheUsage,
+  { inputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, reportedTurns: 1, totalTurns: 1 });
+  assert.equal(projectConversation('overflow', [{ id: 'a', role: 'assistant', finished: true,
+    tokenUsage: tokenUsage(Number.MAX_SAFE_INTEGER, 1), items: [] }]).cacheUsage, undefined);
+});
+
 test('delivery confirmation needs explicit same-turn acceptance, never history visibility alone', () => {
   const entry = { id: 'guide', role: 'user', status: 'pending_apply', items: [{ type: 'text', text: 'Guide' }] };
   const confirmed = (status, meta = {}) => projectConversation('chat', [{ ...entry, status }], meta)

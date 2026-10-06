@@ -474,6 +474,11 @@ final class ShellFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["follow-up-field"]
         tap(field)
         field.typeText("Keep this draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let hudAboveKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            hud.frame.maxY < app.keyboards.firstMatch.frame.minY
+        }, object: hud)
+        XCTAssertEqual(XCTWaiter.wait(for: [hudAboveKeyboard], timeout: 5), .completed)
         XCTAssertLessThan(hud.frame.maxY, field.frame.minY)
         let keyboardCapture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         keyboardCapture.name = "Changes HUD above composer"
@@ -484,6 +489,8 @@ final class ShellFlowTests: XCTestCase {
         let scope = app.buttons["file-changes-title"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         XCTAssertEqual(scope.label, "All turns")
+        let drawerBottom = app.scrollViews["file-changes-list"].frame.maxY
+        XCTAssertGreaterThanOrEqual(app.frame.maxY - drawerBottom, 24)
         XCTAssertTrue(app.staticTexts["Turn 20"].exists)
         tap(scope)
         tap(app.buttons["Last turn"])
@@ -496,9 +503,11 @@ final class ShellFlowTests: XCTestCase {
         tap(resize)
         XCTAssertTrue(resize.wait(for: \.label, toEqual: "Expand drawer", timeout: 5))
         XCTAssertGreaterThan(scope.frame.minY, expandedHeaderY)
+        XCTAssertEqual(app.scrollViews["file-changes-list"].frame.maxY, drawerBottom, accuracy: 1)
         attachScreen(app, name: "Compact file changes drawer")
         tap(resize)
         XCTAssertTrue(resize.wait(for: \.label, toEqual: "Collapse drawer", timeout: 5))
+        XCTAssertEqual(app.scrollViews["file-changes-list"].frame.maxY, drawerBottom, accuracy: 1)
         let file = app.descendants(matching: .any)["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
         attachScreen(app, name: "File changes before expanding")
         if !file.isHittable {
@@ -1324,6 +1333,63 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testContextWindowShowsSessionCacheUsage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Keep this draft")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let context = app.buttons["context-window-usage"]
+        let aboveKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            context.exists && context.isHittable && context.frame.maxY <= keyboard.frame.minY
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [aboveKeyboard], timeout: 5), .completed)
+        let contextFrame = context.frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: contextFrame.midX, dy: contextFrame.midY)).tap()
+        attachScreen(app, name: "Context window with session cache usage")
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "Context window hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+        XCTAssertTrue(app.staticTexts["context-window-detail"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["context-window-detail"].label, "217K used / 258K")
+        XCTAssertEqual(app.staticTexts["session-cache-hit-rate"].label, "80.0%")
+        XCTAssertEqual(app.staticTexts["session-cache-read-tokens"].label, "320,000")
+        XCTAssertEqual(app.staticTexts["session-cache-write-tokens"].label, "20,000")
+        XCTAssertEqual(app.staticTexts["session-cache-coverage"].label, "Usage reported for 18 of 20 turns.")
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.exists)
+        let scroll = app.scrollViews["context-window-scroll"]
+        for id in ["context-window-title", "context-window-detail", "session-cache-hit-rate", "session-cache-read-tokens",
+                   "session-cache-write-tokens", "session-cache-coverage"] {
+            let element = app.staticTexts[id]
+            if scroll.exists && element.frame.maxY > scroll.frame.maxY {
+                let scrollFrame = scroll.frame
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                origin.withOffset(CGVector(dx: scrollFrame.midX, dy: scrollFrame.minY + scrollFrame.height * 0.75))
+                    .press(forDuration: 0.05, thenDragTo: origin.withOffset(CGVector(
+                        dx: scrollFrame.midX, dy: scrollFrame.minY + scrollFrame.height * 0.25)))
+            }
+            XCTAssertTrue(element.isHittable, "\(id) must be readable")
+            let visibleFrame = scroll.exists ? scroll.frame : popover.frame
+            XCTAssertGreaterThanOrEqual(element.frame.minY, visibleFrame.minY - 1, "\(id) top must not be clipped")
+            XCTAssertLessThanOrEqual(element.frame.maxY, visibleFrame.maxY + 1, "\(id) bottom must not be clipped")
+        }
+        attachScreen(app, name: "Context window readable coverage")
+        let transcriptFrame = app.tables["conversation-transcript"].frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: transcriptFrame.minX + 8, dy: transcriptFrame.minY + 8)).tap()
+        XCTAssertTrue(app.staticTexts["context-window-detail"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Keep this draft")
+    }
+
+    @MainActor
     func testFocusedComposerShowsRunConfigAndChangesReasoning() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -1347,7 +1413,9 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertEqual(context.value as? String, "217K used of 258K")
         tap(context)
         XCTAssertEqual(app.staticTexts["context-window-detail"].label, "217K used / 258K")
-        app.tables["conversation-transcript"].tap()
+        let transcriptFrame = app.tables["conversation-transcript"].frame
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: transcriptFrame.minX + 8, dy: transcriptFrame.minY + 8)).tap()
         XCTAssertTrue(app.staticTexts["context-window-detail"].wait(for: \.exists, toEqual: false, timeout: 5))
         tap(field)
         XCTAssertGreaterThan(menu.frame.minY, field.frame.minY)

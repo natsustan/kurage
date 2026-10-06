@@ -50,7 +50,7 @@ struct ConversationErrorCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-error-\(turnID)-\(error.id)")
         .onChange(of: error) { copied = false }
-        .sheet(isPresented: $showsDetails) {
+        .fullScreenCover(isPresented: $showsDetails) {
             ConversationErrorDetails(error: error, copyIdentifier: "copy-error-\(turnID)-\(error.id)", copied: $copied)
         }
     }
@@ -66,38 +66,36 @@ private struct ConversationErrorDetails: View {
     let copyIdentifier: String
     @Binding var copied: Bool
     @Environment(\.dismiss) private var dismiss
-    @State private var detent: PresentationDetent = .medium
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                Text(error.report)
-                    .font(.system(.footnote, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
-            }
-            .accessibilityIdentifier("conversation-error-details")
-            .navigationTitle("Error details")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        UIPasteboard.general.string = error.report
-                        copied = true
-                    } label: {
-                        Label(copied ? "Copied" : "Copy error", systemImage: copied ? "checkmark" : "doc.on.doc")
-                    }
-                    .accessibilityIdentifier(copyIdentifier)
+        FloatingSheet {
+            NavigationStack {
+                ScrollView {
+                    Text(error.report)
+                        .font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(20)
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                        .accessibilityIdentifier("close-error-details")
+                .accessibilityIdentifier("conversation-error-details")
+                .navigationTitle("Error details")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            UIPasteboard.general.string = error.report
+                            copied = true
+                        } label: {
+                            Label(copied ? "Copied" : "Copy error", systemImage: copied ? "checkmark" : "doc.on.doc")
+                        }
+                        .accessibilityIdentifier(copyIdentifier)
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }
+                            .accessibilityIdentifier("close-error-details")
+                    }
                 }
             }
         }
-        .presentationBackground(Color(uiColor: .systemBackground))
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.visible)
     }
 }
