@@ -237,7 +237,7 @@ test('project Git refreshes publishing metadata on every read without replacing 
       'template', 'local:mac:p', 'user', 'git-read'));
     assert.equal(result.state.currentBranch, 'feature/client');
     assert.equal(result.state.hasUnpushedCommits, unpushed);
-    assert.equal(result.state.hasBranchChanges, unpushed);
+    assert.equal(result.state.hasBranchChanges, unpushed ? true : undefined);
     assert.equal(result.state.hasOpenPR, unpushed);
   }
   assert.equal(repos.length, 3);

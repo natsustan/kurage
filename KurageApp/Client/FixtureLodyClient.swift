@@ -548,6 +548,9 @@ final class FixtureLodyClient: LodyClient {
         case "feature-dirty": state.workingTree = ProjectWorkingTree(clean: false, untracked: true)
         case "existing-pr": state.hasOpenPR = true
         case "synced": state.hasUnpushedCommits = false
+        case "zero-lines":
+            state.hasUnpushedCommits = false
+            state.hasBranchChanges = nil
         case "non-git": state.git = false
         default: break
         }

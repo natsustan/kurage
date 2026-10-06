@@ -70,11 +70,11 @@ function projectGitHints(source, state) {
       context.repoFullName.toLowerCase() !== state.githubRepoFullName?.toLowerCase()) return result;
   if (typeof context.unpushed === 'boolean') result.hasUnpushedCommits = context.unpushed;
   const change = context.allChange;
-  // allChange covers the working tree too. Only a clean live tree lets us use
-  // this scanner statistic as a hint for committed changes against the base.
+  // Only a clean live tree makes these counts a committed-change hint.
+  // Zero counts cannot rule out binary, mode-only or empty-file changes.
   if (state.workingTree?.clean === true && Number.isFinite(change?.add) && change.add >= 0 &&
-      Number.isFinite(change?.del) && change.del >= 0) {
-    result.hasBranchChanges = change.add + change.del > 0;
+      Number.isFinite(change?.del) && change.del >= 0 && change.add + change.del > 0) {
+    result.hasBranchChanges = true;
   }
   const repo = state.githubRepoFullName?.toLowerCase();
   if (repo && typeof context.repoFullName === 'string' && context.repoFullName.toLowerCase() === repo) {

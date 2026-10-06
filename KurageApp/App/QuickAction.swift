@@ -93,8 +93,10 @@ struct QuickActionAvailability: Equatable, Sendable {
         let branch = state.currentBranch.map { ProjectBranch(id: $0).localName }
         let base = state.defaultBranch.map { ProjectBranch(id: $0).localName }
         let onWorkingBranch = branch != nil && base != nil && branch != base
-        let hasChanges = dirty || (onWorkingBranch && state.hasBranchChanges == true)
-        if hasChanges { primaryActions.append(.reviewChanges) }
+        // Unknown line-count hints can include binary or mode-only changes.
+        // Each task checks the actual branch diff before acting.
+        let mayHaveBranchChanges = onWorkingBranch && state.hasBranchChanges != false
+        if dirty || mayHaveBranchChanges { primaryActions.append(.reviewChanges) }
         guard !tree.conflicted else {
             message = "Resolve Git conflicts before committing or publishing."
             return
@@ -107,7 +109,7 @@ struct QuickActionAvailability: Equatable, Sendable {
             allowsCommitAndPush = state.githubRepoFullName?.isEmpty == false || state.hasUnpushedCommits == true
         } else {
             if state.hasUnpushedCommits == true { primaryActions.append(.push) }
-            if state.hasBranchChanges == true, state.githubRepoFullName?.isEmpty == false, state.hasOpenPR == false {
+            if mayHaveBranchChanges, state.githubRepoFullName?.isEmpty == false, state.hasOpenPR == false {
                 primaryActions.append(.createPR)
             }
         }

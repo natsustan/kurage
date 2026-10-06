@@ -70,6 +70,18 @@ test('matching root metadata supplies independent unpublished and committed-chan
   assert.equal(dirty.state.hasUnpushedCommits, true);
 });
 
+test('zero line counts leave branch changes unknown without hiding other publishing hints', async () => {
+  // Binary, mode-only and empty-file diffs can all have these valid line totals.
+  const resolved = await resolve({ ...ownerMeta(), workspaceUnpushed: false,
+    diffStats: { allChange: { add: 0, del: 0 } },
+  });
+  const result = await read(async () => response({ state: liveFeature() }), resolved);
+  assert.equal(result.state.sessionDirectoryMatchesProject, true);
+  assert.equal(result.state.hasBranchChanges, undefined);
+  assert.equal(result.state.hasUnpushedCommits, false);
+  assert.equal(result.state.hasOpenPR, false);
+});
+
 test('plain and exact local branch selectors retain publishing hints and suppress existing PRs', async () => {
   for (const [currentBranch, name] of [
     ['feature/client', 'feature/client'],

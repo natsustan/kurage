@@ -117,6 +117,29 @@ final class QuickActionsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testZeroLineStatsKeepReviewAndPRAvailable() {
+        let app = launch("zero-lines")
+        tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)
+        openActions(app)
+        XCTAssertTrue(actionButton("Review Changes", app: app).exists)
+        XCTAssertTrue(actionButton("Create PR…", app: app).exists)
+        XCTAssertFalse(actionButton("Push", app: app).exists)
+        XCTAssertFalse(actionButton("Commit…", app: app).exists)
+        attach(app, "Zero line totals preserve review and PR actions")
+        tap(actionButton("Create PR…", app: app))
+        XCTAssertTrue(actionButton("Regular PR", app: app).exists)
+        XCTAssertTrue(actionButton("Draft PR", app: app).exists)
+        tap(actionButton("Regular PR", app: app))
+        let tab = app.buttons.matching(NSPredicate(format: "label == %@", "Create PR")).firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 5))
+        XCTAssertTrue(tab.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        let instruction = app.tables["conversation-transcript"].staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Run this Git quick action")).firstMatch
+        XCTAssertTrue(instruction.waitForExistence(timeout: 8))
+        attach(app, "Unknown branch diff starts a checked PR task")
+    }
+
+    @MainActor
     func testCommitChoicesAreGroupedAndKeepBranchCreationInMoreActions() {
         let app = launch("feature-dirty")
         tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)

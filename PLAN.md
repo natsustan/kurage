@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## Quick Actions 零行数分支变更修复（2026-10-06）
+
+- `diffStats.allChange` 是行数统计，`0/0` 无法排除二进制、文件权限或空文件变更。桥接仅在工作树干净且行数非零时确认 `hasBranchChanges: true`；零值保留未知。已核实的工作分支在差异未知时仍提供 Review，且仓库匹配、PR 状态提示为无开放 PR 时提供 Regular／Draft PR；执行 agent 按现有 prompt 再核实实际 diff、基线、认证和重复 PR。
+- 默认分支、非 Git、冲突、目录不匹配、Git 读取失败及已有 PR 的限制继续生效；未推送标记独立判断，零行数不会自动启用 Push。协议字段及后端 API 不变，新增 JavaScript 投影、Swift 菜单／执行前重查及 fixture UI 回归。
+- 协议参考：Lody `apps/cli/src/lib/git/git-diff-stats.ts` 的 `parseGitNumstat`／`sumLineChange` 与 `getGitDiffStats`，二进制 numstat 的 `-` 会被汇总为零行数。
+- 本轮 frozen lockfile 安装、340 项 JavaScript 测试、bundle 重建及 `git diff --check` 通过。iPhone 17／iOS 27 Simulator 构建、17 项 QuickAction／ProjectGit Swift 测试与 2 项 fixture UI 回归通过，覆盖零行数保留 Review／两种 PR、执行前重查后创建命名任务 tab、已有 PR 隐藏及 Git 读取失败重试。本次未在真实账号执行 Review、Push 或创建 PR；真机、iOS 26 和真实网络／metadata 更新延迟尚未验证。
+
 ## Quick Actions 发布状态识别与刷新修复（2026-10-06）
 
 - Lody 的本地分支列表通常直接返回普通分支名，仅在引用需要消歧时返回 `lody:branch:local:` selector。旧投影只接受后一种格式，普通工作分支的未推送、相对基线统计和 PR 提示全部被丢弃，干净工作树因此一直显示 Publishing status unavailable。投影现在兼容两种格式；普通名称中的百分号保持原样，仅解码带前缀的 selector，仍检查项目、仓库和分支匹配。

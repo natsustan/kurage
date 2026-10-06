@@ -41,6 +41,7 @@ struct ProjectGitState: Codable, Equatable, Sendable {
     /// These optional hints come from the directory owner's synchronized metadata,
     /// and are omitted when its project or branch does not match the live Git read.
     var hasUnpushedCommits: Bool? = nil
+    /// Zero line-count statistics leave this unknown because non-text changes may exist.
     var hasBranchChanges: Bool? = nil
     var hasOpenPR: Bool? = nil
     var sessionDirectoryMatchesProject: Bool? = nil

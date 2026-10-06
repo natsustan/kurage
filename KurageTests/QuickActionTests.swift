@@ -21,7 +21,8 @@ struct QuickActionTests {
     }
 
     @Test(arguments: ["default-clean", "default-dirty", "feature-dirty", "unpublished", "existing-pr",
-                      "synced", "synced-changes", "conflicted", "detached", "non-git", "unknown", "worktree", "remote-base"])
+                      "synced", "synced-changes", "unknown-diff", "unknown-diff-existing-pr", "unknown-diff-pr-status",
+                      "conflicted", "detached", "non-git", "unknown", "worktree", "remote-base"])
     func menuShowsOnlyContextualNextSteps(scenario: String) {
         var git = state(for: .push)
         var expected: [QuickAction] = []
@@ -45,6 +46,18 @@ struct QuickActionTests {
         case "synced-changes":
             git.hasUnpushedCommits = false
             expected = [.reviewChanges, .createPR]
+        case "unknown-diff":
+            git.hasUnpushedCommits = false
+            git.hasBranchChanges = nil
+            expected = [.reviewChanges, .createPR]
+        case "unknown-diff-existing-pr":
+            git.hasBranchChanges = nil
+            git.hasOpenPR = true
+            expected = [.reviewChanges, .push]
+        case "unknown-diff-pr-status":
+            git.hasBranchChanges = nil
+            git.hasOpenPR = nil
+            expected = [.reviewChanges, .push]
         case "conflicted":
             git.workingTree = ProjectWorkingTree(clean: false, conflicted: true)
             expected = [.reviewChanges]
@@ -68,6 +81,21 @@ struct QuickActionTests {
         if ["conflicted", "non-git", "unknown", "worktree"].contains(scenario) {
             #expect(!availability.allows(.createBranch))
         }
+    }
+
+    @Test(arguments: [QuickAction.reviewChanges, .createPR, .createDraftPR])
+    func unknownBranchDiffCanStartATaskAfterTheGitRecheck(action: QuickAction) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true,
+            projectGitStates: FixtureLodyClient.quickActionGitStates(arguments: ["--fixture-git-zero-lines"]))
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let rootID = "session-pr"
+        #expect(try await model.quickActionAvailability(rootID: rootID).allows(action))
+        let options = try await model.newSessionOptions(templateSessionID: rootID, isTab: true)
+        let id = try await model.stageQuickAction(action, rootID: rootID, options: options,
+            runConfig: options.runConfig, workspaceGeneration: model.workspaceGeneration)
+        #expect(model.pendingSessionTab(rootID: rootID)?.sessionID == id)
+        #expect(model.outgoingMessage(sessionID: id)?.text == action.prompt)
     }
 
     @Test func actionRechecksGitInsteadOfTrustingAnEarlierMenu() async throws {
