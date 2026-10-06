@@ -122,11 +122,13 @@ window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID,
     let source;
     try {
       controller.signal.throwIfAborted();
+      // Refresh publishing hints as well as live Git state. List metadata may
+      // predate a commit or branch change even when its replica is ready.
       // Validate the registered project, then release the lock before machine IO.
       source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
         (repo, optionsCache) => projectGitSource(repo, workspaceID, templateSessionID, projectID,
           controller.signal, optionsCache?.reader()),
-        operationID, sourceController);
+        operationID, sourceController, true);
     } finally { controller.signal.removeEventListener('abort', cancelSource); }
     controller.signal.throwIfAborted();
     const access = { baseURL: gatewayBaseURL, auth: async context => {

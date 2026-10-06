@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## Quick Actions 发布状态识别与刷新修复（2026-10-06）
+
+- Lody 的本地分支列表通常直接返回普通分支名，仅在引用需要消歧时返回 `lody:branch:local:` selector。旧投影只接受后一种格式，普通工作分支的未推送、相对基线统计和 PR 提示全部被丢弃，干净工作树因此一直显示 Publishing status unavailable。投影现在兼容两种格式；普通名称中的百分号保持原样，仅解码带前缀的 selector，仍检查项目、仓库和分支匹配。
+- 每次读取 Git 状态先用独立副本同步最新 workspace metadata 和机器项目目录，再释放 metadata 锁并读取机器实时状态。Refresh Actions、进入详情、前台恢复及执行前重新检查都能读到更新后的发布提示，不再沿用会话列表的旧缓存；同步失败保持可重试，取消不启动后续机器请求、不影响共享会话订阅。
+- 协议参考：Lody `packages/shared/src/node/local-project.cjs` 的 `listLocalProjectBranchesAtRootPath`，以及现有 `LocalProjectGitStateSchema` 和目录所有者 metadata。未增加后端 API，Swift／JavaScript 消息字段不变；未推送、基线和 PR 提示仍取决于机器发布的 metadata。
+- 本轮 frozen lockfile 安装、339 项 JavaScript 测试和 bundle 重建通过，新增普通／编码分支、百分号保留、最新发布提示、同步失败重试和 metadata 取消回归；测试用例收尾后 72 项 bridge 测试复验通过。iPhone 17／iOS 27 Simulator 编译、16 项 QuickAction／ProjectGit Swift 测试、1 项原生桥接取消测试的 9 个操作参数（含 project-git），以及 1 项已有 PR／Git 读取失败重试 fixture UI 回归通过。只读核对本机真实分支返回普通名称，并用现有目录所有者 metadata 重放客户端投影，确认发布提示不再因格式被丢弃。`git diff --check` 通过，专属验证模拟器已关闭并删除。真机新版本安装后的云端刷新与实际 Push／PR 尚未验证。
+
 ## Quick Actions 按 Git 状态精简（2026-10-06）
 
 - 快捷菜单根据实际工作树和当前／默认分支展示下一步，主要动作最多三项。默认分支干净时显示 Create Branch，有改动时显示 Review Changes 与 Create Branch & Commit；工作分支有改动时显示 Review Changes 与 Commit…，子菜单选择 Commit only／Commit & Push。干净工作分支按状态显示 Review、Push 和 Create PR…；Regular PR／Draft PR 收入同一子菜单，已有开放或草稿 PR 时隐藏创建入口。工作分支的单独 Create Branch 与 Refresh Actions 放入 More Actions。

@@ -70,6 +70,24 @@ test('matching root metadata supplies independent unpublished and committed-chan
   assert.equal(dirty.state.hasUnpushedCommits, true);
 });
 
+test('plain and exact local branch selectors retain publishing hints and suppress existing PRs', async () => {
+  for (const [currentBranch, name] of [
+    ['feature/client', 'feature/client'],
+    [feature, 'feature/client'],
+    ['feature/%2Fclient', 'feature/%2Fclient'],
+    ['lody:branch:local:feature%2F%252Fclient', 'feature/%2Fclient'],
+  ]) {
+    const resolved = await resolve({ ...ownerMeta(), branchName: name,
+      pullRequests: [{ url: 'https://github.com/demo/repo/pull/1', status: 'open' }],
+    });
+    const result = await read(async () => response({ state: liveFeature({ currentBranch }) }), resolved);
+    assert.equal(result.state.currentBranch, currentBranch);
+    assert.equal(result.state.hasUnpushedCommits, true);
+    assert.equal(result.state.hasBranchChanges, true);
+    assert.equal(result.state.hasOpenPR, true);
+  }
+});
+
 test('branch, repository, project and worktree mismatches never borrow publishing hints', async () => {
   for (const meta of [
     { ...ownerMeta(), branchName: 'old-branch' },
@@ -82,9 +100,12 @@ test('branch, repository, project and worktree mismatches never borrow publishin
     assert.equal(result.state.hasBranchChanges, undefined);
     assert.equal(result.state.hasOpenPR, undefined);
   }
-  for (const currentBranch of [null, 'lody:branch:local:other']) {
+  for (const currentBranch of [null, 'other', 'lody:branch:local:other',
+    'lody:branch:local:', 'lody:branch:local:%FF', 'lody:branch:remote:origin:feature%2Fclient']) {
     const result = await read(async () => response({ state: liveFeature({ currentBranch }) }), await resolve());
     assert.equal(result.state.hasUnpushedCommits, undefined);
+    assert.equal(result.state.hasBranchChanges, undefined);
+    assert.equal(result.state.hasOpenPR, undefined);
   }
 });
 

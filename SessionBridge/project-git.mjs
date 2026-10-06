@@ -52,10 +52,13 @@ export async function projectGitSource(repo, workspaceID, templateSessionID, pro
 }
 
 function branchName(selector) {
-  if (typeof selector !== 'string') return null;
+  if (typeof selector !== 'string' || !selector.length) return null;
+  // Lody leaves ordinary local names unqualified. It emits exact selectors
+  // only when refs need disambiguation; plain names must not be URI-decoded.
+  if (!selector.startsWith('lody:branch:')) return selector;
   const local = 'lody:branch:local:';
   if (!selector.startsWith(local)) return null;
-  try { return decodeURIComponent(selector.slice(local.length)); } catch { return null; }
+  try { return decodeURIComponent(selector.slice(local.length)) || null; } catch { return null; }
 }
 
 function projectGitHints(source, state) {
