@@ -3,6 +3,16 @@ import Foundation
 struct ProjectBranch: Equatable, Sendable {
     let id: String
 
+    /// Compare local and remote selectors by their branch component.
+    var localName: String {
+        let remote = "lody:branch:remote:"
+        if id.hasPrefix(remote), let separator = id.dropFirst(remote.count).firstIndex(of: ":") {
+            let branch = String(id[id.index(after: separator)...])
+            return branch.removingPercentEncoding ?? branch
+        }
+        return name
+    }
+
     var name: String {
         let local = "lody:branch:local:"
         let remote = "lody:branch:remote:"
@@ -25,8 +35,25 @@ struct ProjectBranch: Equatable, Sendable {
 struct ProjectGitState: Codable, Equatable, Sendable {
     var git: Bool
     var currentBranch: String? = nil
+    var defaultBranch: String? = nil
+    var githubRepoFullName: String? = nil
+    var workingTree: ProjectWorkingTree? = nil
+    /// These optional hints come from the directory owner's synchronized metadata,
+    /// and are omitted when its project or branch does not match the live Git read.
+    var hasUnpushedCommits: Bool? = nil
+    var hasBranchChanges: Bool? = nil
+    var hasOpenPR: Bool? = nil
+    var sessionDirectoryMatchesProject: Bool? = nil
 
     var branchName: String { currentBranch.map { ProjectBranch(id: $0).name } ?? "Detached HEAD" }
+}
+
+struct ProjectWorkingTree: Codable, Equatable, Sendable {
+    var clean: Bool
+    var staged = false
+    var unstaged = false
+    var untracked = false
+    var conflicted = false
 }
 
 enum ProjectGitFailure: String, Codable, Sendable {

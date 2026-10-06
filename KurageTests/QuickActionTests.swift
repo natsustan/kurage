@@ -4,6 +4,99 @@ import Testing
 
 @MainActor
 struct QuickActionTests {
+    private func state(for action: QuickAction) -> ProjectGitState {
+        var state = ProjectGitState(git: true, currentBranch: "lody:branch:local:feature%2Fclient",
+            defaultBranch: "lody:branch:local:main", githubRepoFullName: "demo/prism",
+            workingTree: ProjectWorkingTree(clean: true), hasUnpushedCommits: true, hasBranchChanges: true,
+            hasOpenPR: false, sessionDirectoryMatchesProject: true)
+        switch action {
+        case .createBranchAndCommit:
+            state.currentBranch = state.defaultBranch
+            state.workingTree = ProjectWorkingTree(clean: false, unstaged: true)
+        case .commit, .commitAndPush, .reviewChanges:
+            state.workingTree = ProjectWorkingTree(clean: false, untracked: true)
+        default: break
+        }
+        return state
+    }
+
+    @Test(arguments: ["default-clean", "default-dirty", "feature-dirty", "unpublished", "existing-pr",
+                      "synced", "synced-changes", "conflicted", "detached", "non-git", "unknown", "worktree", "remote-base"])
+    func menuShowsOnlyContextualNextSteps(scenario: String) {
+        var git = state(for: .push)
+        var expected: [QuickAction] = []
+        switch scenario {
+        case "default-clean":
+            git.currentBranch = git.defaultBranch
+            expected = [.createBranch]
+        case "default-dirty":
+            git = state(for: .createBranchAndCommit)
+            expected = [.reviewChanges, .createBranchAndCommit]
+        case "feature-dirty":
+            git = state(for: .commit)
+            expected = [.reviewChanges, .commit]
+        case "unpublished": expected = [.reviewChanges, .push, .createPR]
+        case "existing-pr":
+            git.hasOpenPR = true
+            expected = [.reviewChanges, .push]
+        case "synced":
+            git.hasUnpushedCommits = false
+            git.hasBranchChanges = false
+        case "synced-changes":
+            git.hasUnpushedCommits = false
+            expected = [.reviewChanges, .createPR]
+        case "conflicted":
+            git.workingTree = ProjectWorkingTree(clean: false, conflicted: true)
+            expected = [.reviewChanges]
+        case "detached":
+            git.currentBranch = nil
+            expected = [.createBranch]
+        case "non-git": git.git = false
+        case "unknown": git.workingTree = nil
+        case "worktree": git.sessionDirectoryMatchesProject = false
+        case "remote-base":
+            git.currentBranch = "lody:branch:local:main"
+            git.defaultBranch = "lody:branch:remote:origin:main"
+            expected = [.createBranch]
+        default: Issue.record("Unknown scenario")
+        }
+        let availability = QuickActionAvailability(state: git)
+        #expect(availability.primaryActions == expected)
+        #expect(availability.primaryActions.count <= 3)
+        #expect(availability.allows(.commitAndPush) == (scenario == "feature-dirty"))
+        #expect(availability.allows(.createDraftPR) == expected.contains(.createPR))
+        if ["conflicted", "non-git", "unknown", "worktree"].contains(scenario) {
+            #expect(!availability.allows(.createBranch))
+        }
+    }
+
+    @Test func actionRechecksGitInsteadOfTrustingAnEarlierMenu() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        client.projectGitStates["local:machine-1:prism"] = state(for: .commit)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        #expect(try await model.quickActionAvailability(rootID: "session-pr").allows(.commit))
+        client.projectGitStates["local:machine-1:prism"]?.workingTree = ProjectWorkingTree(clean: true)
+        let options = try await model.newSessionOptions(templateSessionID: "session-pr", isTab: true)
+        await #expect(throws: QuickActionFailure.stateChanged) {
+            try await model.stageQuickAction(.commit, rootID: "session-pr", options: options,
+                runConfig: options.runConfig, workspaceGeneration: model.workspaceGeneration)
+        }
+        #expect(model.pendingSessionTab(rootID: "session-pr") == nil)
+    }
+
+    @Test func unavailableGitCannotCreateATask() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, projectGitFailureOnce: .unsupported)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let options = try await model.newSessionOptions(templateSessionID: "session-pr", isTab: true)
+        await #expect(throws: QuickActionFailure.gitUnavailable) {
+            try await model.stageQuickAction(.createBranch, rootID: "session-pr", options: options,
+                runConfig: options.runConfig, workspaceGeneration: model.workspaceGeneration)
+        }
+        #expect(model.pendingSessionTab(rootID: "session-pr") == nil)
+    }
+
     @Test func nativeTabRequestCarriesItsTitleIDsAndFirstTurnChoicesToJavaScript() throws {
         let choices = [RunConfigChoice(configOptionID: nil, value: "gpt-5.4-mini"),
                        RunConfigChoice(configOptionID: "reasoning_effort", value: "low")]
@@ -29,6 +122,7 @@ struct QuickActionTests {
     @Test(arguments: QuickAction.allCases)
     func taskUsesANamedTabAndIndependentModelWithoutChangingParentHistory(action: QuickAction) async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
+        client.projectGitStates["local:machine-1:prism"] = state(for: action)
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
         let rootID = "session-pr"
@@ -37,7 +131,7 @@ struct QuickActionTests {
         var config = try #require(options.runConfig)
         config.selectModel("gpt-5.4-mini")
         config.selectReasoning("low")
-        let id = try model.stageQuickAction(action, rootID: rootID, options: options,
+        let id = try await model.stageQuickAction(action, rootID: rootID, options: options,
             runConfig: config, workspaceGeneration: model.workspaceGeneration)
         #expect(model.sessionSummary(id)?.title == String(localized: action.title))
         #expect(model.sessionSummary(id)?.projectID == model.sessionSummary(rootID)?.projectID)
@@ -55,13 +149,14 @@ struct QuickActionTests {
 
     @Test func uncertainTaskRetryKeepsItsTabTurnTitleAndFirstConfiguration() async throws {
         let client = FixtureLodyClient(startsSignedIn: true, failTabStartOnce: true)
+        client.projectGitStates["local:machine-1:prism"] = state(for: .commit)
         let model = AppModel(client: client)
         await model.adoptExistingAccount()
         let options = try await model.newSessionOptions(templateSessionID: "session-pr", agentConfigID: "codex", isTab: true)
         var config = try #require(options.runConfig)
         config.selectModel("gpt-5.4-mini")
         config.selectReasoning("low")
-        let id = try model.stageQuickAction(.commit, rootID: "session-pr", options: options,
+        let id = try await model.stageQuickAction(.commit, rootID: "session-pr", options: options,
             runConfig: config, workspaceGeneration: model.workspaceGeneration)
         let pending = try #require(model.pendingSessionTab(rootID: "session-pr"))
         await #expect(throws: LodyClientError.deliveryUnconfirmed) { try await model.deliverOutgoingMessage(sessionID: id) }
@@ -87,14 +182,14 @@ struct QuickActionTests {
         let options = try await model.newSessionOptions(templateSessionID: "session-long", isTab: true)
         let generation = model.workspaceGeneration
         #expect(model.quickActionBlockingFailure(rootID: "session-long") == .busy)
-        #expect(throws: QuickActionFailure.busy) {
-            try model.stageQuickAction(.commit, rootID: "session-long", options: options,
+        await #expect(throws: QuickActionFailure.busy) {
+            try await model.stageQuickAction(.commit, rootID: "session-long", options: options,
                                       runConfig: options.runConfig, workspaceGeneration: generation)
         }
         #expect(model.pendingSessionTab(rootID: "session-long") == nil)
         await model.selectWorkspace("ws-studio")
-        #expect(throws: CancellationError.self) {
-            try model.stageQuickAction(.commit, rootID: "session-long", options: options,
+        await #expect(throws: CancellationError.self) {
+            try await model.stageQuickAction(.commit, rootID: "session-long", options: options,
                                       runConfig: options.runConfig, workspaceGeneration: generation)
         }
     }

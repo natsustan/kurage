@@ -46,6 +46,7 @@ struct KurageApp: App {
                     ? .seconds(3) : .milliseconds(200),
                 filePreviewLargeRewrite: ProcessInfo.processInfo.arguments.contains("--fixture-file-preview-large-rewrite"),
                 projectGitFailureOnce: ProcessInfo.processInfo.arguments.contains("--fixture-project-git-failure") ? .accessDenied : nil,
+                projectGitStates: FixtureLodyClient.quickActionGitStates(arguments: ProcessInfo.processInfo.arguments),
                 workspaceSummaries: ProcessInfo.processInfo.arguments.contains("--fixture-empty-workspaces") ? []
                     : ProcessInfo.processInfo.arguments.contains("--fixture-many-workspaces")
                         ? [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")] + (1...12).map {

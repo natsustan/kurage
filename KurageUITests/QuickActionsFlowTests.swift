@@ -17,8 +17,8 @@ final class QuickActionsFlowTests: XCTestCase {
         let field = app.descendants(matching: .any)["follow-up-field"].firstMatch
         tap(field)
         field.typeText("Keep my main draft")
-        tap(app.buttons["quick-actions-button"])
-        XCTAssertTrue(actionButton("Commit", app: app).wait(for: \.isEnabled, toEqual: true, timeout: 5))
+        openActions(app)
+        XCTAssertTrue(actionButton("Create Branch & Commit", app: app).wait(for: \.isEnabled, toEqual: true, timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["quick-actions-panel"].exists)
         XCTAssertFalse(app.staticTexts["Working Directory"].exists)
         XCTAssertFalse(app.staticTexts["Execution"].exists)
@@ -28,9 +28,11 @@ final class QuickActionsFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["quick-action-reset"].exists)
         XCTAssertFalse(app.staticTexts["Review the changes and create a local commit."].exists)
         XCTAssertTrue(actionButton("Review Changes", app: app).exists)
-        XCTAssertTrue(actionButton("Create PR", app: app).exists)
-        XCTAssertTrue(actionButton("Create Draft PR", app: app).exists)
-        attach(app, "Lightning button opens the six-action menu")
+        XCTAssertFalse(actionButton("Commit…", app: app).exists)
+        XCTAssertFalse(actionButton("Push", app: app).exists)
+        XCTAssertFalse(actionButton("Create PR…", app: app).exists)
+        XCTAssertFalse(actionButton("Create Branch", app: app).exists)
+        attach(app, "Default branch with changes offers review and branch plus commit")
         tap(actionButton("Create Branch & Commit", app: app))
         XCTAssertTrue(app.descendants(matching: .any)["quick-actions-panel"].waitForNonExistence(timeout: 5))
         let taskTab = app.buttons.matching(NSPredicate(format: "label == %@", "Create Branch & Commit")).firstMatch
@@ -65,22 +67,18 @@ final class QuickActionsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testRunningProjectDisablesGitActions() {
+    func testRunningProjectHidesGitActions() {
         let app = launch()
         tap(app.descendants(matching: .any)["session-session-long"].firstMatch)
-        tap(app.buttons["quick-actions-button"])
+        openActions(app)
         let blocked = app.buttons["quick-action-blocked"]
         reveal(blocked)
         XCTAssertTrue(blocked.waitForExistence(timeout: 5))
-        let commit = actionButton("Commit", app: app)
-        reveal(commit)
-        XCTAssertTrue(commit.waitForExistence(timeout: 5))
-        XCTAssertFalse(commit.isEnabled)
-        reveal(actionButton("Create Branch", app: app))
-        XCTAssertFalse(actionButton("Create Branch", app: app).isEnabled)
-        XCTAssertFalse(actionButton("Review Changes", app: app).isEnabled)
-        XCTAssertFalse(actionButton("Create PR", app: app).isEnabled)
-        attach(app, "Running project disables Git actions")
+        XCTAssertFalse(actionButton("Commit…", app: app).exists)
+        XCTAssertFalse(actionButton("Create Branch", app: app).exists)
+        XCTAssertFalse(actionButton("Review Changes", app: app).exists)
+        XCTAssertFalse(actionButton("Create PR…", app: app).exists)
+        attach(app, "Running project shows its status without inapplicable actions")
         tap(blocked)
         let alert = app.alerts["Quick Actions"]
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
@@ -91,14 +89,22 @@ final class QuickActionsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testReviewAndPRActionsCreateNamedTaskTabs() {
-        let app = launch()
+    func testReviewPushAndPRActionsCreateNamedTaskTabs() {
+        let app = launch("unpublished")
         tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)
-        for title in ["Review Changes", "Create PR", "Create Draft PR"] {
-            tap(app.buttons["quick-actions-button"])
+        for title in ["Review Changes", "Push", "Create PR", "Create Draft PR"] {
+            openActions(app)
             XCTAssertFalse(app.descendants(matching: .any)["quick-actions-panel"].exists)
             attach(app, "Quick Actions menu before \(title)")
-            tap(actionButton(title, app: app))
+            if title == "Create PR" || title == "Create Draft PR" {
+                tap(actionButton("Create PR…", app: app))
+                XCTAssertTrue(actionButton("Regular PR", app: app).exists)
+                XCTAssertTrue(actionButton("Draft PR", app: app).exists)
+                attach(app, "PR submenu groups regular and draft choices")
+                tap(actionButton(title == "Create PR" ? "Regular PR" : "Draft PR", app: app))
+            } else {
+                tap(actionButton(title, app: app))
+            }
             let tab = app.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
             XCTAssertTrue(tab.waitForExistence(timeout: 5))
             XCTAssertTrue(tab.wait(for: \.isSelected, toEqual: true, timeout: 5))
@@ -111,15 +117,73 @@ final class QuickActionsFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testCommitChoicesAreGroupedAndKeepBranchCreationInMoreActions() {
+        let app = launch("feature-dirty")
+        tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)
+        for title in ["Commit only", "Commit & Push"] {
+            openActions(app)
+            XCTAssertTrue(actionButton("Review Changes", app: app).exists)
+            XCTAssertTrue(actionButton("Commit…", app: app).exists)
+            XCTAssertFalse(actionButton("Push", app: app).exists)
+            XCTAssertFalse(actionButton("Create PR…", app: app).exists)
+            XCTAssertFalse(actionButton("Create Branch", app: app).exists)
+            attach(app, "Working branch with changes groups commit choices")
+            tap(actionButton("Commit…", app: app))
+            attach(app, "Commit submenu offers local commit or commit and push")
+            tap(actionButton(title, app: app))
+            let taskTitle = title == "Commit only" ? "Commit" : title
+            let tab = app.buttons.matching(NSPredicate(format: "label == %@", taskTitle)).firstMatch
+            XCTAssertTrue(tab.waitForExistence(timeout: 5))
+            XCTAssertTrue(tab.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        }
+        openActions(app)
+        tap(actionButton("More Actions", app: app))
+        XCTAssertTrue(actionButton("Create Branch", app: app).exists)
+        XCTAssertTrue(actionButton("Refresh Actions", app: app).exists)
+        attach(app, "More Actions keeps infrequent branch creation available")
+    }
+
+    @MainActor
+    func testExistingPRHidesCreationAndGitReadFailureCanBeRetried() {
+        var app = launch("existing-pr")
+        tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)
+        openActions(app)
+        XCTAssertTrue(actionButton("Review Changes", app: app).exists)
+        XCTAssertTrue(actionButton("Push", app: app).exists)
+        XCTAssertFalse(actionButton("Create PR…", app: app).exists)
+        attach(app, "Existing PR only offers review and push")
+        app.terminate()
+        app = launch("unpublished", extraArguments: ["--fixture-project-git-failure"])
+        tap(app.descendants(matching: .any)["session-session-pr"].firstMatch)
+        openActions(app)
+        XCTAssertFalse(actionButton("Push", app: app).exists)
+        XCTAssertFalse(actionButton("Create PR…", app: app).exists)
+        tap(actionButton("Retry Git Status", app: app))
+        openActions(app)
+        XCTAssertTrue(actionButton("Push", app: app).exists)
+        XCTAssertTrue(actionButton("Create PR…", app: app).exists)
+        attach(app, "Git status retry restores matching actions")
+    }
+
+    @MainActor
+    private func openActions(_ app: XCUIApplication) {
+        let button = app.buttons["quick-actions-button"]
+        XCTAssertTrue(button.waitForExistence(timeout: 8))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Ready"), object: button)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 8), .completed)
+        tap(button)
+    }
+
+    @MainActor
     private func actionButton(_ title: String, app: XCUIApplication) -> XCUIElement {
         // Native Menu actions expose their title, but discard identifiers from ForEach rows.
         app.collectionViews.buttons.matching(NSPredicate(format: "label == %@", title)).firstMatch
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(_ scenario: String = "main-dirty", extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--fixture"]
+        app.launchArguments = ["--fixture", "--fixture-git-\(scenario)"] + extraArguments
         app.launch()
         tap(app.buttons["sign-in-button"])
         XCTAssertTrue(app.buttons["account-menu"].waitForExistence(timeout: 8))

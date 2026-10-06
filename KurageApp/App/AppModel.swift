@@ -298,10 +298,24 @@ final class AppModel {
         quickActionPreferenceRevision += 1
     }
 
+    func quickActionAvailability(rootID: String) async throws -> QuickActionAvailability {
+        if let failure = quickActionBlockingFailure(rootID: rootID) { throw failure }
+        guard let projectID = sessionIndex[rootID]?.projectID else { throw QuickActionFailure.unavailable }
+        let result = try await projectGit(templateSessionID: rootID, projectID: projectID)
+        guard sessionIndex[rootID]?.projectID == projectID else { throw CancellationError() }
+        if let failure = quickActionBlockingFailure(rootID: rootID) { throw failure }
+        guard result.failure == nil, let state = result.state else { throw QuickActionFailure.gitUnavailable }
+        return QuickActionAvailability(state: state)
+    }
+
     func stageQuickAction(_ action: QuickAction, rootID: String, options: NewSessionOptions,
-                          runConfig: NewSessionRunConfig?, workspaceGeneration: Int) throws -> String {
+                          runConfig: NewSessionRunConfig?, workspaceGeneration: Int) async throws -> String {
         try Task.checkCancellation()
         guard self.workspaceGeneration == workspaceGeneration, isApplicationActive else { throw CancellationError() }
+        let availability = try await quickActionAvailability(rootID: rootID)
+        try Task.checkCancellation()
+        guard self.workspaceGeneration == workspaceGeneration, isApplicationActive else { throw CancellationError() }
+        guard availability.allows(action) else { throw QuickActionFailure.stateChanged }
         if let failure = quickActionBlockingFailure(rootID: rootID) { throw failure }
         guard let root = sessionIndex[rootID] else { throw QuickActionFailure.unavailable }
         return try stageSessionStart(action.prompt, composerText: action.prompt, mentions: .init(), attachments: [],

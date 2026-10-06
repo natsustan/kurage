@@ -115,6 +115,7 @@ final class FixtureLodyClient: LodyClient {
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
         projectGitFailureOnce: ProjectGitFailure? = nil,
+        projectGitStates: [String: ProjectGitState] = [:],
         workspaceSummaries: [WorkspaceSummary] = [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
         workspaceRefreshDelay: Duration? = nil,
         failWorkspaceRefreshOnce: Bool = false,
@@ -125,6 +126,7 @@ final class FixtureLodyClient: LodyClient {
         self.workspaceRefreshDelay = workspaceRefreshDelay
         self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
         self.projectGitFailureOnce = projectGitFailureOnce
+        self.projectGitStates = projectGitStates
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.filePreviewDelay = filePreviewDelay
@@ -528,7 +530,28 @@ final class FixtureLodyClient: LodyClient {
             return ProjectGitResult(failure: failure)
         }
         return ProjectGitResult(state: projectGitStates[projectID] ?? ProjectGitState(
-            git: true, currentBranch: "lody:branch:local:main"))
+            git: true, currentBranch: "lody:branch:local:main", defaultBranch: "lody:branch:local:main",
+            workingTree: ProjectWorkingTree(clean: true), sessionDirectoryMatchesProject: true))
+    }
+
+    static func quickActionGitStates(arguments: [String]) -> [String: ProjectGitState] {
+        guard let argument = arguments.first(where: { $0.hasPrefix("--fixture-git-") }) else { return [:] }
+        let scenario = String(argument.dropFirst("--fixture-git-".count))
+        var state = ProjectGitState(git: true, currentBranch: "lody:branch:local:feature%2Fclient",
+            defaultBranch: "lody:branch:local:main", githubRepoFullName: "demo/prism",
+            workingTree: ProjectWorkingTree(clean: true), hasUnpushedCommits: true, hasBranchChanges: true,
+            hasOpenPR: false, sessionDirectoryMatchesProject: true)
+        switch scenario {
+        case "main-dirty":
+            state.currentBranch = state.defaultBranch
+            state.workingTree = ProjectWorkingTree(clean: false, unstaged: true)
+        case "feature-dirty": state.workingTree = ProjectWorkingTree(clean: false, untracked: true)
+        case "existing-pr": state.hasOpenPR = true
+        case "synced": state.hasUnpushedCommits = false
+        case "non-git": state.git = false
+        default: break
+        }
+        return ["local:machine-1:prism": state]
     }
 
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,

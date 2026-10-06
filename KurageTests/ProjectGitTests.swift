@@ -11,6 +11,7 @@ struct ProjectGitTests {
         #expect(ProjectBranch(id: "lody:branch:remote:origin:feature%2Fclient").name == "origin/feature/client")
         #expect(ProjectBranch(id: "lody:branch:local:bad%ZZ").name == "bad%ZZ")
         #expect(ProjectBranch(id: "legacy-branch").name == "legacy-branch")
+        #expect(ProjectBranch(id: "lody:branch:remote:origin:feature%2Fclient").localName == local.localName)
     }
 
     @Test func bridgeContractRepresentsNonGitDetachedAndReadFailure() throws {
@@ -23,6 +24,18 @@ struct ProjectGitTests {
         let denied = try JSONDecoder().decode(ProjectGitResult.self,
             from: Data(#"{"failure":"access_denied"}"#.utf8))
         #expect(denied.failure == .accessDenied)
+        let detailed = try JSONDecoder().decode(ProjectGitResult.self, from: Data(#"""
+            {"state": {
+                "git": true, "currentBranch": "lody:branch:local:feature%2Fclient",
+                "defaultBranch": "lody:branch:local:main", "githubRepoFullName": "demo/prism",
+                "workingTree": {"clean": true, "staged": false, "unstaged": false, "untracked": false, "conflicted": false},
+                "hasUnpushedCommits": true, "hasBranchChanges": true, "hasOpenPR": false,
+                "sessionDirectoryMatchesProject": true
+            }}
+            """#.utf8))
+        #expect(detailed.state?.workingTree?.clean == true)
+        #expect(detailed.state?.hasUnpushedCommits == true)
+        #expect(QuickActionAvailability(state: try #require(detailed.state)).primaryActions == [.reviewChanges, .push, .createPR])
     }
 
     @Test func fixtureReadsProjectsIndependentlyIncludingRunningSessions() async throws {
@@ -74,6 +87,36 @@ struct ProjectGitTests {
         client.finish()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
+
+    @Test(arguments: ["background", "cancel", "workspace", "account", "project"])
+    func inFlightGitActionCannotStageAfterItsContextChanges(change: String) async throws {
+        let client = DeferredGitClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let generation = model.workspaceGeneration
+        let options = NewSessionOptions(machineName: "Mac", agentConfigID: "codex", providers: [])
+        let task = Task {
+            try await model.stageQuickAction(.createBranch, rootID: "root", options: options,
+                                            runConfig: nil, workspaceGeneration: generation)
+        }
+        var started = client.started.stream.makeAsyncIterator()
+        _ = await started.next()
+        switch change {
+        case "background": model.setApplicationActive(false)
+        case "cancel": task.cancel()
+        case "workspace": await model.selectWorkspace("b")
+        case "account": model.signOut()
+        case "project":
+            client.projectID = "local:machine:other"
+            await model.refreshContent()
+        default: Issue.record("Unknown change")
+        }
+        client.finish(result: ProjectGitResult(state: ProjectGitState(git: true,
+            currentBranch: "lody:branch:local:main", defaultBranch: "lody:branch:local:main",
+            workingTree: ProjectWorkingTree(clean: true), sessionDirectoryMatchesProject: true)))
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(model.pendingSessionTab(rootID: "root") == nil)
+    }
 }
 
 @MainActor
@@ -81,8 +124,14 @@ private final class DeferredGitClient: LodyClient {
     var account: Account? = Account(email: "demo@example.com")
     let started = AsyncStream<Void>.makeStream()
     var requestedWorkspace: String?
+    var projectID = "local:machine:project"
+    var supportsSessionTabs: Bool { true }
+    var supportsSessionCreation: Bool { true }
     private var continuation: CheckedContinuation<ProjectGitResult, Never>?
-    func finish() { continuation?.resume(returning: ProjectGitResult(failure: .unsupported)); continuation = nil }
+    func finish(result: ProjectGitResult = ProjectGitResult(failure: .unsupported)) {
+        continuation?.resume(returning: result)
+        continuation = nil
+    }
     func projectGit(templateSessionID: String, projectID: String, workspaceID: String) async throws -> ProjectGitResult {
         requestedWorkspace = workspaceID
         return await withCheckedContinuation { continuation = $0; started.continuation.yield(()) }
@@ -94,7 +143,10 @@ private final class DeferredGitClient: LodyClient {
     func workspaces() async throws -> [WorkspaceSummary] {
         [.init(id: "a", name: "A", slug: "a"), .init(id: "b", name: "B", slug: "b")]
     }
-    func sessions(workspaceID: String) async throws -> [SessionSummary] { [] }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] {
+        [SessionSummary(id: "root", title: "Project", agentName: "codex", activity: .idle,
+                        preview: "", projectID: projectID)]
+    }
     func conversation(sessionID: String, workspaceID: String) async throws -> Conversation { throw LodyClientError.sessionMissing }
     func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?, turnID: String,
               sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { throw LodyClientError.notConnected }

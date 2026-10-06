@@ -1,5 +1,14 @@
 # Kurage 会话功能
 
+## Quick Actions 按 Git 状态精简（2026-10-06）
+
+- 快捷菜单根据实际工作树和当前／默认分支展示下一步，主要动作最多三项。默认分支干净时显示 Create Branch，有改动时显示 Review Changes 与 Create Branch & Commit；工作分支有改动时显示 Review Changes 与 Commit…，子菜单选择 Commit only／Commit & Push。干净工作分支按状态显示 Review、Push 和 Create PR…；Regular PR／Draft PR 收入同一子菜单，已有开放或草稿 PR 时隐藏创建入口。工作分支的单独 Create Branch 与 Refresh Actions 放入 More Actions。
+- 增加 Push／Commit & Push 的独立命名任务 tab，沿用原有首轮派发及按机器保存的执行配置。推送只授权当前动作，要求执行 agent 核实远端、认证和非默认分支；禁止 force push、自动 pull／rebase／merge 或以后每轮自动推送。普通 Commit 保持仅本地提交。
+- 项目运行／新建未确认时只展示按需原因入口；非 Git、目录无法核实、冲突、读取失败及无下一步分别显示状态，读取失败可重试。进入详情、恢复前台、项目活动变化及手动刷新重新读取；提交任务前再读取和检查，仓库状态变化不会通过旧菜单创建不适用的任务。
+- 扩展现有 `local-project/git-state` 的客户端投影，保留工作树、默认分支和 GitHub 仓库。未推送标记与相对基线统计读取目录所有者的 `workspaceUnpushed`／`diffStats.allChange`，开放 PR 来自同机器、同项目、同分支的根会话 `pullRequests`；项目、分支或仓库不匹配时不借用这些提示。只有实时工作树干净时才用统计提示已提交的分支变更。RPC 读取的是注册项目目录，因此 worktree 会话不展示可能作用于另一目录的动作。没有增加后端 API 或 GitHub 查询；同步 metadata 缺失／落后时可能暂不展示 Push／PR，agent 执行时仍核实真实状态和重复 PR。远端领先、分叉、认证及未记录的 PR 由 agent 在执行前检查。
+- 协议参考：Lody `packages/shared/src/message-schemas.ts` 的 `LocalProjectGitStateSchema`、`schema.ts` 的 Git／PR metadata，CLI `turn-post-processing-service.ts` 的目录所有者分支与未推送更新，以及 `components/src/lib/session-github-state.ts` 的基线统计与未推送标记分离。
+- 本轮 frozen lockfile 安装、336 项 JavaScript 测试及 bundle 重建通过；Simulator 编译、29 项 QuickAction／ProjectGit／SessionTabs Swift 测试通过，含八种动作的独立 task、同 ID 重试、状态筛选、旧选项重新检查，以及读取期间后台／取消／账号／工作区／项目变化不创建任务。另通过 1 项原生桥接取消测试的 9 个操作参数（包含 project-git）。浅色 5 项 QuickActionsFlowTests 与 1 项普通新 tab 首条消息／后续草稿隔离回归通过；scope／状态提示／alert 收尾后，最终源码在系统深色 accessibility-medium 下的 Commit／More Actions、Review／Push／PR 和运行项目状态共 3 项 UI 定向回归也通过。截图与 AX 层级确认两个子菜单、长名称、原因提示、任务切换、草稿与配置保留正常；两台专属模拟器已关闭并删除，`git diff --check` 通过。本次没有在真实账号执行 Git、push 或创建 PR；同步 metadata 的真实更新延迟、认证、远端领先／分叉、弱网／后台恢复、worktree、iOS 26、iPad、真机、最大辅助字号和 VoiceOver 实际操作尚未验证。
+
 ## 新建 tab 首次实时订阅竞态（2026-10-06）
 
 - Quick Action 与手动新建 tab 共用写入和实时订阅协议。新会话由独立短生命周期副本写入后，共享阅读副本的 workspace metadata 可能尚未出现它；旧 observer 会把缺失的 tab 当作已移除的旧 tab，发布空正文并释放订阅，原生端继续停在首条本地指令，直到重新进入页面。
