@@ -146,7 +146,7 @@ export function projectAssistantBlocks(entry, projectItem) {
       return;
     }
     flush();
-    const parts = projectItem(item);
+    const parts = projectItem(item, index);
     if (parts.length) blocks.push({ parts, work: collapsible.has(visibleIndex) });
   });
   flush();

@@ -930,6 +930,20 @@ enum FixtureImage {
 }
 
 extension SessionRecord {
+    static let errorSample = SessionRecord(
+        summary: SessionSummary(id: "session-error", title: "agent error demo", agentName: "codex",
+                                activity: .idle, preview: "Agent internal error",
+                                projectID: "local:machine-1:kurage", projectName: "kurage", machineName: "spike@mac"),
+        turns: [ConversationTurn(id: "error-user", author: .user, text: "Send a test message."),
+                ConversationTurn(id: "error-work", author: .agent, text: "Starting the test.",
+                                 work: ConversationWork(durationMs: 1_000, parts: [.text("Preparing the test message.")])),
+                ConversationTurn(id: "error-agent", author: .agent, text: "", parts: [
+                    .error(ConversationError(id: "notice-1", reason: "acp_internal_error",
+                        message: #"Internal error: API Error: 400 {"type":"error","error":{"message":"model 'sample-model' is not enabled in the provider","type":"invalid_request_error","param":null,"code":null},"status":400}"#)),
+                ])],
+        permission: nil
+    )
+
     static let questionSample = SessionRecord(
         summary: SessionSummary(id: "session-question", title: "question demo", agentName: "codex",
                                 activity: .running, preview: "Waiting for your answer",

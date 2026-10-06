@@ -702,6 +702,8 @@ struct TurnRow: View {
             )
         case .activity(let activity):
             ConversationActivityRow(turnID: turn.id, activity: activity, disclosures: disclosures)
+        case .error(let error):
+            ConversationErrorCard(turnID: turn.id, error: error)
         }
     }
 

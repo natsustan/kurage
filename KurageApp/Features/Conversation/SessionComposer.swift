@@ -616,7 +616,7 @@ struct SessionComposer: View {
             }
             if isSessionRunning && supportsSessionCancellation && !showsSend {
                 Button(action: onCancel) {
-                    composerIcon("stop.fill", enabled: !isSending && !isCancelling)
+                    composerIcon("stop.fill", enabled: !isSending && !isCancelling, usesAccent: true)
                 }
                 .disabled(isSending || isCancelling)
                 .buttonStyle(.plain)
@@ -643,7 +643,7 @@ struct SessionComposer: View {
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(enabled ? (usesAccent ? accent.foregroundColor : Color(uiColor: .systemBackground)) : Color.secondary)
             .frame(width: ComposerControlMetrics.actionSize, height: ComposerControlMetrics.actionSize)
-            .background(enabled ? (usesAccent ? accent.color : Color.primary) : Color.primary.opacity(0.08), in: Circle())
+            .background(enabled ? (usesAccent ? accent.color : Color(uiColor: .label)) : Color(uiColor: .label).opacity(0.08), in: Circle())
             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
             .contentShape(Rectangle())
     }

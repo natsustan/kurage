@@ -1,5 +1,18 @@
 # Kurage 会话功能
 
+## 暂停按钮配色修复（2026-10-06）
+
+- 输入区暂停按钮的圆形底色改为显式系统 `label` 色，避免 `Color.primary` 在玻璃输入区内受图标前景色影响而呈灰色。启用时浅色为黑底白色方块，深色为浅底深色方块；继续使用中性配色，禁用时保留低透明度。
+- 本轮 iPhone／iOS 27 Simulator 构建与 3 项 fixture UI 验证通过（2 项现有配色／steer／停止回归，1 项仅位于临时验证副本的外观检查）；逐张核对 Day／Night × Blue／Black 的收起／聚焦共 8 张暂停截图，确认黑白底色与方块对比正确，按钮可用。`git diff --check` 通过，专用模拟器已关闭；未修改发送／停止协议与状态逻辑，未复测 iOS 26、真机、真实账号或辅助大字号。
+
+## Agent 错误展示（2026-10-06）
+
+- 接入 Lody `system_notice / chat_failed`，支持机器写入的独立 `system` turn 与 assistant turn 内的失败事件。错误使用独立内容类型，保留历史顺序、turn ID 和完整 `reason`／`code`／`message`；只有错误的 turn 也可见，assistant 内的错误不会被收入 “Worked for …” 折叠。其它 system 文字与未知 notice 仍不作为聊天正文显示。
+- 会话内以轻量行内状态显示错误，只在小错误图标上使用红色；标题与正文按现有会话的字号／留白对齐，可读消息使用次要文字色。Error details 沿用灰色文字与现有箭头，Copy error 使用右侧图标按钮；两者仍提供至少 44pt 的点击区域。详情展示完整错误报告，复制保留原因、诊断码和未截断原文。缺少 metadata 或新增未知 reason 时显示通用失败标题；不增加认证、重试或普通工具权限服务能力。
+- 协议参考：本机 Lody `packages/shared/src/ai.ts` 的 `ChatFailedMeta`，CLI `apps/cli/src/lib/message-handler.ts` 的 `recordChatFailure`（写入 `role: system`），以及 `packages/components/src/components/ai-gui/view.tsx`／`chat-failed-error-report.ts` 的标题与可读消息提取规则。
+- 初次接入的验证（样式优化前）：frozen lockfile 安装、346 项 JavaScript 测试、bundle 重建、Simulator 构建和 37 项 Swift 定向测试通过，工程已用 XcodeGen 重新生成。iPhone 17／iOS 27 的浅色默认字号、系统深色 accessibility-medium 各通过 1 项 fixture UI 流程；截图与 AX 层级确认标题／正文换行、按钮自适应纵向排列、详情关闭和重开会话正常，系统剪贴板核对了完整原文。首轮发现父卡片标识覆盖按钮标识，已通过独立 AX 容器修复并复验；首轮 Xcode 自动诊断收集被安全终止，成功轮保留了截图和 hierarchy。专属模拟器已关闭并删除，`git diff --check` 通过。真实账号的失败同步、连续输出、弱网／后台恢复、其它长标题枚举、iOS 26、iPad、最大辅助字号、VoiceOver 实际操作与真机尚未验证。
+- 本次样式优化的 Simulator 构建及浅色默认字号／系统深色 accessibility-medium 两轮 fixture UI 验证通过（各 1 项）。截图与 AX 层级核对了图标基线、正文／详情缩进、自然换行、44pt 点击区域、独立按钮标识、完整详情、复制反馈和重开会话；系统剪贴板确认两轮均保留完整错误报告。仅修改 SwiftUI 展示，本次未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号和 VoiceOver 实际操作仍未验证。
+
 ## Quick Actions 零行数分支变更修复（2026-10-06）
 
 - `diffStats.allChange` 是行数统计，`0/0` 无法排除二进制、文件权限或空文件变更。桥接仅在工作树干净且行数非零时确认 `hasBranchChanges: true`；零值保留未知。已核实的工作分支在差异未知时仍提供 Review，且仓库匹配、PR 状态提示为无开放 PR 时提供 Regular／Draft PR；执行 agent 按现有 prompt 再核实实际 diff、基线、认证和重复 PR。
