@@ -8,32 +8,39 @@ final class ConversationErrorFlowTests: XCTestCase {
         app.launch()
         tap(app.buttons["sign-in-button"])
         tap(app.descendants(matching: .any)["session-session-error"])
-        let title = app.staticTexts["Agent internal error"]
-        let message = app.staticTexts["model 'sample-model' is not enabled in the provider"]
-        XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.exists)
+        let error = app.buttons["error-details-error-agent-notice-1"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertEqual(error.label, "Agent internal error")
+        XCTAssertTrue((error.value as? String)?.contains("model 'sample-model' is not enabled in the provider") == true)
+        XCTAssertTrue((error.value as? String)?.contains("\"status\":400") == true)
         let work = app.buttons["turn-work-toggle-error-work"]
         XCTAssertEqual(work.value as? String, "Collapsed")
         XCTAssertFalse(app.staticTexts["Preparing the test message."].exists)
         attach(app, "Agent error outside collapsed work")
 
-        tap(app.buttons["error-details-error-agent-notice-1"])
+        tap(error)
         let report = app.scrollViews["conversation-error-details"].staticTexts.firstMatch
         XCTAssertTrue(report.waitForExistence(timeout: 5))
         XCTAssertTrue(report.label.contains("Reason: acp_internal_error"))
         XCTAssertTrue(report.label.contains("Internal error: API Error: 400"))
         XCTAssertTrue(report.label.contains("\"status\":400"))
         attach(app, "Complete provider error details")
-        tap(app.buttons["close-error-details"])
         let copy = app.buttons["copy-error-error-agent-notice-1"]
         tap(copy)
         XCTAssertEqual(copy.label, "Copied")
         attach(app, "Copied error")
+        tap(app.buttons["close-error-details"])
+
+        error.press(forDuration: 1)
+        attach(app, "Error copy context menu")
+        tap(app.buttons["copy-error-error-agent-notice-1"])
+        XCTAssertTrue(error.wait(for: \.isHittable, toEqual: true, timeout: 5))
 
         tap(app.navigationBars.buttons.firstMatch)
         tap(app.descendants(matching: .any)["session-session-error"])
-        XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.exists)
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertEqual(error.label, "Agent internal error")
+        XCTAssertTrue((error.value as? String)?.contains("\"status\":400") == true)
         XCTAssertEqual(work.value as? String, "Collapsed")
         attach(app, "Agent error after reopening")
     }

@@ -8,10 +8,14 @@
 ## Agent 错误展示（2026-10-06）
 
 - 接入 Lody `system_notice / chat_failed`，支持机器写入的独立 `system` turn 与 assistant turn 内的失败事件。错误使用独立内容类型，保留历史顺序、turn ID 和完整 `reason`／`code`／`message`；只有错误的 turn 也可见，assistant 内的错误不会被收入 “Worked for …” 折叠。其它 system 文字与未知 notice 仍不作为聊天正文显示。
-- 会话内以轻量行内状态显示错误，只在小错误图标上使用红色；标题与正文按现有会话的字号／留白对齐，可读消息使用次要文字色。Error details 沿用灰色文字与现有箭头，Copy error 使用右侧图标按钮；两者仍提供至少 44pt 的点击区域。详情展示完整错误报告，复制保留原因、诊断码和未截断原文。缺少 metadata 或新增未知 reason 时显示通用失败标题；不增加认证、重试或普通工具权限服务能力。
+- 会话内按 iPhone 参考图展示单一错误消息块：body 字号的橙色完整原文、灰暖色 1pt 细边框、浅暖底色、18pt 圆角和四边 12pt 留白，不再增加图标、标题分区、正文缩进或常驻操作栏。浅色颜色从参考图转换至 sRGB 后采样，深色模式单独调整边框与底色透明度。点击整块消息打开详情，沿用 subagent 的不透明系统背景色、默认半屏、可上拉展开和可见拖动条；长报告可滚动查看。长按菜单或详情页工具栏复制完整错误报告；原因、诊断码和未截断原文仍保留。无原文时显示失败标题，AX 提供失败类型与完整原文；不增加认证、重试或普通工具权限服务能力。
 - 协议参考：本机 Lody `packages/shared/src/ai.ts` 的 `ChatFailedMeta`，CLI `apps/cli/src/lib/message-handler.ts` 的 `recordChatFailure`（写入 `role: system`），以及 `packages/components/src/components/ai-gui/view.tsx`／`chat-failed-error-report.ts` 的标题与可读消息提取规则。
 - 初次接入的验证（样式优化前）：frozen lockfile 安装、346 项 JavaScript 测试、bundle 重建、Simulator 构建和 37 项 Swift 定向测试通过，工程已用 XcodeGen 重新生成。iPhone 17／iOS 27 的浅色默认字号、系统深色 accessibility-medium 各通过 1 项 fixture UI 流程；截图与 AX 层级确认标题／正文换行、按钮自适应纵向排列、详情关闭和重开会话正常，系统剪贴板核对了完整原文。首轮发现父卡片标识覆盖按钮标识，已通过独立 AX 容器修复并复验；首轮 Xcode 自动诊断收集被安全终止，成功轮保留了截图和 hierarchy。专属模拟器已关闭并删除，`git diff --check` 通过。真实账号的失败同步、连续输出、弱网／后台恢复、其它长标题枚举、iOS 26、iPad、最大辅助字号、VoiceOver 实际操作与真机尚未验证。
-- 本次样式优化的 Simulator 构建及浅色默认字号／系统深色 accessibility-medium 两轮 fixture UI 验证通过（各 1 项）。截图与 AX 层级核对了图标基线、正文／详情缩进、自然换行、44pt 点击区域、独立按钮标识、完整详情、复制反馈和重开会话；系统剪贴板确认两轮均保留完整错误报告。仅修改 SwiftUI 展示，本次未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号和 VoiceOver 实际操作仍未验证。
+- 上一轮无边框行内样式的 Simulator 构建及浅色默认字号／系统深色 accessibility-medium 两轮 fixture UI 验证通过（各 1 项）。截图与 AX 层级核对了图标基线、正文／详情缩进、自然换行、44pt 点击区域、独立按钮标识、完整详情、复制反馈和重开会话；系统剪贴板确认两轮均保留完整错误报告。仅修改 SwiftUI 展示，该轮未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号和 VoiceOver 实际操作仍未验证。
+- 上一轮保留通知卡片结构、恢复边框后的 iPhone 17／iOS 27 Simulator 构建通过，浅色默认字号与系统深色 accessibility-medium 各通过 1 项 fixture UI 测试。截图与 AX 层级核对了边框、圆角、浅底、内边距、自然换行和 44pt 操作区域；详情、复制反馈及重开会话正常，系统剪贴板保留完整错误报告。该轮只调整 SwiftUI 样式，未重跑 JavaScript 或 Swift 单元测试；随后按用户反馈改为上面的单一消息块结构。
+- 上一轮单一消息块的 iPhone 17／iOS 27 Simulator 构建通过，更新后的 fixture UI 流程在浅色默认字号与系统深色 accessibility-medium 各通过 1 项，覆盖整块点击详情、详情页复制反馈、长按菜单复制和重开会话。逐张对照参考图核查了无图标／标题／操作栏的结构、等距留白、细边框与完整原文；浅色截图的文字／底色／边框与参考转换至 sRGB 后的三组像素值一致。深色大字号下卡片四边及 status:400 结尾完整可见，AX 核对无截断或安全区遮挡；两轮剪贴板保留完整原因和原文。该轮未改模型或同步协议，未重跑 JavaScript 或 Swift 单元测试；真实账号、iOS 26、iPad、最大辅助字号、VoiceOver 实际操作与真机尚未验证。
+- 上一轮详情默认半屏的 Simulator 构建及浅色默认字号／深色 accessibility-medium 各 1 项现有 fixture UI 测试通过；两轮截图与 AX 均确认 Sheet Grabber 为 Half screen（iPhone 17／iOS 27，451pt sheet／874pt 屏幕）。常规字号报告完整可见，大字号报告保留全文并提供滚动区域，复制、关闭、长按菜单与重开会话正常。未实操拖动展开或手势滚动，未复测真机；未改同步协议或模型，也未重跑 JavaScript／Swift 单元测试。
+- 本轮补齐与 ConversationSubtaskSheet 相同的 `presentationBackground(Color(uiColor: .systemBackground))`，Simulator 构建及 1 项浅色默认字号 fixture UI 测试通过。截图确认整张 sheet 为不透明白色，空白区域采样为 RGB 255/255/255，无下层橙色透入；AX 仍为 Half screen，复制、关闭、长按菜单与重开会话正常。只补一项背景设置，本轮未复测深色、真机或展开手势，未重跑 JavaScript／Swift 单元测试。
 
 ## Quick Actions 零行数分支变更修复（2026-10-06）
 
