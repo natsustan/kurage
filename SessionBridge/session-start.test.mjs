@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LoroDoc } from 'loro-crdt';
 import { applyNewSessionChoices, projectNewSessionRunConfig } from './run-config.mjs';
-import { newSessionOptions, startSession } from './session-start.mjs';
+import { newSessionOptions, providerIcon, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 
 const capability = {
@@ -78,13 +78,33 @@ const start = (repo, overrides = {}) => startSession(repo, 'ws', {
   text: 'Build the thing', timestamp: '2026-09-25T00:00:00.000Z', selections: [], ...overrides,
 });
 
+test('provider icons follow configured brand and type, not a mutable display name', async () => {
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude', name: 'Codex', brandId: 'deepseek' }), 'deepseek');
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude',
+    env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' } }), 'glm');
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude',
+    env: { ANTHROPIC_BASE_URL: 'https://deepseek.com.invalid.test' } }), 'claude');
+  for (const [agentType, icon] of [['gemini', 'gemini'], ['amp-acp', 'amp'], ['pi-acp', 'pi'],
+    ['github-copilot-cli', 'copilot'], ['reasonix', 'deepseek'], ['new-agent', null]]) {
+    assert.equal(providerIcon({ cliType: 'registry', agentType }), icon);
+  }
+  assert.equal(providerIcon({ cliType: 'custom', agentType: 'claude', brandId: 'deepseek' }), null);
+  const { repo, flock } = fixture();
+  flock.set('agentConfig/claude', { name: 'Private provider', machineId: 'mac', cliType: 'builtin',
+    agentType: 'claude', brandId: 'minimax', env: { ANTHROPIC_AUTH_TOKEN: 'fixture-secret' } });
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.deepEqual(options.providers.find(provider => provider.value === 'claude'),
+    { value: 'claude', label: 'Private provider', icon: 'minimax' });
+  assert.equal(JSON.stringify(options).includes('fixture-secret'), false);
+});
+
 test('a new session offers both the model and its reasoning from the template baseline', async () => {
   const { repo } = fixture();
   const options = await newSessionOptions(repo, 'ws', 'template');
   assert.equal(options.machineName, 'spike@mac');
   assert.equal(options.agentConfigID, 'cfg');
   assert.deepEqual(options.providers, [
-    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+    { value: 'claude', label: 'Claude Code', icon: 'claude' }, { value: 'cfg', label: 'Codex', icon: 'codex' },
   ]);
   assert.equal(options.runConfig.model.value, 'gpt-5.5');
   assert.equal(options.runConfig.model.configOptionID, null);
@@ -619,7 +639,7 @@ test('tab options offer the machine providers and inherit the parent run configu
   const { repo, docs, rows } = fixture();
   const options = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, true);
   assert.deepEqual(options.providers, [
-    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+    { value: 'claude', label: 'Claude Code', icon: 'claude' }, { value: 'cfg', label: 'Codex', icon: 'codex' },
   ]);
   assert.equal(options.agentConfigID, 'cfg');
   assert.equal(options.runConfig.model.value, 'gpt-5.5');

@@ -9,6 +9,28 @@ const text = value => typeof value === 'string' && value.length > 0 ? value : un
 const INHERITED_CONFIG_KEYS = ['modeId', 'modelId', 'configOptionValues', 'mcpServerIds'];
 const TITLE_LENGTH = 50;
 
+// Project only a public icon key, never agent environment or credentials.
+export function providerIcon(config) {
+  if (config?.cliType === 'custom') return null;
+  const brands = { deepseek: ['deepseek.com'], mimo: ['xiaomimimo.com'],
+    minimax: ['minimaxi.com', 'minimax.io'], glm: ['bigmodel.cn', 'z.ai'] };
+  if (Object.hasOwn(brands, config?.brandId ?? '')) return config.brandId;
+  if (config?.cliType === 'builtin') {
+    try {
+      const host = new URL(config.env?.ANTHROPIC_BASE_URL).hostname.toLowerCase();
+      for (const [brand, domains] of Object.entries(brands)) {
+        if (domains.some(domain => host === domain || host.endsWith(`.${domain}`))) return brand;
+      }
+    } catch { /* A missing or custom endpoint has no inferred brand. */ }
+  }
+  const aliases = { 'claude-p': 'claude', 'amp-acp': 'amp', 'pi-acp': 'pi',
+    'github-copilot-cli': 'copilot', 'gemini-cli': 'gemini', 'grok-build': 'grok',
+    'reasonix': 'deepseek' };
+  const type = aliases[config?.agentType] ?? config?.agentType;
+  return ['codex', 'claude', 'gemini', 'deepseek', 'kimi', 'grok', 'minimax', 'glm', 'mimo',
+    'pi', 'devin', 'amp', 'cursor', 'opencode', 'copilot'].includes(type) ? type : null;
+}
+
 const isRootSession = (row, allowArchived = false) => row.docId?.startsWith('session-') &&
   !row.docId.startsWith('session-comment-') && !row.deleted &&
   (allowArchived || !row.meta?.isArchived) && !row.meta?.parentSessionId;
@@ -21,7 +43,8 @@ function readProviders(flock, machineID) {
     const config = row.value;
     if (!text(id) || !text(config?.cliType) || !text(config?.agentType) ||
         (text(config.machineId) && config.machineId !== machineID)) continue;
-    providers.push({ id, name: text(config.name) ?? config.agentType, cliType: config.cliType, agentType: config.agentType });
+    providers.push({ id, name: text(config.name) ?? config.agentType, cliType: config.cliType,
+      agentType: config.agentType, icon: providerIcon(config) });
   }
   return providers.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -118,7 +141,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   // The inherited agent remains selectable even while viewing another provider.
   if (!providers.some(provider => provider.id === meta.agentConfigId)) {
     providers = [{ id: meta.agentConfigId, name: meta.agentType,
-      cliType: meta.cliType, agentType: meta.agentType }, ...providers];
+      cliType: meta.cliType, agentType: meta.agentType, icon: providerIcon(meta) }, ...providers];
   }
   const chosenID = text(agentConfigID) ?? meta.agentConfigId;
   const agent = providers.find(provider => provider.id === chosenID);
@@ -144,7 +167,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     agent,
     baseline,
     machineName: machineName ?? meta.machineId,
-    providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name })),
+    providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name, icon: provider.icon })),
     runConfig: projectNewSessionRunConfig({
       cliType: agent.cliType, agentType: agent.agentType,
       capability: flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined,

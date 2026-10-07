@@ -21,6 +21,14 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("settings-quick-actions")
+                    NavigationLink {
+                        DefaultModelsSettingsView(model: model)
+                    } label: {
+                        SettingsNavigationRow(title: "Default Models")
+                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings-default-models")
                     if model.notifications.isConfigured {
                         NavigationLink {
                             NotificationSettingsView(model: model.notifications)

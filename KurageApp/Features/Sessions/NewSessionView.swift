@@ -149,7 +149,7 @@ struct NewSessionView: View {
                     isSending: isStarting, isCancelling: false, isSessionRunning: false,
                     supportsTextSending: true, supportsTextSendingWhileRunning: false,
                     supportsSessionCancellation: false,
-                    runConfig: configuration.menu,
+                    runConfig: configuration.shortcutMenu(saved: model.defaultModels(sessionID: templateSessionID)),
                     placeholder: "Build anything",
                     identifiers: .init(container: "new-session-composer", field: "new-session-field",
                                        send: "new-session-send"),
@@ -162,7 +162,12 @@ struct NewSessionView: View {
                                                       agentConfigID: options?.agentConfigID,
                                                       projectID: route.parentSessionID == nil ? projectID : nil)
                     },
-                    onSend: start, onCancel: {}, onChooseRunConfig: choose
+                    onSend: start, onCancel: {}, onChooseRunConfig: choose,
+                    onChooseDefaultModel: { entry in
+                        guard isCurrentWorkspace, !isStarting, scenePhase == .active,
+                              configuration.selectDefaultModel(entry) else { return }
+                        request = LoadRequest(agentConfigID: entry.agentConfigID, attempt: request.attempt + 1)
+                    }
                 )
                 .padding(.horizontal, 18)
                 .padding(.bottom, 8)
@@ -372,7 +377,7 @@ final class NewSessionConfiguration {
     private(set) var runConfig: NewSessionRunConfig?
     private(set) var isLoading = true
     private(set) var loadFailed = false
-    @ObservationIgnored private var cached: [String: NewSessionOptions] = [:]
+    private var cached: [String: NewSessionOptions] = [:]
     @ObservationIgnored private var selections: [String: NewSessionRunConfig] = [:]
     @ObservationIgnored private var generation = 0
     private struct PendingLoad {
@@ -387,6 +392,38 @@ final class NewSessionConfiguration {
         menu.isLoading = isLoading
         menu.loadFailed = loadFailed
         return menu
+    }
+
+    func shortcutMenu(saved: [DefaultModel]) -> RunConfigMenu? {
+        guard var menu, let options else { return nil }
+        let candidates = saved.isEmpty ? options.providers.flatMap { provider in
+            cached[provider.value].map(DefaultModel.candidates) ?? []
+        } : saved
+        menu.modelShortcuts = candidates.map { entry in
+            let available = options.providers.contains { $0.value == entry.agentConfigID } &&
+                cached[entry.agentConfigID]?.runConfig?.model?.options.contains { $0.value == entry.modelID } == true
+            return .init(model: entry,
+                isSelected: entry.agentConfigID == options.agentConfigID && entry.modelID == runConfig?.model?.value,
+                isEnabled: available && !isLoading && !loadFailed)
+        }
+        if let selected = runConfig?.selectedModel, !menu.modelShortcuts.contains(where: { $0.isSelected }) {
+            menu.modelShortcuts.insert(.init(model: DefaultModel(agentConfigID: options.agentConfigID,
+                modelID: selected.value, providerName: options.provider?.label ?? options.agentConfigID,
+                modelName: selected.label, icon: options.provider?.icon), isSelected: true, isEnabled: false), at: 0)
+        }
+        return menu
+    }
+
+    /// Resolve the provider and model together; a same-named model in another provider is not interchangeable.
+    func selectDefaultModel(_ entry: DefaultModel) -> Bool {
+        guard !isLoading, !loadFailed,
+              options?.providers.contains(where: { $0.value == entry.agentConfigID }) == true,
+              cached[entry.agentConfigID]?.runConfig?.model?.options.contains(where: { $0.value == entry.modelID }) == true else {
+            return false
+        }
+        if options?.agentConfigID != entry.agentConfigID { selectProvider(entry.agentConfigID) }
+        selectModel(entry.modelID)
+        return true
     }
 
     @discardableResult

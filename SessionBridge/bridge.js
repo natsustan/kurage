@@ -371,6 +371,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         title: typeof row.meta.title === 'string' && row.meta.title.length > 0
           ? row.meta.title : 'Untitled session',
         agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
+        agentConfigID: typeof row.meta.agentConfigId === 'string' ? row.meta.agentConfigId : null,
         activity: projectSessionActivity(row.meta.status),
         hasRunningTabs: runningTabParents.has(row.docId.slice('session-'.length)),
         preview: row.meta.repoFullName ?? '',

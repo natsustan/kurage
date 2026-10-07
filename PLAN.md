@@ -1,5 +1,25 @@
 # Kurage 会话功能
 
+## 模型面板浮层背景（2026-10-07）
+
+- Select model 使用与 Advanced 原生 sheet 相同的 elevated 层级与系统分组背景色，添加细边框和阴影；背景、圆角和边框固定在滚动视口，保留键盘焦点与原有避让行为。
+- 本轮 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，已检查深色、浅色最大字号滚动和 Advanced 对照截图。首轮因模拟器自动收起软键盘失败，临时关闭该设置后复测通过，验证后已恢复。最大字号的 Reasoning 断词仍存在，本轮未调整文字布局；真机与 iOS 26 未验证。
+
+## 模型面板键盘避让与 Codex 图标修复（2026-10-07）
+
+- 模型面板恢复原 reasoning overlay 的 composer 锚点定位，底部跟随键盘（含候选栏），不再固定到屏幕底部；滚动区高度取内容实测高度与键盘上方可用高度的较小值，避免 `fixedSize` 绕过高度限制。
+- Codex SVG 的路径命令与数字改用显式分隔符，修复 Xcode 解析紧凑路径时的图形缺损；保留原始路径几何、渐变和颜色。规范化前后在浏览器中 320px 渲染逐像素一致，来源说明同步记录该兼容性调整。
+- UI 回归增加真实软键盘可见性、候选栏顶部与面板边界的断言；最大辅助字号验证实际滚动、reasoning 可达及关闭操作。此前截图没有可见软键盘，不能作为键盘避让证据。本次测试模拟器通过关闭 `com.apple.keyboard.preferences` 中的 `AutomaticMinimizationEnabled` 与 `HardwareKeyboardLastSeen` 并重启，恢复实际软键盘；验证后恢复原设置。
+- 本轮最终 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，覆盖深色跨 provider 选择、reasoning 保留、Advanced、浅色最大辅助字号滚动及已有会话 reasoning 操作；已检查真实软键盘下的最终截图。`git diff --check` 通过；真机、iOS 26 与真实账号尚未验证。
+
+## Default Models（2026-10-07）
+
+- Settings 增加 Default Models，按账号、workspace、机器在本机保存最多 5 个 provider＋model；不保存 reasoning，不自动修改新会话或 Quick Actions 的默认配置。支持搜索、按 provider 分组添加、删除、Edit 拖动排序及重启恢复；目录刷新失败保留收藏，确认失效的项显示 Unavailable。
+- Composer 模型面板采用单行小 provider 图标＋模型名，当前项为裸勾号；标题 `Select model ›` 打开原 Advanced，不展示 All Models、管理入口、下一轮提示或 Fast mode。Reasoning 复用现有拨盘。新会话／新 tab 按收藏顺序快捷选择 provider 和 model；已有会话仅使用自身 provider 且遵守 capability 的 model／reasoning 编辑限制。当前模型不在收藏中时补充显示，空收藏展示可用模型。
+- 会话列表与 tab 投影新增可选 `agentConfigID`，使用真实配置 ID 隔离同名模型，旧缓存仍可解码。Provider 选项只投影公开品牌 key，优先识别 Lody `brandId`、兼容旧内置配置的已知服务域名，再匹配 Agent 类型；不把环境变量或凭据传到原生侧。
+- 图标按 LobeHub skills 文档使用固定 `@lobehub/icons-static-svg` 1.95.1 的 15 个必要品牌资源，不引入 React 或整套图标库。有彩色版本时保留品牌色，否则使用随外观变化的模板单色；未知／自定义 provider 回退为通用图标，不限制其模型选择。来源与 MIT 许可随 App bundle 分发。Lody 参考为本机 `agent-icon.tsx`、`agent-brand.ts` 及 agent 配置创建界面。
+- 本轮验证：JavaScript 351 项与 Swift 310 项测试通过，bridge bundle 已重建。iPhone 17 模拟器 4 项 fixture UI 回归通过，覆盖添加／删除、拖动排序及重启恢复、跨 provider 选择、reasoning 保留、空收藏和 Advanced；已检查深色与浅色大字号截图并修正面板底部对齐。首轮大字号 UI 测试因焦点时序无法定位按钮，显式聚焦 composer 并等待键盘后复测通过。真实账号、真机及 iOS 26 尚未验证。
+
 ## Settings 使用系统默认圆角（2026-10-07）
 
 - 按用户要求删除 Settings sheet 的 `.presentationCornerRadius(36)`，由系统决定面板圆角。

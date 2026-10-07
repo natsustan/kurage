@@ -13,14 +13,18 @@
 		0CF5D421D7F018861F917B9B /* ComposerMentionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD5B6A1D4A107B17DF5D6024 /* ComposerMentionsTests.swift */; };
 		0F053915F622E9053573833C /* QuickActionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B7EB6A13F7BCA1468CB34A /* QuickActionsView.swift */; };
 		1481323389133B68B405152A /* QuickActionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA8FB485AA58430E56FA930B /* QuickActionsSettingsView.swift */; };
+		173B5EBC1F273BBE9FEC3A05 /* LobeIcons-NOTICE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 0925957059D9183FA75DA9B3 /* LobeIcons-NOTICE.txt */; };
 		18C89BEED47818C8D2D66313 /* QuickActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C6B283619664F5DE71E5846 /* QuickActionTests.swift */; };
 		18ECD83602A35A9E4A73CF7B /* ConversationFileChanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 029CAB0AB3D05D30B9BF55F8 /* ConversationFileChanges.swift */; };
 		1F1BBE369FF36F6B450F5B9D /* ConversationChangesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52992274F3830D8D34FF1B15 /* ConversationChangesTests.swift */; };
 		202F8979458138C533AD6081 /* ConversationLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C69CCB7DF6027B62311BCFF /* ConversationLayoutTests.swift */; };
+		21F29D7A3DA782C60F7799AF /* DefaultModelsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC3422F598DD3B617DBA6325 /* DefaultModelsSettingsView.swift */; };
 		256B1E221BCC6685346487AB /* SessionSyncBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96900DBC0910AB4881F03E /* SessionSyncBridge.swift */; };
 		27EBC036E34C7199DDB4D33F /* NotificationModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E327BCE94AA9576F37427A /* NotificationModels.swift */; };
+		2C46DA717520A12DD777C1B4 /* DefaultModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3663DD9879B5547284211FD5 /* DefaultModel.swift */; };
 		2C6A69AAD4625C9D8D4E1911 /* SignInFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52DC1DC09984FD2370EB47B3 /* SignInFlowTests.swift */; };
 		357BCBEC79197D443B735EE1 /* ConversationTabsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374F20ECC60DB1DC17DDDDCA /* ConversationTabsView.swift */; };
+		36485FE1F4CC82227DDB8FA7 /* DefaultModelsFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03711A34096C010D4362454C /* DefaultModelsFlowTests.swift */; };
 		36A47666D86EC3CEA0817A81 /* UserMessageText.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA46E2844598B0A50F9A983F /* UserMessageText.swift */; };
 		37374D0737827CAF63322595 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84497201224F3906A5EACF8A /* AppModel.swift */; };
 		374BB6DA235990ADAD39C728 /* AdaptiveLayoutFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */; };
@@ -58,6 +62,7 @@
 		9C7475A61636EE410F2D2EEA /* SessionImageTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B7F9B5896F7C5D67529C1C6 /* SessionImageTransport.swift */; };
 		9DAE8CC58A1F116D4BFFAA22 /* HapticsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A3D6B01348134D6D05CDDF0 /* HapticsSettingsView.swift */; };
 		A623FD39CBAE3F01F7779351 /* SignInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E02D0CEF5411E13D83E3B8D /* SignInTests.swift */; };
+		A66F5D1B344E993BB6FC0C52 /* DefaultModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03625FEDE5861882492083E7 /* DefaultModelTests.swift */; };
 		A6D2FF46CA8CC8FAE03BF8CB /* ConversationChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D3BD86C616EDFBCCF15230 /* ConversationChangesView.swift */; };
 		A80A9480D1243C24BE3C4FDC /* OneSignalExtension in Frameworks */ = {isa = PBXBuildFile; productRef = D2DA0C63F0F7F6BF7F81C192 /* OneSignalExtension */; };
 		A8203BDA5DEAFC5678F28F1D /* ConversationErrorFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDD892265209B29FFAD608EE /* ConversationErrorFlowTests.swift */; };
@@ -96,6 +101,7 @@
 		F08B2A353936073585BC6820 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5506E74A6347C9820765D255 /* AboutView.swift */; };
 		F147BA09F273F0B35A5CF7A5 /* SessionTabsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */; };
 		F2FB166F16323DB7B77E9C0B /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */; };
+		F4ACC9CDCF95795681B3FE67 /* LobeIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 0555765A2E81B3433F5BCC64 /* LobeIcons-LICENSE.txt */; };
 		F81D7A6DB9AAE1BD5AB36AA4 /* KurageNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5CB97A44DA2248D3ED6C5C5 /* ConversationWorkView.swift */; };
 		FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */ = {isa = PBXBuildFile; fileRef = 6A79AACE724D367AC3C05B6B /* session-bridge.js */; };
@@ -141,9 +147,13 @@
 
 /* Begin PBXFileReference section */
 		029CAB0AB3D05D30B9BF55F8 /* ConversationFileChanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationFileChanges.swift; sourceTree = "<group>"; };
+		03625FEDE5861882492083E7 /* DefaultModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultModelTests.swift; sourceTree = "<group>"; };
+		03711A34096C010D4362454C /* DefaultModelsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultModelsFlowTests.swift; sourceTree = "<group>"; };
 		03A3AFC15816919A1B376129 /* OutgoingMessageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMessageTests.swift; sourceTree = "<group>"; };
+		0555765A2E81B3433F5BCC64 /* LobeIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-LICENSE.txt"; sourceTree = "<group>"; };
 		05B3AD0203F2338F8D1BCBE9 /* WorkspaceSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceSelectionTests.swift; sourceTree = "<group>"; };
 		0800A76BDB70BAF2ABCCADAA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		0925957059D9183FA75DA9B3 /* LobeIcons-NOTICE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LobeIcons-NOTICE.txt"; sourceTree = "<group>"; };
 		0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSearchTests.swift; sourceTree = "<group>"; };
 		0D6E7BB882700BCC2B3DCE1A /* ConversationSubtasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationSubtasksView.swift; sourceTree = "<group>"; };
 		0E9B4AA6043B15D5E5D0A550 /* OneSignalNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneSignalNotificationService.swift; sourceTree = "<group>"; };
@@ -164,6 +174,7 @@
 		2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureLodyClientTests.swift; sourceTree = "<group>"; };
 		2FCB49C75A6EF2BD30A3266F /* SessionActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActions.swift; sourceTree = "<group>"; };
 		3182FD9B993292936C8C71D4 /* ComposerAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerAttachments.swift; sourceTree = "<group>"; };
+		3663DD9879B5547284211FD5 /* DefaultModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultModel.swift; sourceTree = "<group>"; };
 		374F20ECC60DB1DC17DDDDCA /* ConversationTabsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationTabsView.swift; sourceTree = "<group>"; };
 		38FAFEC4E8C04B28773FAECF /* ConversationImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationImageView.swift; sourceTree = "<group>"; };
 		39F52F4447A649EB64999DF6 /* UserMessageSelectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserMessageSelectionTests.swift; sourceTree = "<group>"; };
@@ -224,9 +235,10 @@
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
 		D4E327BCE94AA9576F37427A /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
 		D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsFlowTests.swift; sourceTree = "<group>"; };
-		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D91ED1C545E043732B429EBB /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
 		DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoverView.swift; sourceTree = "<group>"; };
+		DC3422F598DD3B617DBA6325 /* DefaultModelsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultModelsSettingsView.swift; sourceTree = "<group>"; };
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
 		DD05638D968AB68EF4E23886 /* NewSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionView.swift; sourceTree = "<group>"; };
 		E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadataTests.swift; sourceTree = "<group>"; };
@@ -321,6 +333,7 @@
 				8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */,
 				84497201224F3906A5EACF8A /* AppModel.swift */,
 				1C9B8587C8EDC7D324885094 /* AppTheme.swift */,
+				3663DD9879B5547284211FD5 /* DefaultModel.swift */,
 				DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */,
 				6F430299504D793272188A53 /* NotificationModel.swift */,
 				4A6AC2AF5662316492B81CF0 /* OutgoingMessage.swift */,
@@ -349,6 +362,7 @@
 			children = (
 				5506E74A6347C9820765D255 /* AboutView.swift */,
 				D91ED1C545E043732B429EBB /* AppearanceSettingsView.swift */,
+				DC3422F598DD3B617DBA6325 /* DefaultModelsSettingsView.swift */,
 				6A3D6B01348134D6D05CDDF0 /* HapticsSettingsView.swift */,
 				927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */,
 				AA8FB485AA58430E56FA930B /* QuickActionsSettingsView.swift */,
@@ -363,6 +377,8 @@
 			children = (
 				6998C6DDA1554E4E716FF9AF /* Assets.xcassets */,
 				689573159C8EC11124B112A6 /* LaunchScreen.storyboard */,
+				0555765A2E81B3433F5BCC64 /* LobeIcons-LICENSE.txt */,
+				0925957059D9183FA75DA9B3 /* LobeIcons-NOTICE.txt */,
 				AF6B057A72F618ECD2D1FA99 /* session-bridge.html */,
 				6A79AACE724D367AC3C05B6B /* session-bridge.js */,
 			);
@@ -420,6 +436,7 @@
 				EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */,
 				4C69CCB7DF6027B62311BCFF /* ConversationLayoutTests.swift */,
 				7903B89A96C3E0A0D21D8C1F /* ConversationQuestionTests.swift */,
+				03625FEDE5861882492083E7 /* DefaultModelTests.swift */,
 				2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */,
 				5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */,
 				FD856DF2F6F7F07A50E68563 /* NotificationTests.swift */,
@@ -441,6 +458,7 @@
 			children = (
 				49CC0A39128D845F09C71709 /* AdaptiveLayoutFlowTests.swift */,
 				BDD892265209B29FFAD608EE /* ConversationErrorFlowTests.swift */,
+				03711A34096C010D4362454C /* DefaultModelsFlowTests.swift */,
 				EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */,
 				B09603AA87686803FEDC7688 /* QuickActionsFlowTests.swift */,
 				D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */,
@@ -599,6 +617,8 @@
 			files = (
 				AC5ED9D79BFC3193F858618E /* Assets.xcassets in Resources */,
 				3AE24C610D1992B80F5EDA3D /* LaunchScreen.storyboard in Resources */,
+				F4ACC9CDCF95795681B3FE67 /* LobeIcons-LICENSE.txt in Resources */,
+				173B5EBC1F273BBE9FEC3A05 /* LobeIcons-NOTICE.txt in Resources */,
 				DEAB4356411242EFE5A30F1E /* session-bridge.html in Resources */,
 				FE22FF223DECE325697E16F2 /* session-bridge.js in Resources */,
 			);
@@ -613,6 +633,7 @@
 			files = (
 				374BB6DA235990ADAD39C728 /* AdaptiveLayoutFlowTests.swift in Sources */,
 				A8203BDA5DEAFC5678F28F1D /* ConversationErrorFlowTests.swift in Sources */,
+				36485FE1F4CC82227DDB8FA7 /* DefaultModelsFlowTests.swift in Sources */,
 				0C0998CE1A432AEC62D96496 /* NotificationFlowTests.swift in Sources */,
 				627728FFA2DE4AFE8EDA3C57 /* QuickActionsFlowTests.swift in Sources */,
 				C03092CC8B3720F717546291 /* SessionTabsFlowTests.swift in Sources */,
@@ -658,6 +679,8 @@
 				357BCBEC79197D443B735EE1 /* ConversationTabsView.swift in Sources */,
 				058871DBB96429E35F9C8C9F /* ConversationView.swift in Sources */,
 				FC433B178BAFA0126DE1A0D0 /* ConversationWorkView.swift in Sources */,
+				2C46DA717520A12DD777C1B4 /* DefaultModel.swift in Sources */,
+				21F29D7A3DA782C60F7799AF /* DefaultModelsSettingsView.swift in Sources */,
 				731A954A54AFD04667120835 /* FixtureLodyClient.swift in Sources */,
 				C0EF49BAFB53066E109A02F3 /* HTTPLodyClient.swift in Sources */,
 				9DAE8CC58A1F116D4BFFAA22 /* HapticsSettingsView.swift in Sources */,
@@ -704,6 +727,7 @@
 				C260EC8C0275502F582D4FE4 /* ConversationImageTests.swift in Sources */,
 				202F8979458138C533AD6081 /* ConversationLayoutTests.swift in Sources */,
 				9B10551437F89D49FCE2B4C3 /* ConversationQuestionTests.swift in Sources */,
+				A66F5D1B344E993BB6FC0C52 /* DefaultModelTests.swift in Sources */,
 				B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */,
 				E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */,
 				AAEDCFA3378D9106D39367BB /* NotificationTests.swift in Sources */,

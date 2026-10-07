@@ -30,6 +30,7 @@ final class AppModel {
         var waiters: [UUID: CheckedContinuation<NewSessionOptions, Error>]
     }
     private(set) var quickActionPreferenceRevision = 0
+    private(set) var defaultModelsRevision = 0
     let notifications: NotificationModel
     private(set) var notificationNavigation: NotificationNavigation?
     private(set) var notificationOpenGeneration = 0
@@ -378,6 +379,28 @@ final class AppModel {
         _ = quickActionPreferenceRevision
         guard let key = quickActionPreferenceKey(rootID: rootID), let data = quickActionDefaults.data(forKey: key) else { return nil }
         return QuickActionPreferences.decode(data)?[profile]
+    }
+
+    private func defaultModelsKey(sessionID: String) -> String? {
+        guard let account, let workspaceID = selectedWorkspaceID,
+              let machineID = QuickActionMachine.machineID(projectID: sessionSummary(sessionID)?.projectID) else { return nil }
+        return DefaultModel.storageKey(account: account, workspaceID: workspaceID, machineID: machineID)
+    }
+
+    func defaultModels(sessionID: String) -> [DefaultModel] {
+        _ = defaultModelsRevision
+        guard let key = defaultModelsKey(sessionID: sessionID), let data = quickActionDefaults.data(forKey: key),
+              let models = try? JSONDecoder().decode([DefaultModel].self, from: data) else { return [] }
+        return models
+    }
+
+    func saveDefaultModels(_ models: [DefaultModel], sessionID: String, workspaceGeneration: Int) {
+        guard self.workspaceGeneration == workspaceGeneration, models.count <= DefaultModel.limit,
+              Set(models.map(\.id)).count == models.count,
+              let key = defaultModelsKey(sessionID: sessionID),
+              let data = try? JSONEncoder().encode(models) else { return }
+        quickActionDefaults.set(data, forKey: key)
+        defaultModelsRevision += 1
     }
 
     func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String,

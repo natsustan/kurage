@@ -24,6 +24,7 @@ export function projectSessionTabs(rows, sessionID) {
     .map(row => ({
       id: row.docId.slice('session-'.length), title: row.meta.title || 'Untitled session',
       agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
+      agentConfigID: typeof row.meta.agentConfigId === 'string' ? row.meta.agentConfigId : null,
       activity: projectSessionActivity(row.meta.status), preview: '',
       parentSessionID: row.meta.parentSessionId ?? null,
       isTabClosed: row.meta.isTabClosed === true,

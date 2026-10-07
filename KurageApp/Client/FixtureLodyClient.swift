@@ -226,6 +226,7 @@ final class FixtureLodyClient: LodyClient {
             .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
             .map { record in
                 var summary = record.summary
+                summary.agentConfigID = summary.agentName
                 summary.hasRunningTabs = fixtureTabs(sessionID: summary.id).contains {
                     $0.id != summary.id && $0.activity == .running
                 }
@@ -365,7 +366,11 @@ final class FixtureLodyClient: LodyClient {
         // random, so sorting by them would shuffle the bar between runs.
         let tabs = records.filter { ($0.summary.id == rootID || $0.summary.parentSessionID == rootID) &&
             !archivedSessionIDs.contains($0.summary.id) }
-            .map(\.summary)
+            .map { record in
+                var summary = record.summary
+                summary.agentConfigID = summary.agentName
+                return summary
+            }
         return tabs.filter { $0.id == rootID } + tabs.filter { $0.id != rootID }
     }
 
@@ -498,8 +503,8 @@ final class FixtureLodyClient: LodyClient {
                   template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
         }
         let providers = [
-            SessionRunConfig.Value(value: "claude", label: "Claude Code"),
-            SessionRunConfig.Value(value: "codex", label: "Codex"),
+            SessionRunConfig.Value(value: "claude", label: "Claude Code", icon: "claude"),
+            SessionRunConfig.Value(value: "codex", label: "Codex", icon: "codex"),
         ]
         let chosen = agentConfigID ?? template.summary.agentName
         guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }

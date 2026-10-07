@@ -174,7 +174,9 @@ struct ConversationContent: View {
                 supportsTextSendingWhileRunning: model.supportsTextSendingWhileRunning,
                 supportsSessionCancellation: !isReadOnly && !isStarting && model.supportsSessionCancellation,
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
-                runConfig: runConfigState.displayed,
+                runConfig: runConfigState.displayed?.shortcutMenu(
+                    saved: model.defaultModels(sessionID: rootSessionID),
+                    agentConfigID: session?.agentConfigID, agentName: session?.agentName ?? "Agent"),
                 contextWindowUsage: contextWindowUsage,
                 cacheUsage: displayedConversation?.cacheUsage,
                 composerPresentation: composerPresentation,
@@ -849,7 +851,7 @@ private struct ConversationFooter: View {
     let supportsTextSendingWhileRunning: Bool
     let supportsSessionCancellation: Bool
     let supportsPermissionResponses: Bool
-    let runConfig: SessionRunConfig?
+    let runConfig: RunConfigMenu?
     let contextWindowUsage: ContextWindowUsage?
     let cacheUsage: ConversationCacheUsage?
     let composerPresentation: ComposerPresentation
@@ -904,7 +906,7 @@ private struct ConversationFooter: View {
                                     supportsTextSending: supportsTextSending,
                                     supportsTextSendingWhileRunning: supportsTextSendingWhileRunning,
                                     supportsSessionCancellation: supportsSessionCancellation,
-                                    runConfig: runConfig?.menu,
+                                    runConfig: runConfig,
                                     contextWindowUsage: contextWindowUsage,
                                     cacheUsage: cacheUsage,
                                     canSubmit: canSubmit,

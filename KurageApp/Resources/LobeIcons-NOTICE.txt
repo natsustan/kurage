@@ -1,0 +1,21 @@
+Codex Color, Claude Code Color, Gemini Color, DeepSeek Color, Kimi Color,
+Grok, Minimax Color, Zhipu Color, Xiaomi MiMo, Pi Agent, Devin Color,
+Amp Color, Cursor, OpenCode, and GitHub Copilot are SVG assets
+from @lobehub/icons-static-svg 1.95.1 (LobeHub / lobe-icons).
+Source commit: c385b2b8d1f9e19aa86e628d4e23c91ee1111a47
+https://github.com/lobehub/lobe-icons
+
+Codex path commands and numbers use explicit separators for Xcode's SVG
+compiler. Geometry, gradients, and colors are unchanged. Other assets are
+unmodified.
+
+Source files under packages/static-svg/icons/: codex-color.svg,
+claudecode-color.svg, gemini-color.svg, deepseek-color.svg, kimi-color.svg,
+grok.svg, minimax-color.svg, zhipu-color.svg, xiaomimimo.svg, pi.svg,
+devin-color.svg, amp-color.svg, cursor.svg, opencode.svg, and
+githubcopilot.svg.
+Copyright (c) 2023 LobeHub. Distributed under the MIT License;
+see LobeIcons-LICENSE.txt in this bundle.
+
+Brand names and marks belong to their respective owners. Their use identifies
+configured providers and does not imply endorsement of Kurage.

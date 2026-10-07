@@ -65,7 +65,8 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
                 isPinned: metadata.isPinned,
                 lastMessageAt: metadata.lastMessageAt, lastReadAt: metadata.lastReadAt,
                 lastActivityAt: metadata.lastActivityAt,
-                hasRunningTabs: metadata.hasRunningTabs
+                hasRunningTabs: metadata.hasRunningTabs,
+                agentConfigID: metadata.agentConfigID
             )
         }
     }
@@ -563,6 +564,7 @@ private struct SessionMetadata: Decodable {
     let id: String
     let title: String
     let agentName: String
+    let agentConfigID: String?
     let activity: String
     let preview: String
     let projectID: String?
