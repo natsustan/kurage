@@ -90,6 +90,8 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     requestMachine: extras.requestMachine,
     turnDiffSource,
     loadTurnDiff: extras.loadTurnDiff,
+    loadBranchChanges: extras.loadBranchChanges,
+    loadCurrentDiff: extras.loadCurrentDiff,
     projectGitSource: extras.projectGitSource ?? projectGitSource,
     notificationSessionDestination,
     readProjectGit: extras.readProjectGit,
@@ -193,6 +195,29 @@ test('turn diff releases the metadata read lock and keeps RPC cancellation alive
   bridge.window.kurageCancel('diff-request');
   await assert.rejects(request, { name: 'AbortError' });
   assert.equal(rpcSignal.aborted, true);
+});
+
+test('branch list and current previews release metadata lock and cancel independently', async () => {
+  for (const path of [null, 'file.swift']) {
+    let started;
+    const ready = new Promise(resolve => { started = resolve; });
+    let rpcSignal;
+    const load = async (...args) => {
+      const signal = args.at(-1);
+      rpcSignal = signal;
+      started();
+      return await new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    };
+    const bridge = makeBridge(undefined, [{ docId: 'session-chat', meta: { machineId: 'machine' } }],
+      undefined, undefined, { loadBranchChanges: load, loadCurrentDiff: load });
+    const request = bridge.window.kurageBranchChanges('workspace', 'chat', 'https://streams.test', path, 'branch-request');
+    void request.catch(() => {});
+    await ready;
+    await bridge.window.kurageSessions('workspace', 'https://streams.test', 'list-request');
+    assert.equal(rpcSignal.aborted, false);
+    bridge.window.kurageCancel('branch-request');
+    await assert.rejects(request, { name: 'AbortError' });
+  }
 });
 
 test('project Git releases metadata lock, scopes token refresh and cancels only its own machine read', async () => {

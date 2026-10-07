@@ -100,6 +100,36 @@ struct ConversationChangesTests {
         model.signOut()
         await #expect(throws: CancellationError.self) { try await task.value }
     }
+    @Test func branchMessageContractDecodesNetListAndUnavailableResult() throws {
+        let ready = try JSONDecoder().decode(BranchFileChanges.self, from: Data(#"{"status":"ready","files":[{"path":"file.swift","additions":2,"deletions":1,"edits":[]}]}"#.utf8))
+        #expect(FileChangeSummary(files: ready.files).additions == 2)
+        let unavailable = try JSONDecoder().decode(BranchFileChanges.self, from: Data(#"{"status":"unavailable","reason":"base_unavailable","files":[]}"#.utf8))
+        #expect(unavailable.reason == "base_unavailable")
+    }
+
+    @MainActor @Test func branchUsesIndependentNetCountsAndRejectsStaleAccountResults() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let conversation = try await client.conversation(sessionID: "session-long", workspaceID: "ws-demo")
+        let history = FileChangeSummary(conversation.fileChanges ?? [])
+        let branch = try await model.branchChanges(sessionID: "session-long", workspaceID: "ws-demo")
+        #expect(branch.status == .ready)
+        #expect(branch.files.count == 2)
+        #expect(FileChangeSummary(files: branch.files).additions == 14)
+        #expect(history.additions == 22)
+        await #expect(throws: CancellationError.self) {
+            try await model.branchChanges(sessionID: "session-long", workspaceID: "other-workspace")
+        }
+        let listTask = Task { try await model.branchChanges(sessionID: "session-long", workspaceID: "ws-demo") }
+        let previewTask = Task { try await model.branchFilePreview(sessionID: "session-long",
+            path: branch.files[0].path, workspaceID: "ws-demo") }
+        try await Task.sleep(for: .milliseconds(50))
+        model.signOut()
+        await #expect(throws: CancellationError.self) { try await listTask.value }
+        await #expect(throws: CancellationError.self) { try await previewTask.value }
+    }
+
     @Test func historicalPreviewDecodesFullSnapshotsAndHunksKeepAbsoluteLineNumbers() throws {
         let preview = try JSONDecoder().decode(ConversationFilePreview.self, from: Data(#"{"status":"ready","edit":{"id":"turn:file","oldText":"old","newText":"new"}}"#.utf8))
         #expect(preview.status == .ready)

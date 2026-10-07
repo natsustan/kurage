@@ -7,6 +7,7 @@ final class FixtureLodyClient: LodyClient {
     var requiresExternalAuthorization: Bool { authorizationDelay != nil }
     let supportsConversations = true
     let supportsHistoricalFilePreviews = true
+    let supportsBranchChanges = true
     let supportsTextSending = true
     let supportsTextSendingWhileRunning = true
     let supportsSessionCancellation = true
@@ -55,6 +56,22 @@ final class FixtureLodyClient: LodyClient {
     private let filePreviewUnavailableReason: String?
     private let filePreviewDelay: Duration
     private let filePreviewLargeRewrite: Bool
+
+    func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges {
+        _ = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
+        try await Task.sleep(for: filePreviewDelay)
+        // An independent current-state fixture, deliberately not a history sum.
+        return BranchFileChanges(status: .ready, files: sessionID == "session-long" ? ConversationFileChangeGroup.fixture.files.map {
+            ConversationFileChange(path: $0.path, additions: $0.additions, deletions: $0.deletions, edits: [])
+        } : [])
+    }
+
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        let preview = try await filePreview(sessionID: sessionID, turnID: "long-agent-20", path: path, workspaceID: workspaceID)
+        guard let edit = preview.edit else { return preview }
+        return ConversationFilePreview(status: preview.status, edit: ConversationFileEdit(
+            id: "branch:\(path)", oldText: edit.oldText, newText: edit.newText), reason: preview.reason)
+    }
 
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
         let conversation = try await conversation(sessionID: sessionID, workspaceID: workspaceID)
@@ -1053,7 +1070,7 @@ extension SessionRecord {
             permission: nil,
             runConfig: .fixtureReasoning,
             contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000),
-            fileChanges: [.fixture],
+            fileChanges: [.fixtureEarlierTurn, .fixture],
             cacheUsage: ConversationCacheUsage(inputTokens: 60_000, cacheReadInputTokens: 320_000,
                 cacheCreationInputTokens: 20_000, reportedTurns: 18, totalTurns: 20)
         ),
@@ -1140,6 +1157,11 @@ extension ConversationWork {
 }
 
 extension ConversationFileChangeGroup {
+    static let fixtureEarlierTurn = ConversationFileChangeGroup(id: "long-agent-19", turnNumber: 19, files: [
+        ConversationFileChange(path: "KurageApp/Features/Conversation/ConversationView.swift",
+                               additions: 8, deletions: 2, edits: [])
+    ])
+
     static let fixture = ConversationFileChangeGroup(id: "long-agent-20", turnNumber: 20, files: [
         ConversationFileChange(path: "KurageApp/Features/Conversation/ConversationView.swift",
                                additions: 2, deletions: 1, edits: [

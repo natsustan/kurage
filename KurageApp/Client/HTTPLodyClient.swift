@@ -425,6 +425,38 @@ final class HTTPLodyClient: LodyClient {
 
     var supportsHistoricalFilePreviews: Bool { true }
 
+    var supportsBranchChanges: Bool { true }
+
+    func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        guard let expectedAccount = account else { throw LodyClientError.signedOut }
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.branchChanges(sessionID: sessionID,
+                                                  workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        return result
+    }
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        try Task.checkCancellation()
+        let generation = authenticationGeneration
+        guard let expectedAccount = account else { throw LodyClientError.signedOut }
+        let access = try await streamsAccess(workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        let bridge = sessionBridge ?? makeSessionBridge()
+        sessionBridge = bridge
+        let result = try await bridge.branchFilePreview(sessionID: sessionID, path: path,
+                                                  workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
+        return result
+    }
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
         try Task.checkCancellation()
         let generation = authenticationGeneration

@@ -169,3 +169,79 @@ export async function turnDiffSource(repo, sessionID, signal) {
       !row.deleted && row.meta?.machineId === machineID)) throw new Error('Session owner is unavailable');
   return { machineID, ownerSessionID };
 }
+
+async function currentDiffRequest(source, access, workspaceID, method, payload, signal, request) {
+  signal.throwIfAborted();
+  const params = await encryptDiffPayload(source.ownerSessionID, payload);
+  signal.throwIfAborted();
+  try {
+    const envelope = await request(access, workspaceID, source.machineID, method, params, signal, 30000);
+    signal.throwIfAborted();
+    const response = await decryptDiffPayload(source.ownerSessionID, envelope);
+    signal.throwIfAborted();
+    if (response.status === 'error') {
+      if (Object.hasOwn(errorReasons, response.code)) return unavailable(errorReasons[response.code]);
+      throw new Error('Machine could not load branch changes');
+    }
+    if (response.status === 'unavailable' && response.reason === 'transient_io') {
+      throw new Error('Could not read branch changes');
+    }
+    return response;
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error.code === 'method_unavailable' || error.code === -32601) return unavailable('unsupported');
+    if (Object.hasOwn(errorReasons, error.code)) return unavailable(errorReasons[error.code]);
+    throw error;
+  }
+}
+
+export async function loadBranchChanges(source, access, workspaceID, sessionID, signal, request = requestMachine) {
+  const response = await currentDiffRequest(source, access, workspaceID, 'code-collab/open-all-changes-diff',
+    { sessionId: sessionID }, signal, request);
+  if (response.status === 'unavailable') {
+    if (!['base_unavailable', 'unsupported', ...Object.values(errorReasons)].includes(response.reason)) {
+      throw new Error('Invalid branch availability');
+    }
+    return { status: 'unavailable', files: [], reason: response.reason };
+  }
+  if (response.status !== 'ok' || typeof response.base !== 'string' || !response.base ||
+      !Array.isArray(response.entries) || response.entries.length > 10000) throw new Error('Invalid branch changes');
+  const paths = new Set();
+  const files = response.entries.map(entry => {
+    signal.throwIfAborted();
+    if (typeof entry.path !== 'string' || !entry.path || paths.has(entry.path) ||
+        !['ok', 'deferred', 'unavailable'].includes(entry.status) ||
+        (entry.status === 'unavailable' && entry.reason !== 'not_changed')) throw new Error('Invalid branch file');
+    paths.add(entry.path);
+    for (const value of [entry.add, entry.del]) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) throw new Error('Invalid branch counts');
+    }
+    // Keep native state bounded: current text is read on expansion, rather than
+    // retaining all inline snapshots (which can expand substantially after gzip).
+    return { path: entry.path, additions: entry.add ?? null, deletions: entry.del ?? null, edits: [] };
+  });
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return { status: 'ready', files };
+}
+
+export async function loadCurrentDiff(source, access, workspaceID, sessionID, path, signal, request = requestMachine) {
+  const response = await currentDiffRequest(source, access, workspaceID, 'code-collab/open-current-diff',
+    { sessionId: sessionID, path }, signal, request);
+  if (response.status === 'unavailable' && response.path === undefined) {
+    return unavailable(response.reason === 'unsupported' ? 'branch_unsupported' : response.reason);
+  }
+  // Branch paths come from the machine's canonical file list, never history paths.
+  if (response.path !== path) throw new Error('Diff response does not match the requested file');
+  if (response.status === 'unavailable') {
+    if (!['base_unavailable', 'not_changed', 'unsupported_binary'].includes(response.reason)) {
+      throw new Error('Invalid branch diff availability');
+    }
+    return unavailable(response.reason === 'unsupported_binary' ? 'binary' : response.reason);
+  }
+  if (response.status !== 'ok') throw new Error('Invalid branch diff');
+  const oldText = await snapshotText(response.oldSnapshot, signal);
+  const newText = await snapshotText(response.newSnapshot, signal);
+  if (typeof oldText !== 'string') return oldText;
+  if (typeof newText !== 'string') return newText;
+  return { status: 'ready', edit: { id: `branch:${path}`, oldText, newText } };
+}

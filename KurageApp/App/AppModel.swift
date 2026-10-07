@@ -263,6 +263,32 @@ final class AppModel {
     }
     private var filePreviews: [FilePreviewKey: FilePreviewCacheEntry] = [:]
     var supportsHistoricalFilePreviews: Bool { client.supportsHistoricalFilePreviews }
+    var supportsBranchChanges: Bool { client.supportsBranchChanges }
+
+    func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges {
+        try await readBranchData(workspaceID: workspaceID) {
+            try await client.branchChanges(sessionID: sessionID, workspaceID: workspaceID)
+        }
+    }
+
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        try await readBranchData(workspaceID: workspaceID) {
+            try await client.branchFilePreview(sessionID: sessionID, path: path, workspaceID: workspaceID)
+        }
+    }
+
+    // Current Git data has no immutable checkpoint identity; read again on reopen.
+    private func readBranchData<Value>(workspaceID: String, read: () async throws -> Value) async throws -> Value {
+        try Task.checkCancellation()
+        guard selectedWorkspaceID == workspaceID, let account else { throw CancellationError() }
+        let authentication = authenticationGeneration
+        let workspace = workspaceGeneration
+        let value = try await read()
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(authentication), self.account == account,
+              workspaceGeneration == workspace, selectedWorkspaceID == workspaceID else { throw CancellationError() }
+        return value
+    }
 
     func filePreview(sessionID: String, turnID: String, file: ConversationFileChange,
                      workspaceID: String) async throws -> ConversationFilePreview {

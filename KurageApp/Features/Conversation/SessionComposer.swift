@@ -547,7 +547,7 @@ struct SessionComposer: View {
         isFocused = true
     }
 
-    private func startMention() {
+    private func startMention(_ trigger: ComposerMentionQuery.Trigger = .combined) {
         guard !blocksEditing else { return }
         var replacement = draft.endIndex..<draft.endIndex
         if let selection, case .selection(let range) = selection.indices,
@@ -557,7 +557,7 @@ struct SessionComposer: View {
         }
         let needsSpace = replacement.lowerBound > draft.startIndex &&
             !draft[draft.index(before: replacement.lowerBound)].isWhitespace
-        let inserted = needsSpace ? " @" : "@"
+        let inserted = (needsSpace ? " " : "") + String(trigger.rawValue)
         let caret = replacement.lowerBound.utf16Offset(in: draft) + inserted.utf16.count
         var text = draft
         text.replaceSubrange(replacement, with: inserted)
@@ -582,7 +582,12 @@ struct SessionComposer: View {
                                     error: $attachmentError, presentation: presentationState, disabled: blocksEditing,
                                     showsSummary: !isExpanded)
                 if isExpanded {
-                    Button(action: startMention) {
+                    Menu {
+                        Button { startMention() } label: { Label("Mention", image: "at") }
+                            .accessibilityIdentifier("insert-mention-trigger")
+                        Button { startMention(.skill) } label: { Label("Skill", image: MentionText.skillImageName) }
+                            .accessibilityIdentifier("insert-skill-trigger")
+                    } label: {
                         Image("at")
                             .renderingMode(.template)
                             .resizable()
@@ -591,11 +596,15 @@ struct SessionComposer: View {
                             .foregroundStyle(.primary)
                             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
                             .contentShape(Rectangle())
+                    } primaryAction: {
+                        startMention()
                     }
+                    .tint(Color.primary)
+                    .menuOrder(.fixed)
                     .disabled(blocksEditing)
-                    .buttonStyle(.plain)
                     .accessibilityLabel("Mention")
-                    .accessibilityHint("Insert @ to mention a session or skill")
+                    .accessibilityHint("Insert @ to mention a session or skill. Touch and hold to insert $ for a skill.")
+                    .accessibilityAction(named: "Insert Skill") { startMention(.skill) }
                     .accessibilityIdentifier("add-mention")
                 }
             }

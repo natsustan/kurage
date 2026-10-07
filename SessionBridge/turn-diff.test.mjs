@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createCipheriv, createDecipheriv } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { encryptDiffPayload, decryptDiffPayload, loadTurnDiff, turnDiffSource } from './turn-diff.mjs';
+import { encryptDiffPayload, decryptDiffPayload, loadTurnDiff, turnDiffSource, loadBranchChanges, loadCurrentDiff } from './turn-diff.mjs';
 
 // Independent Node implementation of the envelope specified by Lody. Do not
 // use the implementation under test to generate interoperability expectations.
@@ -140,4 +140,60 @@ test('resolves machine and owner from workspace metadata, rejects deleted or for
   rows[0].deleted = true;
   await assert.rejects(turnDiffSource(repo, 'tab', signal), /machine/);
   await assert.rejects(turnDiffSource(repo, 'unknown', signal), /machine/);
+});
+
+const branchLoad = (payload, request, signal = new AbortController().signal) => loadBranchChanges(source, {},
+  'workspace', 'tab', signal, request ?? (async () => reference('parent', payload).envelope));
+
+test('branch uses the machine file set and net counts, includes deferred and binary files only once', async () => {
+  const payload = { status: 'ok', base: 'merge-base', entries: [
+    { status: 'deferred', path: 'z.swift', add: 2, del: 1 },
+    { status: 'ok', path: 'a.png', oldSnapshot: { kind: 'missing' }, newSnapshot: { kind: 'binary' } },
+    { status: 'unavailable', path: 'empty', reason: 'not_changed', add: 0, del: 0 }
+  ], truncated: true };
+  const result = await branchLoad(payload, async (_access, workspace, machine, method, params) => {
+    assert.equal(workspace, 'workspace');
+    assert.equal(machine, 'machine');
+    assert.equal(method, 'code-collab/open-all-changes-diff');
+    assert.deepEqual(reference('parent', {}).decode(params), { sessionId: 'tab' });
+    return reference('parent', payload).envelope;
+  });
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(result.files, [
+    { path: 'a.png', additions: null, deletions: null, edits: [] },
+    { path: 'empty', additions: 0, deletions: 0, edits: [] },
+    { path: 'z.swift', additions: 2, deletions: 1, edits: [] }
+  ]);
+  await assert.rejects(branchLoad({ ...payload, entries: [...payload.entries, payload.entries[0]] }), /Invalid branch file/);
+  await assert.rejects(branchLoad({ ...payload, entries: [{ status: 'deferred', path: 'bad', add: -1 }] }), /counts/);
+  await assert.rejects(branchLoad(payload, async () => reference('foreign', payload).envelope), /owner/);
+});
+
+test('branch unavailable is explicit, transient errors retry, and cancelled late results are rejected', async () => {
+  assert.deepEqual(await branchLoad({ status: 'unavailable', reason: 'base_unavailable' }),
+    { status: 'unavailable', reason: 'base_unavailable', files: [] });
+  assert.deepEqual(await branchLoad(null, async () => { throw { code: -32601 }; }),
+    { status: 'unavailable', reason: 'unsupported', files: [] });
+  await assert.rejects(branchLoad({ status: 'unavailable', reason: 'transient_io' }), /Could not read/);
+  const controller = new AbortController();
+  await assert.rejects(branchLoad(null, async () => {
+    controller.abort();
+    return reference('parent', { status: 'ok', base: 'base', entries: [] }).envelope;
+  }, controller.signal), { name: 'AbortError' });
+});
+
+test('branch code expansion reads current baseline snapshots without a turn id and validates the path', async () => {
+  const loadCurrent = (payload, request) => loadCurrentDiff(source, {}, 'workspace', 'tab', 'src/App.swift',
+    new AbortController().signal, request ?? (async () => reference('parent', payload).envelope));
+  const payload = { status: 'ok', path: 'src/App.swift', oldSnapshot: text('baseline'), newSnapshot: text('current') };
+  const preview = await loadCurrent(payload, async (_access, _workspace, _machine, method, params) => {
+    assert.equal(method, 'code-collab/open-current-diff');
+    assert.deepEqual(reference('parent', {}).decode(params), { sessionId: 'tab', path: 'src/App.swift' });
+    return reference('parent', payload).envelope;
+  });
+  assert.equal(preview.edit.oldText, 'baseline');
+  assert.equal(preview.edit.newText, 'current');
+  await assert.rejects(loadCurrent({ ...payload, path: 'other' }), /requested file/);
+  assert.equal((await loadCurrent({ status: 'unavailable', path: 'src/App.swift', reason: 'base_unavailable' })).reason,
+    'base_unavailable');
 });

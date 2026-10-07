@@ -6,6 +6,22 @@ struct ConversationFileChangeGroup: Codable, Equatable, Sendable, Identifiable {
     let files: [ConversationFileChange]
 }
 
+/// Current directory against the machine's resolved branch/session baseline.
+/// These files and counts are never reconstructed from per-turn history.
+struct BranchFileChanges: Codable, Equatable, Sendable {
+    let status: ConversationFilePreview.Status
+    var files: [ConversationFileChange] = []
+    var reason: String? = nil
+
+    var explanation: LocalizedStringResource {
+        switch reason {
+        case "base_unavailable": "The branch baseline is unavailable."
+        case "unsupported": "This machine does not support branch changes."
+        default: ConversationFilePreview(status: .unavailable, reason: reason).explanation
+        }
+    }
+}
+
 struct ConversationFileChange: Codable, Equatable, Sendable, Identifiable {
     var id: String { path }
     let path: String
@@ -39,6 +55,7 @@ struct ConversationFilePreview: Codable, Equatable, Sendable {
     var explanation: LocalizedStringResource {
         switch reason {
         case "turn_unavailable": "Historical snapshots are unavailable for this turn."
+        case "base_unavailable": "The branch baseline is unavailable."
         case "not_changed": "No text differences recorded for this file."
         case "binary": "Binary files cannot be previewed as code."
         case "too_large": "The session machine could not provide this snapshot because it exceeds its size limit."
@@ -46,6 +63,7 @@ struct ConversationFilePreview: Codable, Equatable, Sendable {
         case "line_limit": "This file has too many lines to compare on this device."
         case "comparison_limit": "This file has too many changes to compare on this device."
         case "unsupported": "This machine does not support historical code previews."
+        case "branch_unsupported": "This machine does not support branch code previews."
         case "machine_offline": "The session machine is offline. Try again when it is online."
         case "permission_denied": "This file cannot be read with the current permissions."
         default: "Historical code preview is unavailable for this file."
@@ -68,7 +86,10 @@ struct FileChangeSummary: Equatable {
     let deletions: Int?
 
     init(_ groups: [ConversationFileChangeGroup]) {
-        let files = groups.flatMap(\.files)
+        self.init(files: groups.flatMap(\.files))
+    }
+
+    init(files: [ConversationFileChange]) {
         count = Set(files.map(\.path)).count
         func total(_ values: [Int?]) -> Int? {
             var result = 0
