@@ -33,7 +33,6 @@ struct RootView: View {
                 .presentationDetents([.fraction(0.95)])
                 .presentationDragIndicator(.hidden)
                 .presentationContentInteraction(.scrolls)
-                .presentationCornerRadius(36)
         }
         .overlay {
             if showsLaunchCover {

@@ -185,7 +185,8 @@ final class ShellFlowTests: XCTestCase {
         let row = menu.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@",
                                                      "mention-skill-", "mention-session-")).firstMatch
         XCTAssertGreaterThan(row.frame.height, 0, file: file, line: line)
-        XCTAssertLessThanOrEqual(menu.frame.height, row.frame.height * 3 + 0.5, file: file, line: line)
+        // The viewport retains its three 64pt units while candidates use compact 44pt rows.
+        XCTAssertLessThanOrEqual(menu.frame.height, row.frame.height * (64.0 / 44.0) * 3 + 0.5, file: file, line: line)
         XCTAssertLessThanOrEqual(menu.frame.maxY, field.frame.minY, file: file, line: line)
         XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY, file: file, line: line)
         XCTAssertLessThanOrEqual(send.frame.maxY, keyboard.frame.minY, file: file, line: line)
@@ -228,6 +229,7 @@ final class ShellFlowTests: XCTestCase {
         field.typeText("$review")
         let skill = app.buttons["mention-skill-review-and-simplify-changes"]
         XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        XCTAssertEqual(skill.label, "Review and Simplify Changes")
         XCTAssertFalse(app.buttons["mention-session-session-pr"].exists)
         XCTAssertFalse(app.buttons["mention-skill-swiftui-specialist"].exists)
         attachScreen(app, name: "Skill mention candidates")

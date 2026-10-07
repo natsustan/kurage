@@ -200,8 +200,10 @@ struct SessionComposer: View {
     let onSend: () -> Bool
     let onCancel: () -> Void
     let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
-    @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 64
-    @ScaledMetric(relativeTo: .body) private var mentionIconWidth = 24
+    @ScaledMetric(relativeTo: .body) private var mentionViewportUnit = 64
+    @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 44
+    @ScaledMetric(relativeTo: .body) private var mentionIconWidth = 20
+    @ScaledMetric(relativeTo: .body) private var mentionIconSize = 17
     @State private var isFocused = false
     @State private var selection: TextSelection?
     @State private var selectionRequest: MentionEditor.SelectionRequest?
@@ -325,7 +327,7 @@ struct SessionComposer: View {
         }
             .background {
                 MentionSuggestionsAnchor(isPresented: mentionQuery != nil && scenePhase == .active,
-                                         height: mentionRowHeight * (dynamicTypeSize.isAccessibilitySize ? 1 : 3)) {
+                                         height: mentionViewportUnit * (dynamicTypeSize.isAccessibilitySize ? 1 : 3)) {
                     if let query = mentionQuery { mentionMenu(query) }
                 }
             }
@@ -455,15 +457,13 @@ struct SessionComposer: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(sessions) { session in
                     Button { chooseSession(session, query: query) } label: {
-                        mentionRow(icon: "bubble.left.and.text.bubble.right", title: session.title,
-                                   subtitle: "Session", detail: nil)
+                        mentionRow(icon: MentionText.sessionImageName, title: session.title)
                     }
                     .accessibilityIdentifier("mention-session-\(session.id)")
                 }
                 ForEach(skills) { skill in
                     Button { chooseSkill(skill, query: query) } label: {
-                        mentionRow(icon: "sparkles", title: skill.name,
-                                   subtitle: "Skill", detail: skill.description)
+                        mentionRow(icon: MentionText.skillImageName, title: skill.name)
                     }
                     .accessibilityIdentifier("mention-skill-\(skill.token)")
                 }
@@ -482,7 +482,7 @@ struct SessionComposer: View {
                             ProgressView()
                             Text("Loading suggestions").foregroundStyle(.secondary)
                         }
-                        .frame(maxWidth: .infinity, minHeight: mentionRowHeight, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: mentionViewportUnit, alignment: .leading)
                         .padding(.horizontal, 14)
                     } else {
                         Text("No matches")
@@ -493,6 +493,7 @@ struct SessionComposer: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 8)
         }
         // The overlay supplies the available viewport height. Candidate rows
         // keep their text size and remain scrollable when space is limited.
@@ -504,19 +505,19 @@ struct SessionComposer: View {
         .accessibilityIdentifier("mention-suggestions")
     }
 
-    private func mentionRow(icon: String, title: String, subtitle: String, detail: String?) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
+    private func mentionRow(icon: String, title: String) -> some View {
+        let capHeight = UIFont.preferredFont(forTextStyle: .body).capHeight
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(icon)
+                .resizable()
+                .scaledToFit()
+                .frame(width: mentionIconSize, height: mentionIconSize)
                 .frame(width: mentionIconWidth)
+                .alignmentGuide(.firstTextBaseline) { ($0.height + capHeight) / 2 }
+                .accessibilityHidden(true)
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.body).lineLimit(1)
-                if let detail, !detail.isEmpty {
-                    Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
+            Text(title).font(.body).lineLimit(1)
             Spacer(minLength: 4)
-            Text(subtitle).font(.caption).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 14)
         .frame(height: mentionRowHeight)
