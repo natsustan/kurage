@@ -50,11 +50,13 @@ private struct DefaultModelsMachineSettings: View {
             } footer: {
                 Text("Choose up to 5 models for quick access in chat.")
             }
-            .listRowBackground(SettingsPalette.groupBackground)
+            .modifier(DefaultModelSectionStyle())
+            .listRowBackground(DefaultModelRowBackground(isFirst: true, isLast: true))
 
             Section {
                 ForEach(saved) { entry in
                     DefaultModelSettingsRow(entry: entry, unavailable: isUnavailable(entry))
+                        .listRowBackground(DefaultModelRowBackground(isFirst: entry.id == saved.first?.id))
                         .accessibilityIdentifier("default-model-\(entry.agentConfigID)-\(entry.modelID)")
                 }
                 .onMove { source, destination in
@@ -80,11 +82,15 @@ private struct DefaultModelsMachineSettings: View {
                 .accessibilityIdentifier("default-models-add")
                 .moveDisabled(true)
                 .deleteDisabled(true)
+                .listRowBackground(DefaultModelRowBackground(isFirst: saved.isEmpty, isLast: true))
             } header: {
                 HStack {
                     Text("Selected")
+                        .foregroundStyle(Color.primary)
+                        .fontWeight(.medium)
                     Spacer()
                     Text("\(saved.count) / 5")
+                        .fontWeight(.regular)
                         .accessibilityIdentifier("default-models-count")
                 }
             } footer: {
@@ -94,19 +100,23 @@ private struct DefaultModelsMachineSettings: View {
                     Text("Drag to reorder.")
                 }
             }
-            .listRowBackground(SettingsPalette.groupBackground)
+            .modifier(DefaultModelSectionStyle())
 
             if isLoading {
-                ProgressView("Loading models…").listRowBackground(Color.clear)
+                Section { CatalogLoadingRow() }
+                    .listSectionSeparator(.hidden)
             }
             if failed {
                 Section {
                     Button("Could not load all providers. Retry") { attempt += 1 }
                         .accessibilityIdentifier("default-models-retry")
                 }
-                .listRowBackground(SettingsPalette.groupBackground)
+                .modifier(DefaultModelSectionStyle())
+                .listRowBackground(DefaultModelRowBackground(isFirst: true, isLast: true))
             }
         }
+        .listStyle(.grouped)
+        .environment(\.defaultMinListRowHeight, 50)
         .scrollContentBackground(.hidden)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
         .environment(\.editMode, $editMode)
@@ -193,24 +203,40 @@ private struct AddDefaultModelView: View {
                         } label: {
                             HStack {
                                 DefaultModelSettingsRow(entry: entry)
-                                Spacer()
-                                if selected { Image(systemName: "checkmark") }
+                                if selected { Image(systemName: "checkmark").foregroundStyle(.blue) }
                             }
                             .foregroundStyle(.primary)
                         }
                         .disabled(selected || saved.count >= DefaultModel.limit)
+                        .accessibilityAddTraits(selected ? .isSelected : [])
+                        .listRowBackground(DefaultModelRowBackground(
+                            isFirst: entry.id == group.entries.first?.id,
+                            isLast: entry.id == group.entries.last?.id))
                         .accessibilityIdentifier("add-default-model-\(entry.agentConfigID)-\(entry.modelID)")
                     }
                 }
-                .listRowBackground(SettingsPalette.groupBackground)
+                .modifier(DefaultModelSectionStyle())
             }
-            if isLoading { ProgressView("Loading models…") }
+            if isLoading && !catalog.isEmpty {
+                Section { CatalogLoadingRow() }
+                    .listSectionSeparator(.hidden)
+            }
             if failed { Button("Could not load all providers. Retry", action: retry) }
             if groups.isEmpty && !isLoading && !failed { Text("No models found").foregroundStyle(.secondary) }
         }
+        .listStyle(.grouped)
+        .environment(\.defaultMinListRowHeight, 50)
         .searchable(text: $search, prompt: "Search models")
         .scrollContentBackground(.hidden)
         .background(SettingsPalette.background)
+        .overlay {
+            if isLoading && catalog.isEmpty && !failed {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.large)
+                    .accessibilityLabel("Loading models")
+            }
+        }
         .navigationTitle("Add Model")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -219,18 +245,61 @@ private struct AddDefaultModelView: View {
 private struct DefaultModelSettingsRow: View {
     let entry: DefaultModel
     var unavailable = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(spacing: 12) {
             ModelProviderIcon(icon: entry.icon)
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.modelName)
-                Text(entry.providerName).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 if unavailable { Text("Unavailable").font(.caption).foregroundStyle(.secondary) }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 42)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(entry.modelName), \(entry.providerName)")
+        .accessibilityValue(unavailable ? String(localized: "Unavailable") : "")
+    }
+}
+
+private struct CatalogLoadingRow: View {
+    var body: some View {
+        HStack {
+            Spacer(minLength: 0)
+            ProgressView()
+                .progressViewStyle(.circular)
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading models")
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
+private struct DefaultModelSectionStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listSectionMargins(.horizontal, 16)
+            .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
+            .listSectionSeparator(.hidden)
+            .listRowSeparatorTint(SettingsPalette.separator)
+    }
+}
+
+private struct DefaultModelRowBackground: View {
+    var isFirst = false
+    var isLast = false
+
+    var body: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: isFirst ? 20 : 0,
+            bottomLeadingRadius: isLast ? 20 : 0,
+            bottomTrailingRadius: isLast ? 20 : 0,
+            topTrailingRadius: isFirst ? 20 : 0
+        )
+        .fill(SettingsPalette.groupBackground)
     }
 }
 

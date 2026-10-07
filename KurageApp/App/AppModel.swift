@@ -85,6 +85,16 @@ final class AppModel {
         activeTabsByWorkspace[workspaceID, default: [:]][rootID] = tabID
     }
 
+    func recentModels(sessionID: String, agentConfigID: String? = nil) async throws -> [DefaultModel] {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let models = try await client.recentModels(sessionID: sessionID, agentConfigID: agentConfigID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
+        return models
+    }
+
     func newSessionOptions(templateSessionID: SessionSummary.ID, agentConfigID: String? = nil,
                            projectID: String? = nil, isTab: Bool = false, refresh: Bool = false) async throws -> NewSessionOptions {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
@@ -401,6 +411,18 @@ final class AppModel {
               let data = try? JSONEncoder().encode(models) else { return }
         quickActionDefaults.set(data, forKey: key)
         defaultModelsRevision += 1
+    }
+
+    func rememberDefaultModelReasoning(agentConfigID: String, modelID: String,
+                                       reasoning: DefaultModel.Reasoning, sessionID: String,
+                                       workspaceGeneration: Int, onlyIfMissing: Bool = false) {
+        guard self.workspaceGeneration == workspaceGeneration else { return }
+        var saved = defaultModels(sessionID: sessionID)
+        guard let index = saved.firstIndex(where: { $0.agentConfigID == agentConfigID && $0.modelID == modelID }),
+              saved[index].lastReasoning != reasoning,
+              !onlyIfMissing || saved[index].lastReasoning == nil else { return }
+        saved[index].lastReasoning = reasoning
+        saveDefaultModels(saved, sessionID: sessionID, workspaceGeneration: workspaceGeneration)
     }
 
     func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String,

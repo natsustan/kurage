@@ -13,22 +13,25 @@ struct SettingsView: View {
                         SettingsAccountSection(model: model, account: account)
                     }
                     SettingsPreferencesSection()
-                    NavigationLink {
-                        QuickActionsSettingsView(model: model)
-                    } label: {
-                        SettingsNavigationRow(title: "Quick Actions")
-                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
+                    VStack(spacing: 0) {
+                        NavigationLink {
+                            DefaultModelsSettingsView(model: model)
+                        } label: {
+                            SettingsNavigationRow(title: "Default Models")
+                        }
+                        .accessibilityIdentifier("settings-default-models")
+
+                        Divider().overlay(SettingsPalette.separator).padding(.leading, 18)
+
+                        NavigationLink {
+                            QuickActionsSettingsView(model: model)
+                        } label: {
+                            SettingsNavigationRow(title: "Quick Actions")
+                        }
+                        .accessibilityIdentifier("settings-quick-actions")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("settings-quick-actions")
-                    NavigationLink {
-                        DefaultModelsSettingsView(model: model)
-                    } label: {
-                        SettingsNavigationRow(title: "Default Models")
-                            .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("settings-default-models")
+                    .background(SettingsPalette.groupBackground, in: .rect(cornerRadius: 20))
                     if model.notifications.isConfigured {
                         NavigationLink {
                             NotificationSettingsView(model: model.notifications)

@@ -17,7 +17,7 @@ import { mentionSkills } from './mention-skills.mjs';
 import { requestMachine } from './machine-rpc.mjs';
 import { turnDiffSource, loadTurnDiff } from './turn-diff.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
-import { newSessionOptions, startSession } from './session-start.mjs';
+import { newSessionOptions, recentModels, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
@@ -556,6 +556,19 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, s
     await repo.destroy();
   }
 }
+
+window.kurageRecentModels = async (workspaceID, sessionID, agentConfigID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    return await withWorkspaceReadRepo(workspaceID, gatewayBaseURL, async repo =>
+      JSON.stringify(await recentModels(repo, workspaceID, sessionID, agentConfigID, controller.signal)),
+      operationID, controller, true);
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false, refresh = false) => {
   const controller = new AbortController();

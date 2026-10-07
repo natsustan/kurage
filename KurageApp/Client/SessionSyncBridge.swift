@@ -237,6 +237,24 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return try JSONDecoder().decode(ProjectGitResult.self, from: Data(json.utf8))
     }
 
+    func recentModels(sessionID: String, agentConfigID: String?, workspaceID: String,
+                      access: StreamsAccess) async throws -> [DefaultModel] {
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageRecentModels(workspaceID, sessionID, agentConfigID, baseURL, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "agentConfigID": agentConfigID ?? NSNull(), "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        return try JSONDecoder().decode([DefaultModel].self, from: Data(json.utf8))
+    }
+
     func newSessionOptions(templateSessionID: String, agentConfigID: String?, projectID: String? = nil, workspaceID: String,
                            access: StreamsAccess, isTab: Bool = false, refresh: Bool = false) async throws -> NewSessionOptions {
         let operationID = UUID().uuidString

@@ -61,6 +61,8 @@ struct NewSessionView: View {
     }
 
     @State private var configuration = NewSessionConfiguration()
+    @State private var recentModels: [DefaultModel] = []
+    @State private var composerPresentation = ComposerPresentation()
     @State private var request = LoadRequest()
     @State private var draft = ""
     @State private var mentions = ComposerMentionState()
@@ -102,6 +104,12 @@ struct NewSessionView: View {
     private var loadFailed: Bool { configuration.loadFailed }
 
     private var isCurrentWorkspace: Bool { model.workspaceGeneration == route.workspaceGeneration }
+
+    private var recentModelsLoadID: String? {
+        guard isCurrentWorkspace, scenePhase == .active, composerPresentation.showsRunConfig,
+              model.defaultModels(sessionID: templateSessionID).isEmpty else { return nil }
+        return "\(route.workspaceGeneration):\(templateSessionID)"
+    }
 
     private var machineName: String? {
         guard isCurrentWorkspace else { return nil }
@@ -146,10 +154,11 @@ struct NewSessionView: View {
             if pendingStart == nil {
                 SessionComposer(
                     draft: $draft, mentions: $mentions, attachments: $attachments,
+                    presentation: composerPresentation,
                     isSending: isStarting, isCancelling: false, isSessionRunning: false,
                     supportsTextSending: true, supportsTextSendingWhileRunning: false,
                     supportsSessionCancellation: false,
-                    runConfig: configuration.shortcutMenu(saved: model.defaultModels(sessionID: templateSessionID)),
+                    runConfig: configuration.shortcutMenu(saved: model.defaultModels(sessionID: templateSessionID), recent: recentModels),
                     placeholder: "Build anything",
                     identifiers: .init(container: "new-session-composer", field: "new-session-field",
                                        send: "new-session-send"),
@@ -164,8 +173,9 @@ struct NewSessionView: View {
                     },
                     onSend: start, onCancel: {}, onChooseRunConfig: choose,
                     onChooseDefaultModel: { entry in
-                        guard isCurrentWorkspace, !isStarting, scenePhase == .active,
-                              configuration.selectDefaultModel(entry) else { return }
+                        guard isCurrentWorkspace, !isStarting, scenePhase == .active else { return }
+                        rememberCurrentReasoning(onlyIfMissing: true)
+                        guard configuration.selectDefaultModel(entry, saved: model.defaultModels(sessionID: templateSessionID)) else { return }
                         request = LoadRequest(agentConfigID: entry.agentConfigID, attempt: request.attempt + 1)
                     }
                 )
@@ -178,6 +188,15 @@ struct NewSessionView: View {
         .navigationTitle(route.parentSessionID == nil ? "New Session" : "New Tab")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: request) { await load() }
+        .task(id: recentModelsLoadID) {
+            recentModels = []
+            guard recentModelsLoadID != nil else { return }
+            do {
+                let loaded = try await model.recentModels(sessionID: templateSessionID)
+                try Task.checkCancellation()
+                recentModels = loaded
+            } catch { /* The current model and Advanced remain available. */ }
+        }
         .onAppear { resumePendingStart() }
         .onDisappear {
             configuration.cancelLoads()
@@ -284,15 +303,26 @@ struct NewSessionView: View {
 
     private func choose(_ kind: RunConfigMenu.Section.Kind, _ value: String) {
         guard isCurrentWorkspace, !isStarting else { return }
+        if kind != .reasoning { rememberCurrentReasoning(onlyIfMissing: true) }
         switch kind {
         case .provider:
             guard configuration.selectProvider(value) else { return }
             request = LoadRequest(agentConfigID: value, attempt: request.attempt + 1)
         case .model:
-            configuration.selectModel(value)
+            configuration.selectModel(value, saved: model.defaultModels(sessionID: templateSessionID))
         case .reasoning:
             configuration.selectReasoning(value)
+            rememberCurrentReasoning()
         }
+    }
+
+    private func rememberCurrentReasoning(onlyIfMissing: Bool = false) {
+        guard isCurrentWorkspace, !isLoading, !loadFailed,
+              let options, let runConfig, let modelID = runConfig.model?.value,
+              let reasoning = runConfig.reasoning, let selected = runConfig.selectedReasoning else { return }
+        model.rememberDefaultModelReasoning(agentConfigID: options.agentConfigID, modelID: modelID,
+            reasoning: .init(configOptionID: reasoning.configOptionID, value: selected.value),
+            sessionID: templateSessionID, workspaceGeneration: route.workspaceGeneration, onlyIfMissing: onlyIfMissing)
     }
 
     private func start() -> Bool {
@@ -303,6 +333,7 @@ struct NewSessionView: View {
                 attachments: attachments, agentConfigID: options.agentConfigID.isEmpty ? nil : options.agentConfigID,
                 selections: runConfig?.selections ?? [], projectID: projectID, projectName: projectName,
                 templateSessionID: route.parentSessionID ?? templateSessionID, parentSessionID: route.parentSessionID)
+            rememberCurrentReasoning()
             draft = ""
             mentions.clear()
             attachments = []
@@ -394,15 +425,13 @@ final class NewSessionConfiguration {
         return menu
     }
 
-    func shortcutMenu(saved: [DefaultModel]) -> RunConfigMenu? {
+    func shortcutMenu(saved: [DefaultModel], recent: [DefaultModel] = []) -> RunConfigMenu? {
         guard var menu, let options else { return nil }
-        let candidates = saved.isEmpty ? options.providers.flatMap { provider in
-            cached[provider.value].map(DefaultModel.candidates) ?? []
-        } : saved
-        menu.modelShortcuts = candidates.map { entry in
+        menu.modelShortcuts = (saved.isEmpty ? recent : saved).compactMap { entry in
             let available = options.providers.contains { $0.value == entry.agentConfigID } &&
                 cached[entry.agentConfigID]?.runConfig?.model?.options.contains { $0.value == entry.modelID } == true
-            return .init(model: entry,
+            guard !saved.isEmpty || available else { return nil }
+            return RunConfigMenu.ModelShortcut(model: entry,
                 isSelected: entry.agentConfigID == options.agentConfigID && entry.modelID == runConfig?.model?.value,
                 isEnabled: available && !isLoading && !loadFailed)
         }
@@ -411,18 +440,19 @@ final class NewSessionConfiguration {
                 modelID: selected.value, providerName: options.provider?.label ?? options.agentConfigID,
                 modelName: selected.label, icon: options.provider?.icon), isSelected: true, isEnabled: false), at: 0)
         }
+        if saved.isEmpty { menu.modelShortcuts = Array(menu.modelShortcuts.prefix(DefaultModel.limit)) }
         return menu
     }
 
     /// Resolve the provider and model together; a same-named model in another provider is not interchangeable.
-    func selectDefaultModel(_ entry: DefaultModel) -> Bool {
+    func selectDefaultModel(_ entry: DefaultModel, saved: [DefaultModel] = []) -> Bool {
         guard !isLoading, !loadFailed,
               options?.providers.contains(where: { $0.value == entry.agentConfigID }) == true,
               cached[entry.agentConfigID]?.runConfig?.model?.options.contains(where: { $0.value == entry.modelID }) == true else {
             return false
         }
         if options?.agentConfigID != entry.agentConfigID { selectProvider(entry.agentConfigID) }
-        selectModel(entry.modelID)
+        selectModel(entry.modelID, saved: saved)
         return true
     }
 
@@ -446,9 +476,14 @@ final class NewSessionConfiguration {
         return true
     }
 
-    func selectModel(_ value: String) {
-        guard !isLoading, !loadFailed else { return }
-        runConfig?.selectModel(value)
+    func selectModel(_ value: String, saved: [DefaultModel] = []) {
+        guard !isLoading, !loadFailed, var config = runConfig,
+              config.model?.options.contains(where: { $0.value == value }) == true else { return }
+        config.selectModel(value)
+        if let favorite = saved.first(where: { $0.agentConfigID == options?.agentConfigID && $0.modelID == value }) {
+            favorite.restoreReasoning(in: &config)
+        }
+        runConfig = config
         rememberSelection()
     }
 
@@ -562,6 +597,7 @@ final class NewSessionConfiguration {
         var current = loaded.runConfig
         if let selected = selections[loaded.agentConfigID] {
             if let value = selected.model?.value { current?.selectModel(value) }
+            current?.reasoning?.value = nil
             if let value = selected.reasoning?.value { current?.selectReasoning(value) }
             selections[loaded.agentConfigID] = current
         }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// A machine-scoped shortcut, never a reasoning preset or an automatic default.
+/// A machine-scoped shortcut that remembers its last reasoning selection.
 struct DefaultModel: Codable, Equatable, Identifiable, Sendable {
     struct ID: Hashable, Sendable {
         let agentConfigID: String
@@ -12,6 +12,20 @@ struct DefaultModel: Codable, Equatable, Identifiable, Sendable {
     var providerName: String
     var modelName: String
     var icon: String? = nil
+    var lastReasoning: Reasoning? = nil
+
+    struct Reasoning: Codable, Equatable, Sendable {
+        let configOptionID: String
+        let value: String
+    }
+
+    /// Never carry another model's effort into a favorite with no valid memory.
+    func restoreReasoning(in config: inout NewSessionRunConfig) {
+        config.reasoning?.value = nil
+        guard let lastReasoning,
+              config.reasoning?.configOptionID == lastReasoning.configOptionID else { return }
+        config.selectReasoning(lastReasoning.value)
+    }
     var id: ID { ID(agentConfigID: agentConfigID, modelID: modelID) }
 
     static let limit = 5
@@ -42,16 +56,17 @@ extension RunConfigMenu {
 }
 
 extension SessionRunConfig {
-    func shortcutMenu(saved: [DefaultModel], agentConfigID: String?, agentName: String) -> RunConfigMenu? {
+    func shortcutMenu(saved: [DefaultModel], recent: [DefaultModel] = [], agentConfigID: String?, agentName: String) -> RunConfigMenu? {
         guard var menu else { return nil }
-        menu.providerLabel = saved.first { $0.agentConfigID == agentConfigID }?.providerName ?? agentName
+        let shortcuts = saved.isEmpty ? recent : saved
+        menu.providerLabel = shortcuts.first { $0.agentConfigID == agentConfigID }?.providerName ?? agentName
         let providerID = agentConfigID ?? ""
-        let icon = saved.first { $0.agentConfigID == agentConfigID }?.icon ?? agentName
+        let icon = shortcuts.first { $0.agentConfigID == agentConfigID }?.icon ?? agentName
         let available = editable?.kind == .model ? editable?.options ?? [] : []
-        let candidates = saved.isEmpty ? available.map {
-            DefaultModel(agentConfigID: providerID, modelID: $0.value,
-                         providerName: menu.providerLabel ?? agentName, modelName: $0.label, icon: icon)
-        } : saved.filter { $0.agentConfigID == agentConfigID }
+        let candidates = shortcuts.filter { candidate in
+            candidate.agentConfigID == agentConfigID && (!saved.isEmpty ||
+                candidate.modelID == model?.value || available.contains { $0.value == candidate.modelID })
+        }
         menu.modelShortcuts = candidates.map { candidate in
             .init(model: candidate, isSelected: candidate.modelID == model?.value,
                   isEnabled: available.contains { $0.value == candidate.modelID })
@@ -61,6 +76,7 @@ extension SessionRunConfig {
                 providerName: menu.providerLabel ?? agentName, modelName: model.label, icon: icon),
                 isSelected: true, isEnabled: false), at: 0)
         }
+        if saved.isEmpty { menu.modelShortcuts = Array(menu.modelShortcuts.prefix(DefaultModel.limit)) }
         return menu
     }
 }

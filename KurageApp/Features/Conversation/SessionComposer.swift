@@ -799,8 +799,13 @@ private struct RunConfigPanel: View {
     var body: some View {
         VStack(spacing: 16) {
             HStack {
-                Button("Close", systemImage: "xmark", action: onDismiss)
-                    .labelStyle(.iconOnly)
+                Button(action: onDismiss) {
+                    Image("settings-6-regular")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                }
+                    .accessibilityLabel("Close")
                     .frame(width: 44, height: 44)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
                     .accessibilityIdentifier("run-config-close")
@@ -832,6 +837,21 @@ private struct RunConfigPanel: View {
                     }
                 }
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+            } else {
+                Button(action: onAdvanced) {
+                    HStack {
+                        Text("Choose a model…")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .contentShape(.rect)
+                }
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                .accessibilityIdentifier("run-config-choose-model")
             }
             if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
                reasoning.options.count > 1 {
@@ -879,11 +899,19 @@ private struct RunConfigModelRow: View {
             .frame(minHeight: 50)
             .contentShape(.rect)
         }
+        .buttonStyle(ModelSelectionStyle())
         .disabled(!shortcut.isEnabled)
         .opacity(shortcut.isEnabled || shortcut.isSelected ? 1 : 0.45)
         .accessibilityLabel("\(shortcut.model.modelName), \(shortcut.model.providerName)")
         .accessibilityAddTraits(shortcut.isSelected ? .isSelected : [])
         .accessibilityIdentifier("model-shortcut-\(shortcut.model.agentConfigID)-\(shortcut.model.modelID)")
+    }
+
+    // The row owns unavailable-state opacity; PlainButtonStyle also dims selected, locked models.
+    private struct ModelSelectionStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+        }
     }
 }
 

@@ -86,6 +86,56 @@ async function readDocumentBaseline(repo, docID, signal, cache) {
   return baseline;
 }
 
+// Read only the newest root sessions, never every transcript in a workspace.
+// These are observed model choices, not capability defaults or web-local preferences.
+export async function recentModels(repo, workspaceID, sessionID, agentConfigID, signal) {
+  const rows = await repo.listDoc();
+  signal?.throwIfAborted();
+  const source = rows.find(row => row.docId === `session-${sessionID}` && !row.deleted);
+  const machineID = text(source?.meta?.machineId);
+  if (!machineID) return [];
+  const flockDocID = `${workspaceID}:mf:${machineID}`;
+  const { flock } = await repo.openFlockDoc(flockDocID);
+  if (!synced(await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'], signal }))) {
+    throw new Error('Machine configuration sync failed');
+  }
+  signal?.throwIfAborted();
+  const providers = readProviders(flock, machineID);
+  const candidates = rows.filter(row => isRootSession(row) && row.meta?.machineId === machineID &&
+      (!agentConfigID || row.meta.agentConfigId === agentConfigID) &&
+      providers.some(provider => provider.id === row.meta.agentConfigId))
+    .sort((a, b) => activityTime(b.meta) - activityTime(a.meta) || a.docId.localeCompare(b.docId))
+    .slice(0, 30);
+  const models = [];
+  const seen = new Set();
+  for (const row of candidates) {
+    signal?.throwIfAborted();
+    const provider = providers.find(provider => provider.id === row.meta.agentConfigId);
+    if (provider.cliType !== row.meta.cliType || provider.agentType !== row.meta.agentType) continue;
+    let baseline;
+    try {
+      baseline = await readDocumentBaseline(repo, row.docId, signal);
+    } catch {
+      signal?.throwIfAborted();
+      // An unreadable session must not hide the remaining recent choices.
+      continue;
+    }
+    signal?.throwIfAborted();
+    const config = projectNewSessionRunConfig({ ...provider,
+      capability: flock.get(['acpCapability', provider.id]), baseline });
+    const modelID = text(config?.model?.configOptionID
+      ? baseline.configOptionValues?.[config.model.configOptionID] ?? baseline.modelId : baseline.modelId);
+    const option = config?.model?.options.find(option => option.value === modelID);
+    const key = JSON.stringify([provider.id, modelID]);
+    if (!option || seen.has(key)) continue;
+    seen.add(key);
+    models.push({ agentConfigID: provider.id, modelID, providerName: provider.name,
+      modelName: option.label, icon: provider.icon });
+    if (models.length === 5) break;
+  }
+  return models;
+}
+
 // A new session reuses the machine and local project of a recent root session
 // in the same project and starts in that project's directory. Its agent defaults
 // to that session's and may be any agent configured on the same machine.

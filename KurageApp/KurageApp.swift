@@ -62,6 +62,7 @@ struct KurageApp: App {
                 workspaceRefreshDelay: ProcessInfo.processInfo.arguments.contains("--fixture-slow-workspaces") ? .seconds(15)
                     : ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure") ? .seconds(1) : nil,
                 failWorkspaceRefreshOnce: ProcessInfo.processInfo.arguments.contains("--fixture-workspace-failure"),
+                hasModelHistory: !ProcessInfo.processInfo.arguments.contains("--fixture-no-model-history"),
                 accountID: ProcessInfo.processInfo.arguments.contains("--fixture-notifications") ? "fixture-user" : nil)
             : HTTPLodyClient()
         let notificationService: any PushNotificationService = usesFixtures

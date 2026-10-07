@@ -68,7 +68,59 @@ final class DefaultModelsFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testEmptyShortlistLightAndLargeTextPicker() {
+    func testFavoritesRememberIndependentReasoningAfterRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "-appTheme", "dark"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.buttons["account-menu"])
+        tap(app.buttons["settings-default-models"])
+        clearSavedModels(app)
+        for id in ["codex-gpt-5.5", "codex-gpt-5.4-mini"] {
+            tap(app.buttons["default-models-add"])
+            tap(app.buttons["add-default-model-\(id)"])
+        }
+        tap(app.navigationBars["Default Models"].buttons.element(boundBy: 0))
+        tap(app.buttons["settings-close"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        tap(app.buttons["run-config-menu"])
+        let full = app.buttons["model-shortcut-codex-gpt-5.5"]
+        let mini = app.buttons["model-shortcut-codex-gpt-5.4-mini"]
+        let dial = app.otherElements["reasoning-dial"]
+        tap(full)
+        XCTAssertTrue(dial.waitForExistence(timeout: 5))
+        dial.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let fullEffort = dial.value as? String
+        XCTAssertNotEqual(fullEffort, "Low")
+        tap(mini)
+        // The fixture mini offers only Low, so its choice is in Advanced instead of a dial.
+        tap(app.buttons["run-config-advanced"])
+        tap(app.buttons["run-config-reasoning"])
+        tap(app.buttons["Low"])
+        tap(app.buttons["run-config-done"])
+        tap(app.descendants(matching: .any)["new-session-field"])
+        XCTAssertEqual(app.buttons["run-config-menu"].label, "Provider Codex, model gpt-5.4-mini, reasoning Low")
+        tap(app.buttons["run-config-menu"])
+        tap(full)
+        XCTAssertEqual(dial.value as? String, fullEffort)
+        tap(mini)
+        tap(app.buttons["run-config-close"])
+        XCTAssertEqual(app.buttons["run-config-menu"].label, "Provider Codex, model gpt-5.4-mini, reasoning Low")
+        app.terminate()
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.buttons["new-session-local:machine-1:prism"])
+        tap(app.buttons["run-config-menu"])
+        tap(full)
+        XCTAssertEqual(dial.value as? String, fullEffort)
+        tap(mini)
+        tap(app.buttons["run-config-close"])
+        XCTAssertEqual(app.buttons["run-config-menu"].label, "Provider Codex, model gpt-5.4-mini, reasoning Low")
+        attach(app, "Favorites restore independent reasoning")
+    }
+
+    @MainActor
+    func testRecentModelsLightAndLargeTextPicker() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "-appTheme", "light", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
@@ -89,7 +141,9 @@ final class DefaultModelsFlowTests: XCTestCase {
         let codex = app.buttons["model-shortcut-codex-gpt-5.5"]
         tap(codex)
         XCTAssertTrue(codex.wait(for: \.isSelected, toEqual: true, timeout: 5))
-        attach(app, "Compact model picker light large text")
+        XCTAssertFalse(app.buttons["model-shortcut-claude-opus"].exists)
+        XCTAssertFalse(app.buttons["model-shortcut-codex-gpt-5.4-mini"].exists)
+        attach(app, "Recent models light large text")
         let panel = app.scrollViews["run-config-scroll"]
         let modelY = codex.frame.minY
         let dial = app.otherElements["reasoning-dial"]
@@ -110,6 +164,68 @@ final class DefaultModelsFlowTests: XCTestCase {
         tap(app.buttons["run-config-close"])
         XCTAssertTrue(codex.waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["new-session-field"].exists)
+    }
+
+    @MainActor
+    func testCurrentRecentModelKeepsSelectionAndReasoningOnlyEditing() {
+        for theme in ["light", "dark"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--fixture", "-appTheme", theme]
+            app.launch()
+            tap(app.buttons["sign-in-button"])
+            tap(app.buttons["account-menu"])
+            tap(app.buttons["settings-default-models"])
+            clearSavedModels(app)
+            tap(app.navigationBars["Default Models"].buttons.element(boundBy: 0))
+            tap(app.buttons["settings-close"])
+            tap(app.descendants(matching: .any)["session-session-long"])
+            tap(app.descendants(matching: .any)["follow-up-field"])
+            tap(app.buttons["run-config-menu"])
+            let current = app.buttons["model-shortcut-codex-gpt-5.5"]
+            XCTAssertTrue(current.waitForExistence(timeout: 5))
+            XCTAssertTrue(current.isSelected)
+            XCTAssertFalse(current.isEnabled)
+            XCTAssertFalse(app.buttons["model-shortcut-codex-gpt-5.4-mini"].exists)
+            let dial = app.otherElements["reasoning-dial"]
+            XCTAssertTrue(dial.waitForExistence(timeout: 5))
+            dial.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+            XCTAssertEqual(dial.value as? String, "Low")
+            XCTAssertTrue(current.isSelected)
+            attach(app, "Current recent model \(theme)")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testNoHistoryOffersAdvancedAndShowsExplicitSelection() {
+        for theme in ["dark", "light"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--fixture", "--fixture-no-model-history", "-appTheme", theme]
+            app.launch()
+            tap(app.buttons["sign-in-button"])
+            tap(app.buttons["account-menu"])
+            tap(app.buttons["settings-default-models"])
+            clearSavedModels(app)
+            tap(app.navigationBars["Default Models"].buttons.element(boundBy: 0))
+            tap(app.buttons["settings-close"])
+            tap(app.buttons["new-session-local:machine-1:prism"])
+            tap(app.buttons["run-config-menu"])
+            let choose = app.buttons["run-config-choose-model"]
+            XCTAssertTrue(choose.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model-shortcut-")).firstMatch.exists)
+            attach(app, "No model history \(theme)")
+            tap(choose)
+            XCTAssertTrue(app.navigationBars["Advanced"].waitForExistence(timeout: 5))
+            tap(app.buttons["run-config-model"])
+            tap(app.buttons["Opus"])
+            tap(app.buttons["run-config-done"])
+            tap(app.descendants(matching: .any)["new-session-field"])
+            tap(app.buttons["run-config-menu"])
+            XCTAssertTrue(app.buttons["model-shortcut-claude-opus"].wait(for: \.isSelected, toEqual: true, timeout: 5))
+            XCTAssertFalse(choose.exists)
+            attach(app, "Explicit model after empty history \(theme)")
+            app.terminate()
+        }
     }
 
     @MainActor

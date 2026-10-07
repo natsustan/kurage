@@ -706,6 +706,15 @@ final class HTTPLodyClient: LodyClient {
         return result
     }
 
+    func recentModels(sessionID: String, agentConfigID: String?, workspaceID: String) async throws -> [DefaultModel] {
+        let (bridge, access, generation) = try await authorizedSessionBridge(workspaceID: workspaceID)
+        let models = try await bridge.recentModels(sessionID: sessionID, agentConfigID: agentConfigID,
+                                                   workspaceID: workspaceID, access: access)
+        try Task.checkCancellation()
+        guard generation == authenticationGeneration, account != nil else { throw LodyClientError.signedOut }
+        return models
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,

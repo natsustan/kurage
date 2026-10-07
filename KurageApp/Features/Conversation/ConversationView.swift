@@ -77,8 +77,16 @@ struct ConversationContent: View {
     @State private var isVisible = false
     @State private var notificationVisibilityOwner = UUID()
     @State var composerPresentation = ComposerPresentation()
+    @State private var recentModels: [DefaultModel] = []
     @State private var bottomMessageAt: Double?
     @State private var loadedMessageAt: Double?
+
+    private var recentModelsLoadID: String? {
+        guard isCurrentWorkspace, scenePhase == .active, composerPresentation.showsRunConfig,
+              model.defaultModels(sessionID: rootSessionID).isEmpty,
+              let agentConfigID = session?.agentConfigID else { return nil }
+        return "\(workspaceGeneration):\(sessionID):\(agentConfigID)"
+    }
 
     /// The live observation is fresher than the session list or the tab
     /// projection, which both lag behind a turn that just started or ended.
@@ -176,6 +184,7 @@ struct ConversationContent: View {
                 supportsPermissionResponses: !isReadOnly && model.supportsPermissionResponses,
                 runConfig: runConfigState.displayed?.shortcutMenu(
                     saved: model.defaultModels(sessionID: rootSessionID),
+                    recent: recentModels,
                     agentConfigID: session?.agentConfigID, agentName: session?.agentName ?? "Agent"),
                 contextWindowUsage: contextWindowUsage,
                 cacheUsage: displayedConversation?.cacheUsage,
@@ -326,6 +335,15 @@ struct ConversationContent: View {
                 }
             }
         }
+        .task(id: recentModelsLoadID) {
+            recentModels = []
+            guard recentModelsLoadID != nil else { return }
+            do {
+                let loaded = try await model.recentModels(sessionID: sessionID, agentConfigID: session?.agentConfigID)
+                try Task.checkCancellation()
+                recentModels = loaded
+            } catch { /* The current model and Advanced remain available. */ }
+        }
         .task(id: ObservationKey(workspaceID: model.selectedWorkspaceID, sessionID: sessionID,
                                  active: scenePhase == .active && !isStarting, refreshID: refreshID)) {
             guard scenePhase == .active else { return }
@@ -470,6 +488,14 @@ struct ConversationContent: View {
     private func chooseRunConfig(_ value: String) {
         guard isCurrentWorkspace else { return }
         runConfigState.choose(value)
+        if let config = runConfigState.displayed, let editable = config.editable,
+           editable.kind == .reasoning, editable.options.contains(where: { $0.value == value }),
+           let optionID = editable.configOptionID, let modelID = config.model?.value,
+           let agentConfigID = session?.agentConfigID {
+            model.rememberDefaultModelReasoning(agentConfigID: agentConfigID, modelID: modelID,
+                reasoning: .init(configOptionID: optionID, value: value),
+                sessionID: rootSessionID, workspaceGeneration: workspaceGeneration)
+        }
     }
 
     private func cancelSession() {

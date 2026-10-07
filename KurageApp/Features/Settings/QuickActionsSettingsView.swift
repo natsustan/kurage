@@ -155,7 +155,9 @@ private struct QuickActionProfileHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(profile.title).font(.subheadline.weight(.semibold))
+            Text(profile.title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.primary)
             Text(profile.description).font(.footnote).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 18)

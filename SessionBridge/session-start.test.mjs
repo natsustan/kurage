@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LoroDoc } from 'loro-crdt';
 import { applyNewSessionChoices, projectNewSessionRunConfig } from './run-config.mjs';
-import { newSessionOptions, providerIcon, startSession } from './session-start.mjs';
+import { newSessionOptions, providerIcon, recentModels, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 
 const capability = {
@@ -76,6 +76,82 @@ function fixture() {
 const start = (repo, overrides = {}) => startSession(repo, 'ws', {
   templateSessionID: 'template', sessionID: 'new', turnID: 'turn-1', userID: 'user',
   text: 'Build the thing', timestamp: '2026-09-25T00:00:00.000Z', selections: [], ...overrides,
+});
+
+test('recent models are newest-first, deduplicated by provider and capped at five', async () => {
+  const { repo, rows, docs, flock, calls } = fixture();
+  const models = ['shared', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+  const modelCapability = { cliType: 'builtin', agentType: 'codex', configOptions: [
+    { id: 'model', category: 'model', type: 'select', currentValue: 'sixth',
+      options: models.map(value => ({ value, name: `Label ${value}` })) },
+  ] };
+  flock.set('acpCapability/cfg', modelCapability);
+  flock.set('acpCapability/claude', { ...modelCapability, agentType: 'claude' });
+  // Deliberately insert out of recency order; duplicates must not consume the limit.
+  for (const [id, provider, model, time] of [
+    ['old', 'cfg', 'sixth', 10], ['third', 'cfg', 'third', 70], ['same-other-provider', 'claude', 'shared', 90],
+    ['latest', 'cfg', 'shared', 100], ['duplicate', 'cfg', 'shared', 95], ['fifth', 'cfg', 'fifth', 50],
+    ['second', 'cfg', 'second', 80], ['fourth', 'cfg', 'fourth', 60],
+  ]) {
+    const source = provider === 'cfg' ? 'session-template' : 'session-claude-elsewhere';
+    rows.set(`session-${id}`, { ...rows.get(source), lastMessageAt: time });
+    const doc = new LoroDoc();
+    doc.getList('history').push({ id, role: 'user', inputConfig: { modelId: model } });
+    doc.commit();
+    docs.set(`session-${id}`, doc);
+  }
+  const result = await recentModels(repo, 'workspace-a', 'template');
+  assert.deepEqual(result.map(model => [model.agentConfigID, model.modelID]),
+    [['cfg', 'shared'], ['claude', 'shared'], ['cfg', 'second'], ['cfg', 'third'], ['cfg', 'fourth']]);
+  assert.equal(result[0].modelName, 'Label shared');
+  assert.equal(result[0].icon, 'codex');
+  assert.deepEqual(calls[0].flockDocIds, ['workspace-a:mf:mac']);
+  assert.deepEqual((await recentModels(repo, 'ws', 'template', 'cfg')).map(model => model.modelID),
+    ['shared', 'second', 'third', 'fourth', 'fifth']);
+});
+
+test('recent models exclude foreign, archived, child, deleted and unavailable sessions without inventing defaults', async () => {
+  const { repo, rows, docs } = fixture();
+  const template = rows.get('session-template');
+  for (const [id, patch] of [
+    ['foreign', { machineId: 'pc' }], ['archived', { isArchived: true }],
+    ['child', { parentSessionId: 'template' }], ['deleted', {}],
+    ['removed-provider', { agentConfigId: 'removed' }], ['replaced-provider', { agentType: 'claude' }],
+  ]) {
+    rows.set(`session-${id}`, { ...template, lastMessageAt: 100, ...patch });
+    const doc = new LoroDoc();
+    doc.import(docs.get('session-template').export({ mode: 'snapshot' }));
+    docs.set(`session-${id}`, doc);
+  }
+  const list = repo.listDoc;
+  repo.listDoc = async () => (await list()).map(row => row.docId === 'session-deleted' ? { ...row, deleted: true } : row);
+  // A retired model and a turn without an explicit model must not become capability defaults.
+  docs.get('session-template').getList('history').push({ id: 'removed', role: 'user', inputConfig: { modelId: 'retired' } });
+  docs.get('session-claude-elsewhere').getList('history').push({ id: 'none', role: 'user', inputConfig: {} });
+  assert.deepEqual(await recentModels(repo, 'ws', 'template'), []);
+});
+
+test('recent models use applied runtime and registry model option values, skip read failures, and honor cancellation', async () => {
+  const { repo, docs, rows, flock } = fixture();
+  docs.get('session-template').getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  docs.get('session-template').getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  rows.get('session-claude-elsewhere').cliType = 'registry';
+  flock.get('agentConfig/claude').cliType = 'registry';
+  flock.get('acpCapability/claude').cliType = 'registry';
+  docs.get('session-claude-elsewhere').getList('history').push({ id: 'registry', role: 'user',
+    inputConfig: { modelId: 'sonnet', configOptionValues: { model: 'opus' } } });
+  const result = await recentModels(repo, 'ws', 'template');
+  assert.deepEqual(result.map(model => model.modelID), ['opus', 'gpt-5.4-mini']);
+  const sync = repo.sync;
+  repo.sync = async options => options.docIds?.includes('session-claude-elsewhere')
+    ? { ok: false, outcome: 'failed' } : sync(options);
+  assert.deepEqual((await recentModels(repo, 'ws', 'template')).map(model => model.modelID), ['gpt-5.4-mini']);
+  const controller = new AbortController();
+  repo.sync = async options => {
+    if (options.docIds) { controller.abort(); throw new Error('Cancelled transport'); }
+    return sync(options);
+  };
+  await assert.rejects(recentModels(repo, 'ws', 'template', undefined, controller.signal), { name: 'AbortError' });
 });
 
 test('provider icons follow configured brand and type, not a mutable display name', async () => {
