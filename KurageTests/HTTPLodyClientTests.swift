@@ -1207,7 +1207,7 @@ struct StreamFetchHandlerTests {
         #expect(result as? Bool == true)
     }
 
-    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview", "project-git"])
+    @Test(.timeLimit(.minutes(1)), arguments: ["options", "tab-options", "refresh-options", "catalog", "browse", "select", "send", "file-preview", "branch-changes", "branch-preview", "project-git"])
     func cancellingNewSessionOptionsStopsTheNativeBridgeRequest(operation: String) async throws {
         try await verifyCancellingNativeBridgeRequest(operation: operation)
     }
@@ -1256,6 +1256,10 @@ struct StreamFetchHandlerTests {
             } else if operation == "file-preview" {
                 _ = try await bridge.filePreview(sessionID: "chat", turnID: "turn", path: "file.swift",
                                                   workspaceID: "workspace", access: access)
+            } else if operation == "branch-changes" {
+                _ = try await bridge.branchChanges(sessionID: "chat", workspaceID: "workspace", access: access)
+            } else if operation == "branch-preview" {
+                _ = try await bridge.branchFilePreview(sessionID: "chat", path: "file.swift", workspaceID: "workspace", access: access)
             } else if operation == "project-git" {
                 _ = try await bridge.projectGit(templateSessionID: "template", projectID: "local:machine:project",
                     userID: "user",

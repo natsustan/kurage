@@ -76,22 +76,40 @@ struct ConversationChangesView: View {
     let latestTurnNumber: Int
     var initialTurnNumber: Int? = nil
     let loadPreview: FilePreviewLoader?
+    let loadBranch: (@MainActor () async throws -> BranchFileChanges)?
+    let loadBranchPreview: FilePreviewLoader?
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var detent: PresentationDetent = .large
-    @State private var showsAllTurns: Bool
+    @State private var showsBranch: Bool
+    @State private var branch: BranchFileChanges?
+    @State private var branchFailed = false
+    @State private var branchAttempt = 0
+
+    private struct BranchLoadKey: Equatable {
+        let groups: [ConversationFileChangeGroup]
+        let latestTurnNumber: Int
+        let enabled: Bool
+        let active: Bool
+        let attempt: Int
+    }
 
     init(groups: [ConversationFileChangeGroup], latestTurnNumber: Int, initialTurnNumber: Int? = nil,
-         loadPreview: FilePreviewLoader? = nil) {
+         loadPreview: FilePreviewLoader? = nil,
+         loadBranch: (@MainActor () async throws -> BranchFileChanges)? = nil,
+         loadBranchPreview: FilePreviewLoader? = nil) {
         self.groups = groups
         self.latestTurnNumber = latestTurnNumber
         self.initialTurnNumber = initialTurnNumber
         self.loadPreview = loadPreview
-        _showsAllTurns = State(initialValue: initialTurnNumber == nil)
+        self.loadBranch = loadBranch
+        self.loadBranchPreview = loadBranchPreview
+        _showsBranch = State(initialValue: initialTurnNumber == nil)
     }
 
     private var visibleGroups: [ConversationFileChangeGroup] {
-        showsAllTurns ? groups : groups.filter { $0.turnNumber == (initialTurnNumber ?? latestTurnNumber) }
+        groups.filter { $0.turnNumber == (initialTurnNumber ?? latestTurnNumber) }
     }
 
     private var drawerBackground: Color {
@@ -101,8 +119,8 @@ struct ConversationChangesView: View {
     var body: some View {
         VStack(spacing: 0) {
             FileChangesHeader(
-                summary: FileChangeSummary(visibleGroups),
-                showsAllTurns: $showsAllTurns,
+                summary: showsBranch ? branch.flatMap { $0.status == .ready ? FileChangeSummary(files: $0.files) : nil } : FileChangeSummary(visibleGroups),
+                showsBranch: $showsBranch,
                 turnTitle: initialTurnNumber == nil ? "Last turn" : "This turn",
                 expanded: detent == .large,
                 onResize: { detent = detent == .large ? .medium : .large },
@@ -110,12 +128,19 @@ struct ConversationChangesView: View {
             )
             Divider()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    if visibleGroups.isEmpty {
-                        ContentUnavailableView("No recorded changes", systemImage: "doc.text")
-                    }
-                    ForEach(visibleGroups) { group in
-                        FileChangeTurnSection(group: group, showsHeading: showsAllTurns, loadPreview: loadPreview)
+                Group {
+                    if showsBranch {
+                        BranchChangesContent(branch: branch, failed: branchFailed, loadPreview: loadBranchPreview,
+                                             onRetry: { branchAttempt += 1 })
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            if visibleGroups.isEmpty {
+                                ContentUnavailableView("No recorded changes", systemImage: "doc.text")
+                            }
+                            ForEach(visibleGroups) { group in
+                                FileChangeTurnSection(group: group, showsHeading: false, loadPreview: loadPreview)
+                            }
+                        }
                     }
                 }
                 .padding(16)
@@ -127,13 +152,66 @@ struct ConversationChangesView: View {
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.hidden)
         .presentationCornerRadius(40)
+        .task(id: BranchLoadKey(groups: groups, latestTurnNumber: latestTurnNumber, enabled: showsBranch,
+                               active: scenePhase == .active, attempt: branchAttempt)) {
+            guard showsBranch, scenePhase == .active else { return }
+            branchFailed = false
+            guard let loadBranch else {
+                branch = BranchFileChanges(status: .unavailable, reason: "unsupported")
+                return
+            }
+            do {
+                let result = try await loadBranch()
+                try Task.checkCancellation()
+                let revision = UUID().uuidString
+                branch = BranchFileChanges(status: result.status, files: result.files.map { file in
+                    var refreshed = file
+                    refreshed.previewRevision = revision
+                    return refreshed
+                }, reason: result.reason)
+            } catch {
+                guard !Task.isCancelled, !(error is CancellationError) else { return }
+                branchFailed = true
+            }
+        }
+    }
+}
+
+private struct BranchChangesContent: View {
+    let branch: BranchFileChanges?
+    let failed: Bool
+    let loadPreview: FilePreviewLoader?
+    let onRetry: () -> Void
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 16) {
+            if failed {
+                FilePreviewNotice(message: "Could not load branch changes. Check the session machine and connection, then retry.",
+                                  onRetry: onRetry)
+            } else if let branch {
+                if branch.status == .unavailable {
+                    FilePreviewNotice(message: branch.explanation, onRetry: branch.reason == "unsupported" ? nil : onRetry)
+                } else if branch.files.isEmpty {
+                    ContentUnavailableView("No branch changes", systemImage: "doc.text")
+                } else {
+                    ForEach(branch.files) { file in
+                        FileChangeCard(group: ConversationFileChangeGroup(id: "branch", turnNumber: 0, files: []),
+                                       file: file, loadPreview: loadPreview)
+                    }
+                }
+            } else {
+                ProgressView("Loading branch changes…")
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("branch-changes-loading")
+            }
+        }
     }
 }
 
 private struct FileChangesHeader: View {
-    let summary: FileChangeSummary
-    @Binding var showsAllTurns: Bool
-    let turnTitle: String
+    let summary: FileChangeSummary?
+    @Binding var showsBranch: Bool
+    let turnTitle: LocalizedStringResource
     let expanded: Bool
     let onResize: () -> Void
     let onClose: () -> Void
@@ -143,13 +221,13 @@ private struct FileChangesHeader: View {
             HStack(spacing: 12) {
                 Color.clear.frame(width: 96, height: 1)
                     .accessibilityHidden(true)
-                FileChangesScopePicker(summary: summary, showsAllTurns: $showsAllTurns, turnTitle: turnTitle)
+                FileChangesScopePicker(summary: summary, showsBranch: $showsBranch, turnTitle: turnTitle)
                     .fixedSize(horizontal: true, vertical: false)
                     .frame(maxWidth: .infinity)
                 FileChangesWindowControls(expanded: expanded, onResize: onResize, onClose: onClose)
             }
             VStack(spacing: 12) {
-                FileChangesScopePicker(summary: summary, showsAllTurns: $showsAllTurns, turnTitle: turnTitle)
+                FileChangesScopePicker(summary: summary, showsBranch: $showsBranch, turnTitle: turnTitle)
                 FileChangesWindowControls(expanded: expanded, onResize: onResize, onClose: onClose)
             }
         }
@@ -159,20 +237,20 @@ private struct FileChangesHeader: View {
 }
 
 private struct FileChangesScopePicker: View {
-    let summary: FileChangeSummary
-    @Binding var showsAllTurns: Bool
-    let turnTitle: String
+    let summary: FileChangeSummary?
+    @Binding var showsBranch: Bool
+    let turnTitle: LocalizedStringResource
 
     var body: some View {
         VStack(spacing: 2) {
             Menu {
-                Picker("Recorded changes", selection: $showsAllTurns) {
+                Picker("Changes", selection: $showsBranch) {
                     Text(turnTitle).tag(false)
-                    Text("All turns").tag(true)
+                    Text("Branch").tag(true)
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text(showsAllTurns ? "All turns" : turnTitle)
+                    Text(showsBranch ? "Branch" : turnTitle)
                     Image(systemName: "chevron.down").font(.caption.weight(.semibold))
                 }
                 .font(.headline)
@@ -180,9 +258,11 @@ private struct FileChangesScopePicker: View {
             }
             .tint(.primary)
             .accessibilityIdentifier("file-changes-title")
-            .accessibilityHint("Choose which recorded turns to show")
-            FileChangeCounts(additions: summary.additions, deletions: summary.deletions)
-                .font(.caption.weight(.medium))
+            .accessibilityHint("Choose branch changes or a single turn")
+            if let summary {
+                FileChangeCounts(additions: summary.additions, deletions: summary.deletions)
+                    .font(.caption.weight(.medium))
+            }
         }
     }
 }

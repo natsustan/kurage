@@ -167,6 +167,37 @@ final class SessionSyncBridge: NSObject, WKNavigationDelegate, SessionStarting {
         return result
     }
 
+    func branchChanges(sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> BranchFileChanges {
+        let json = try await readBranchChanges(sessionID: sessionID, path: nil, workspaceID: workspaceID, access: access)
+        return try JSONDecoder().decode(BranchFileChanges.self, from: Data(json.utf8))
+    }
+
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String,
+                           access: StreamsAccess) async throws -> ConversationFilePreview {
+        let json = try await readBranchChanges(sessionID: sessionID, path: path, workspaceID: workspaceID, access: access)
+        let result = try JSONDecoder().decode(ConversationFilePreview.self, from: Data(json.utf8))
+        guard result.status != .ready || result.edit != nil else { throw LodyClientError.notConnected }
+        return result
+    }
+
+    private func readBranchChanges(sessionID: String, path: String?, workspaceID: String,
+                                   access: StreamsAccess) async throws -> String {
+        let operationID = UUID().uuidString
+        fetchHandler.beginOperation(operationID)
+        defer { fetchHandler.endOperation(operationID) }
+        let json = try await withTaskCancellationHandler {
+            try await callBridge(
+                "return await window.kurageBridgeReady.then(() => window.kurageBranchChanges(workspaceID, sessionID, baseURL, path, operationID))",
+                workspaceID: workspaceID, access: access,
+                arguments: ["sessionID": sessionID, "path": path ?? NSNull(), "operationID": operationID]
+            )
+        } onCancel: {
+            Task { @MainActor [weak self] in await self?.cancelSessionRefresh(operationID) }
+        }
+        try Task.checkCancellation()
+        return json
+    }
+
     func sendText(_ text: String, attachments: [UploadedAttachment] = [], turnID: String, userID: String, runConfig: RunConfigChoice?,
                   sessionID: String, workspaceID: String, access: StreamsAccess) async throws -> String {
         let choice: Any = runConfig.map { $0.bridgeValue() } ?? NSNull()

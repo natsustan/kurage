@@ -231,7 +231,15 @@ struct ConversationContent: View {
             ConversationChangesView(groups: displayedConversation?.fileChanges ?? [],
                                     latestTurnNumber: displayedConversation?.lastTurnNumber ?? 1,
                                     initialTurnNumber: selection.turnNumber,
-                                    loadPreview: model.supportsHistoricalFilePreviews ? loadPreview : nil)
+                                    loadPreview: model.supportsHistoricalFilePreviews ? loadPreview : nil,
+                                    loadBranch: {
+                                        guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
+                                        return try await model.branchChanges(sessionID: sessionID, workspaceID: workspaceID)
+                                    },
+                                    loadBranchPreview: model.supportsBranchChanges ? { _, file in
+                                        guard let workspaceID = observedWorkspaceID, isCurrentWorkspace else { throw CancellationError() }
+                                        return try await model.branchFilePreview(sessionID: sessionID, path: file.path, workspaceID: workspaceID)
+                                    } : nil)
         }
         .modifier(SessionActionPresenter(model: model, request: $actionRequest, onArchived: {
             if let onArchived { onArchived() } else { dismiss() }

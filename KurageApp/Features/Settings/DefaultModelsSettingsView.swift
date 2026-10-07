@@ -76,7 +76,14 @@ private struct DefaultModelsMachineSettings: View {
                             save(saved + [entry])
                         })
                 } label: {
-                    Label("Add Model", systemImage: "plus")
+                    HStack(spacing: 12) {
+                        Image(systemName: "plus")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 20, height: 20)
+                            .accessibilityHidden(true)
+                        Text("Add Model")
+                    }
                 }
                 .disabled(saved.count >= DefaultModel.limit)
                 .accessibilityIdentifier("default-models-add")

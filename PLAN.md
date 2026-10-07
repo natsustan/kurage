@@ -1,5 +1,18 @@
 # Kurage 会话功能
 
+## 分支审查简化（2026-10-08）
+
+- Branch 文件列表改为独立的 `LazyVStack`，直接置于抽屉滚动区域中，按可见范围加载文件卡片，避免用普通 `VStack` 一次布局全部文件。
+- JavaScript 的历史／Branch 差异读取共用 `readSessionDiff`，统一 metadata 锁、鉴权刷新、取消及资源清理；原生三个差异读取入口共用 `readFileChanges`，统一 Streams access 获取、bridge 初始化和读取前后的账号代次／取消检查。
+- 本轮 frozen-lockfile 安装、362 项 JavaScript 测试及 bundle 重建通过；iPhone 17／iOS 27 Simulator 测试构建、59 项 `ConversationChangesTests`／`HTTPLodyClientTests`／`StreamFetchHandlerTests` 和 1 项 Changes 抽屉 fixture UI 回归通过，覆盖取消、隔离、范围切换、代码展开、缩放与草稿保留。已复核浅色紧凑／展开抽屉及代码差异的 4 张截图，无重叠或意外裁切。构建产物与资源 bundle 哈希一致，`git diff --check` 通过。本轮未验证真实账号、万文件规模的性能、深色／大字号、iOS 26 或真机。
+
+## Changes 的 Branch 范围（2026-10-07）
+
+- 输入区 file changed 药丸打开抽屉时默认显示 `Branch`，替代按轮次排列的 `All turns`。Branch 用机器解析的分支／会话基线与当前目录比较，每个路径只显示一次，增删数使用整体净差异；`Last turn`／`This turn` 继续读取对应 assistant turn 的历史快照。Branch 不累计历史记录，也不把单轮工具片段当作整体代码差异。药丸目前仍以历史文件摘要发现入口；抽屉的 Branch 列表和计数来自独立的当前差异读取。
+- 沿用 Lody Code Collab v2 的 `code-collab/open-all-changes-diff` 获取权威文件集合和计数，展开文件时按需调用 `code-collab/open-current-diff`。加密 owner、workspace 与账号代次隔离、大小限制及取消机制沿用历史预览；当前差异不进历史 checkpoint 缓存，重新打开／回到前台／文件记录变化时重新读取。明确显示空整体差异、基线不可用、离线和旧机器不支持，临时失败可重试，不回退成逐轮累计。
+- 协议参考：本机 Lody `packages/shared/src/code-collab.ts` 的 All Changes／Current Diff schema，`apps/cli/src/lib/code-collab/code-collab-v2-service.ts` 的 `openAllChangesDiff`／基线解析，以及 `packages/components/src/components/sessions/use-session-all-changes-diff-data.ts`。Git 基线、未跟踪文件和非 Git diff-store 行为均由现有机器实现决定，客户端不猜测基线。
+- 本轮 frozen-lockfile 安装、362 项 JavaScript 测试、bundle 重建和 iPhone 17／iOS 27 Simulator 构建通过；29 项原生定向测试、5 项浅色 fixture UI 回归及深色 accessibility-extra-large 的完整 Changes 用例通过。回归覆盖独立净计数、重复路径、加密 owner／请求路径、账号和 workspace 隔离、取消、单轮历史、失败重试、大小限制、抽屉缩放及草稿保留。首轮 UI 测试的全局文件定位因两轮同路径产生歧义，限定到指定 turn 后重跑通过；浅深色截图与 bundle 哈希已核对，模拟器外观和字号已还原，`git diff --check` 通过。真实账号的当前差异、机器版本兼容／基线覆盖、持续变化、网络恢复、真机、iOS 26 和 iPad 本轮未验证。
+
 ## 会话列表长按正文预览（2026-10-07）
 
 - 原生长按菜单加入会话正文预览，打开到最新消息，复用正文的文字、Markdown、图片、错误和折叠工作记录布局；菜单上显示会话标题，保留 Pin／Unpin、Rename session、Copy Session URL 与 Archive。点击预览在菜单收起后通过原有导航进入会话。
@@ -32,6 +45,7 @@
 - Catalog loading keeps the saved list in place and shows a centered system activity indicator, with no caption. Add Model uses the same indicator at the bottom once any provider is visible, and a large centered indicator only while the catalog is still empty.
 - Current validation: iPhone 17 / iOS 27 Simulator build and two targeted fixture UI tests passed, including search, selection, deletion, reordering, persistence, cross-provider chat selection, and Advanced navigation. Inspected light, dark, maximum accessibility text, empty, editing, and filtered screenshots. Initial checks caught misplaced section styling and a sheet-scaled row-height assertion; both were corrected. The initial reorder attempt failed; the final unchanged reorder test passed. `git diff --check` passed. Physical devices, iOS 26, and real accounts were not tested.
 - Catalog loading indicator: a later iPhone 17 / iOS 27 Simulator build succeeded. Fixture catalog responses return before the spinner can be screenshotted, so the in-progress appearance was not captured on the simulator or a device.
+- Add Model alignment: the add row now uses the selected rows' 20pt icon slot and 12pt spacing, aligning the plus with provider icons and the label with model names. The plus scales to fit its slot so accessibility text sizes cannot overflow into the label. Final iPhone 17 / iOS 27 fixture UI test passed (1 test); light, dark, and accessibility XXXL screenshots confirmed alignment. A temporary screenshot scroll initially targeted a nonexistent ScrollView; using the actual list corrected verification, and the temporary test changes were restored. `git diff --check` passed; physical devices and iOS 26 were not tested.
 
 ## 空收藏使用最近模型（2026-10-07）
 
@@ -48,8 +62,11 @@
 
 ## 模型面板浮层背景（2026-10-07）
 
-- Select model 使用与 Advanced 原生 sheet 相同的 elevated 层级与系统分组背景色，添加细边框和阴影；背景、圆角和边框固定在滚动视口，保留键盘焦点与原有避让行为。
-- 本轮 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，已检查深色、浅色最大字号滚动和 Advanced 对照截图。首轮因模拟器自动收起软键盘失败，临时关闭该设置后复测通过，验证后已恢复。最大字号的 Reasoning 断词仍存在，本轮未调整文字布局；真机与 iOS 26 未验证。
+- Select model 使用 elevated 层级和系统 regular material 背景，分组卡片使用半透明的系统 fill，开启 Reduce Transparency 时面板和卡片恢复实色。背景固定在滚动视口，保留键盘焦点与原有避让行为；聊天背景截图不再局部预模糊，而是整体压暗，由面板材质模糊其下内容，接近 Advanced 原生 sheet 的呈现。临时截图在关闭浮层时释放（2026-10-07）。
+- 此前统一实色背景的版本在 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，已检查深色、浅色最大字号滚动和 Advanced 对照截图。首轮因模拟器自动收起软键盘失败，临时关闭该设置后复测通过，验证后已恢复。最大字号的 Reasoning 断词仍存在，该轮未调整文字布局；真机与 iOS 26 未验证。
+- 半透明材质与整体压暗版本本轮构建及 3 项 fixture UI 回归通过，覆盖配置开关／档位／Advanced／发送、浅深色当前模型选择和最大辅助字号滚动／键盘避让；已检查对应截图，面板下的文字模糊、分组与标签清楚。独立浮窗直接使用 `glassEffect` 时面板和文字不可见，故最终使用可正常渲染的系统 `regularMaterial`；不可见版本的验证不计入最终结果。最大字号仍有既有 Reasoning 断词，滑条可滚动到完整可见，本次未改文字布局。专用模拟器完整恢复偏好并关闭，`git diff --check` 通过；Reduce Transparency、真机与 iOS 26 尚未实测。
+- Select model 加入轻量出现／收起动效：首次量到面板高度后，从下方 18pt、98% 尺寸淡入到位，遮罩同步压暗；关闭时反向收起后释放浮窗与截图，再更新输入区仪表指针，Advanced 仍等原生 sheet 关闭后更新。Reduce Motion 仅保留短淡入淡出。关闭代次隔离快速重开，旧动画完成不会关闭新浮层；进入后台或宿主移除时立即清理（2026-10-07）。
+- 最新动效与 onClosed 版本本轮 iOS 27 Simulator 构建及 1 项 fixture UI 回归通过，覆盖开关／重开、档位切换、Advanced、键盘保留与发送；已录屏复核进入／退出过渡及 Advanced 消失后 High→Low 指针动画。稳定态材质不露字，淡入淡出的半透明阶段会短暂与后方文字交叉混合，无闪白或面板失踪。普通关闭时档位未变，未直接录到该分支的新值指针启动时序；Reduce Motion、后台／快速重开中断、真机与 iOS 26 未实测。旧补丁版本的中断测试不计入结果，专用模拟器恢复完整偏好并关闭，`git diff --check` 通过。
 
 ## 模型面板键盘避让与 Codex 图标修复（2026-10-07）
 
@@ -197,7 +214,12 @@
 - Workspace 与 Appearance 统一在 Settings 的原生导航栈内进入二级页面；Workspace 不再新开短 sheet，选择后返回 Settings，切换与刷新仍复用 `AppModel`。设置行移除前置装饰图标，保留标题、当前值和导航箭头。
 - Appearance 按参考图提供 System / Day / Night 三列外观卡片及 Black / Blue 两列强调色卡片，选中用灰色实心背景、未选用细边框。保留原 `appTheme` 存储值，强调色以 `appAccent` 保存；默认 System / Black，Black 的单色控件在深色下使用语义浅色。辅助字号改为纵向排列，所有选项可以滚动访问。
 - 强调色范围修正：根视图保持系统语义单色 tint，导航、工具栏、附件菜单和停止按钮不随 Blue 变色；发送按钮底色、Haptics／Notifications 开关、附件数量徽标和问题选中标记单独读取强调色。用户消息气泡在 Blue 下使用淡蓝底，Black 保留原中性灰底；正文保持语义文字色，实心按钮／徽标使用对应的对比文字色，适配 Day 与 Night。
-- Reasoning 细节跟随强调色：输入区小 dial 的指针与中心圆点、reasoning 选择条的已选填充使用 Blue／Black；刻度与未选轨道沿用中性色，保持原有档位、拖动与指针动画。
+- Reasoning 细节跟随强调色：输入区小 dial 的外圈刻度、reasoning 选择条的已选填充使用 Blue／Black；dial 指针与中心圆环、选择条未选轨道沿用中性色，保持原有档位、拖动与指针动画。小 dial 图标区域调整为 24pt，使缺口刻度弧的可见高度接近左侧 20pt 的 context 圆；两者点击区域仍为 36pt（2026-10-07）。
+- 2026-10-07 dial 尺寸／配色调整：iOS 27 Simulator 构建和 Dark／Black 的一项既有配置交互 UI 回归通过；Light／Blue 复跑的图标行、context 详情与推理档位交互断言通过，最终发送等待失败。失败截图／辅助功能树确认草稿仍在，自动化点击用了键盘展开前的旧位置，未命中已上移的 Send；不计为整项通过。两种配色截图无图标重叠或裁切，Blue 外圈与主文字色指针清楚。专用模拟器恢复原偏好并关闭；未验证大字号、Dark／Blue、真实账号、iOS 26 或真机，本次未改同步桥接。
+- 小 dial 的中心圆点随后改为空心圆环，保持 4.8pt 外径与主文字色，指针从圆环边缘起画，保留透明中心（2026-10-07）。本次 iOS Simulator 构建通过，未重跑 UI 回归或截图检查。
+- 根据参考截图，小 dial 的分段刻度改为圆头连续圆弧；已选部分使用 accent，剩余部分使用适配浅／深色的系统浅灰，指针与空心圆环保留主文字色。沿用 24pt 图标和档位对应的进度，圆弧与指针同步更新（2026-10-07）。
+- 连续圆弧版本本轮 iOS 27 Simulator 构建及 Light／Blue 的一项既有配置交互 UI 回归通过，包含 Low／Medium／High 切换和发送。High 图标行截图确认圆弧底部开口、圆头与空心圆环清楚，无重叠或裁切；Low 附件被配置浮层遮挡，未单独截图复核部分着色。专用模拟器恢复原偏好并关闭；本版未截图检查深色、大字号或真机。
+- 按用户偏好恢复原来的 11 段 accent 刻度；指针线宽由 2pt 加粗为 2.5pt，空心圆环由 1.2pt 加粗为 1.8pt，外径增至 6pt 以保留清楚的空心，整体图标仍为 24pt（2026-10-07）。本次 iOS Simulator 构建通过，未重跑 UI 回归或截图检查。
 - Reasoning 配色增量测试构建通过；iPhone 17 / iOS 27 的既有 reasoning 交互 UI 用例在 Day／Blue、Night／Blue、Night／Black 三种场景最终均通过，已复核指针及 Low／High 已选条截图，颜色清楚、无新增布局问题。Night／Black 首次最后的发送断言失败：自动化触点使用键盘展开前的旧位置，草稿保留；源码和用例不变的单次重跑通过，初次失败截图、自动 hierarchy 与重跑结果均保留。成功运行未导出完整 hierarchy，保留截图与元素查询记录；本次未新增测试，未验证真机或 iOS 26。
 - 强调色范围修正后的 generic iOS Simulator 测试构建通过；iPhone 17 / iOS 27 的三项 fixture UI 回归全部通过，覆盖强调色／触觉重启恢复、Day／Night × Blue／Black 的发送按钮、用户气泡及导航／工具栏像素检查，以及发送前后气泡尺寸和去重；Stop 的像素检查仅执行 Day／Blue 场景，其余组合已有草稿而显示发送按钮。已复核四张聊天配色截图、Blue Haptics 截图及辅助功能树，发送箭头和气泡文字清晰，导航／工具栏保持单色，无新增重叠或裁切。专用模拟器已关闭并删除，`git diff --check` 通过。本次未验证真机、iOS 26 或 iPad。
 - Appearance 与 Haptics 合并为同一个圆角偏好分组，中间以分隔线区分两行。Appearance 下方加入 Haptics 二级页面，以 Haptics Feedback 开关控制现有 reasoning 拨盘与 Advanced 配置选择的触觉；默认开启，`hapticsEnabled` 保存本机偏好。外观与触觉偏好按安装保留，不参与远程同步。
@@ -470,6 +492,7 @@
 
 - 已有会话、New Session 与 New Tab 的共用输入框在附件加号右侧显示 MingCute Cute Regular `at_cute_re.svg` 图标，替换 Full access 标记及其说明浮层；图标为 24pt，点击区域为 44pt，颜色随系统外观变化。
 - 点击在当前光标／选区处插入 `@`，前一个字符不是空白时先补一个空格；空草稿、行首或已有空白不重复补空格。随后将光标放在 `@` 后并聚焦输入框，复用现有会话／技能建议面板、引用绑定与加载逻辑。发送时沿用输入框的编辑限制，VoiceOver 名称为 Mention。
+- 2026-10-07：同一按钮改为带 primary action 的原生 `Menu`：点按仍插入 `@`，长按弹出 Mention（`@`）／Skill（`$`）两项，`$` 沿用相同的补空格、选区替换与聚焦规则，并直接进入仅含 skill 的候选。VoiceOver 另提供 “Insert Skill” 自定义操作。`/` 斜杠命令暂不实现，后续需先核实 Lody 的命令来源与发送格式，再作为该菜单的新项接入。当前按钮点击区域为 `ComposerControlMetrics.hitSize` 36pt，UI 测试同步改为 36pt。本轮 iPhone 17／iOS 27 Simulator 浅色默认字号 4 项提及按钮 fixture UI 回归通过，覆盖已有会话、New Session、New Tab 的长按菜单、`$` 插入与仅 skill 候选；截图确认菜单位于键盘上方。排查中发现 XCUITest `typeText` 会使模拟器软键盘暂时收起、下一次触摸再恢复，紧接输入后长按时菜单可能按收起位置出现在键盘后方，因此测试在点选候选后再长按；该现象属测试环境，真机软键盘及外接键盘、VoiceOver 实际操作、深色与辅助字号尚未验证。
 - 本轮 Simulator 构建、浅色默认字号 5 项 fixture UI 与深色 accessibility-extra-large 3 项按钮 UI 用例通过，覆盖已有会话、New Session、New Tab、空输入、文字／emoji 后补空格、已有空白／换行及已选技能引用保留；浅色另覆盖技能／会话引用选择与发送。深色早期测试误点单行候选面板外的技能，滚动修订也越过目标，最终改为输入关键词使目标候选可见后复跑通过；没有因此修改产品逻辑。浅色 14 张、深色 9 张成功截图已检查，图标随外观呈黑／白色，候选面板、输入和操作行无重叠并位于键盘上方；`git diff --check` 通过。真机和 VoiceOver 实际朗读仍待验证。
 
 ## 分支审查修复（2026-10-01）
@@ -689,7 +712,7 @@
 - 聊天区域由 UIKit 容器协调：`keyboardLayoutGuide` 同步调整消息列表与输入区，通过几何测量将整个输入区的实际高度同步给 UIKit 约束并设置列表 inset；SwiftUI 保留消息样式和输入控件。消息按 turn ID 在原生列表中复用和更新，布局与正文高度变化时仅在跟随模式下贴底；上翻阅读时保存消息 ID 与其可视位置，回到底部或发送新消息恢复跟随。短会话仍贴近输入区。
 
 - 每轮文件修改卡片：在对应 Agent 回复正文下方展示 files changed、该条记录的增删统计及前三个路径；支持折叠，超过三个文件时显示 View N more files，点击路径或更多入口打开对应轮次的 This turn 抽屉。底部 HUD 保留会话汇总。文件数据独立增长或删除时会重新配置对应消息行，沿用现有滚动跟随及阅读位置机制。 本轮通用模拟器构建、4 项 ConversationLayoutTests（含文件变更独立刷新/移除）及定向文件变更 UI 测试已通过；新增卡片折叠/展开和 This turn 范围断言。浅色截图及深色 + accessibility-extra-large 组合 UI 复测通过，验证后恢复模拟器显示设置；真实账号中的新卡片尚未设备实测。 折叠动画与 Worked for、工具组共用 0.25 秒 ease-in-out 正文淡入淡出及箭头旋转；隔离助手消息容器几何动画，阅读位置立即补偿，尊重 Reduce Motion。此次验证结果见下方 Worked for 条目。
-- 会话文件修改：输入框上方的 Liquid Glass HUD 显示去重后的文件数及已知的累计增删行数，点击打开默认大屏、支持下拉缩小的详情 sheet；默认查看 Last turn，顶部菜单可切到 All turns，增删统计跟随当前范围。抽屉使用浅色白底/深色深灰底，文件头为紧凑的浅灰/深灰条目、小圆角，点击无箭头的文件头展开代码；右上角是中性的 Liquid Glass 缩放/关闭按钮组，不再使用系统导航栏的蓝色确认按钮。按会话轮次列出文件名、路径和计数。数据来自 assistant history 的 `fileDiff`；代码预览优先按轮次读取机器历史快照，已完成 `tool_call.content` 中显式的 `diff` 块作为备用片段，不从工具标题、locations 或 shell 文本猜测文件修改。代码按行显示红删绿增和上下文，历史快照使用完整文件行号，工具片段单独标注相对行号。同一轮 `fileDiff` 中同一路径的多条记录按 Lody 的 `buildSessionDiffSummary` 累加增删行数，不能让后面的零值覆盖先前计数；同一路径多轮修改保留各轮记录，汇总是历史累计，不是当前 Git 净差异；没有完整计数时 HUD 不显示对应总数，没有可用历史快照或工具片段时说明不可用原因并提供重试。空记录隐藏 HUD，删除/替换记录会清除旧结果；完整文件记录随正文缓存按账号/工作区/会话隔离。桥仅在文件记录变化时发送替换补丁，Swift 先恢复完整快照再发布；差异正文限制总传输预算和单文件大小，原生比较在后台执行并限制行数。历史轮次预览已接入只读机器 RPC；当前仍不提供 Unstaged、Staged、All Files 或远端完整文件浏览。真实账号返回的摘要/差异正文覆盖率和持续更新仍待实测。
+- 会话文件修改：输入框上方的 Liquid Glass HUD 显示去重后的文件数及已知的累计增删行数，点击打开默认大屏、支持下拉缩小的详情 sheet；默认查看 Branch，顶部菜单可切到 Last turn／This turn，增删统计跟随当前范围；Branch 按当前目录相对机器解析基线的整体净差异显示去重文件，单轮按历史记录显示。抽屉使用浅色白底/深色深灰底，文件头为紧凑的浅灰/深灰条目、小圆角，点击无箭头的文件头展开代码；右上角是中性的 Liquid Glass 缩放/关闭按钮组，不再使用系统导航栏的蓝色确认按钮。单轮列出该轮的文件名、路径和计数。单轮数据来自 assistant history 的 `fileDiff`；代码预览优先按轮次读取机器历史快照，已完成 `tool_call.content` 中显式的 `diff` 块作为备用片段，不从工具标题、locations 或 shell 文本猜测文件修改。代码按行显示红删绿增和上下文，历史快照使用完整文件行号，工具片段单独标注相对行号。同一轮 `fileDiff` 中同一路径的多条记录按 Lody 的 `buildSessionDiffSummary` 累加增删行数，不能让后面的零值覆盖先前计数；同一路径多轮修改保留各轮记录，汇总是历史累计，不是当前 Git 净差异；没有完整计数时 HUD 不显示对应总数，没有可用历史快照或工具片段时说明不可用原因并提供重试。空记录隐藏 HUD，删除/替换记录会清除旧结果；完整文件记录随正文缓存按账号/工作区/会话隔离。桥仅在文件记录变化时发送替换补丁，Swift 先恢复完整快照再发布；差异正文限制总传输预算和单文件大小，原生比较在后台执行并限制行数。历史轮次预览已接入只读机器 RPC；2026-10-07 已接入 Branch 整体差异；当前仍不提供 Unstaged、Staged、All Files 或远端完整文件浏览。真实账号返回的摘要/差异正文覆盖率和持续更新仍待实测。
 - Worked for 折叠：与 Lody 一致，Agent 回复中连续的 tool call 与 thought 合成活动组（“Ran 3 commands · Read 2 files”，读/改文件按路径去重），点开列出工具标题（最多 100 条、每条 200 字，不显示输出）；thought 正文不投影，只含 thought 的组不显示。回复 `finished` 且折叠后仍有可显示的答案时，最后一段连续文本（及其后的图片/文件等不折叠项）保持可见，之前的文本和活动组收进答案上方的 “Worked for 1m 27s”，时长为 `endedAt - timestamp - permissionWaitMs`（格式 `12s` / `1m 05s` / `1h 02m 03s`），缺失时显示 “Finished working”。流式中、被中断无答案、或无可折叠工作的回复保持展开并逐步显示活动组。展开状态按 turn 与活动组保存在转录控制器里，行复用和流式重配置不会串行或丢失；统一使用 0.25 秒 ease-in-out 展开/收起，滚动锚点立即补偿，尊重 Reduce Motion。被折叠的文本仍参与搜索。运行中在本轮回复正文及工具活动上方显示 `Working… 35s`，下方以分隔线与内容分开（本次 `testWorkingTimerTicks` 已验证标签位于正文上方、计时刷新及停止后移除）：桥接投影最新未结束 assistant turn 的开始时间和已记录权限等待时长，包括尚无可见内容的 turn；原生标签每秒刷新，离开前台暂停，只在会话运行且为最后一条回复时显示，结束/停止移除。与 Lody 一样，权限等待若到结束才写入，最终数字会扣除等待时间。Worked for、工具组及文件变更卡片统一使用正文淡入淡出；消息行由显式 hosting controller 承载，隔离助手消息容器几何动画，标题不参与位移动画，箭头只旋转；展开和收起都保持当前 turn 的阅读锚点，短对话保留底部空间以避免标题跳动，折叠标题保持完整高度，活动图标槽宽随辅助字号缩放。暂未实现：plan 审批把一轮拆成多段（Lody 的 segment），以及 thought 正文展示。 当前计时与动画修改：frozen lockfile 安装、152 项 JS 测试与 bundle 重建通过；135 项 Swift 单元测试通过；Worked for 与文件变更 UI 测试在浅色默认字号下通过，Worked for 和实时计时（含停止后移除）在深色 accessibility-extra-large 下通过。上述为此前验证。此次标题位移修复：6 项 ConversationLayoutTests 及辅助大字号下 Worked for、文件变更、Working 计时 3 项 UI 测试通过；收敛动画隔离条件后再跑 6 项布局测试与大字号 Worked for 测试通过；默认字号已检查图片与长会话布局。另一个发送后键盘保持用例失败，未修改版本同样复现；尚未修复该既有问题。真实账号中的计时、折叠和流式活动组尚未实测。
 
 - PR #16 附件顺序修复：可折叠工作之间夹有图片、图片组或文件等可见内容时，整轮保持展开，避免单个 Worked for 插入点重排内容；附件仅在工作前后时仍正常折叠。暂不扩展为多段折叠协议。此次 frozen lockfile 安装、159 项 JavaScript 测试及 bundle 重建通过，新增三项交错附件回归测试；未运行 iOS 测试或真实账号验证。

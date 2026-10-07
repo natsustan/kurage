@@ -466,7 +466,8 @@ final class ShellFlowTests: XCTestCase {
         tap(turnToggle)
         XCTAssertEqual(turnToggle.value as? String, "Collapsed")
         tap(turnToggle)
-        let inlineFile = app.buttons["turn-changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        let inlineFile = app.descendants(matching: .any)["conversation-turn-long-agent-20"]
+            .buttons["turn-changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
         XCTAssertTrue(inlineFile.waitForExistence(timeout: 5))
         attachScreen(app, name: "This turn inline file changes")
         tap(inlineFile)
@@ -485,14 +486,18 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
         let scope = app.buttons["file-changes-title"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        XCTAssertEqual(scope.label, "All turns")
-        XCTAssertTrue(app.staticTexts["Turn 20"].exists)
+        XCTAssertEqual(scope.label, "Branch")
+        XCTAssertFalse(app.staticTexts["Turn 20"].exists)
+        let branchFile = app.buttons["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
+        XCTAssertTrue(branchFile.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(identifier: "changed-file-KurageApp/Features/Conversation/ConversationView.swift").count, 1)
+        XCTAssertTrue(branchFile.label.contains("2 added lines"))
         tap(scope)
         tap(app.buttons["Last turn"])
         XCTAssertTrue(scope.wait(for: \.label, toEqual: "Last turn", timeout: 5))
         tap(scope)
-        tap(app.buttons["All turns"])
-        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
+        tap(app.buttons["Branch"])
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "Branch", timeout: 5))
         let resize = app.buttons["resize-file-changes"]
         let expandedHeaderY = scope.frame.minY
         tap(resize)
@@ -560,6 +565,8 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["sign-in-button"])
         tap(app.descendants(matching: .any)["session-session-long"])
         tap(app.buttons["conversation-changes-hud"])
+        tap(app.buttons["file-changes-title"])
+        tap(app.buttons["Last turn"])
         let file = app.buttons["changed-file-KurageTests/ConversationChangesTests.swift"]
         XCTAssertTrue(file.waitForExistence(timeout: 5))
         tap(file)
@@ -588,6 +595,8 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["sign-in-button"])
         tap(app.descendants(matching: .any)["session-session-long"])
         tap(app.buttons["conversation-changes-hud"])
+        tap(app.buttons["file-changes-title"])
+        tap(app.buttons["Last turn"])
         let file = app.buttons["changed-file-KurageApp/Features/Conversation/ConversationView.swift"]
         XCTAssertTrue(file.waitForExistence(timeout: 5))
         tap(file)
@@ -829,15 +838,17 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["send-follow-up"].wait(for: \.label, toEqual: "Send", timeout: 5))
         tap(app.buttons["conversation-changes-hud"])
         let scope = app.buttons["file-changes-title"]
-        XCTAssertTrue(scope.wait(for: \.label, toEqual: "All turns", timeout: 5))
-        XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
+        XCTAssertTrue(scope.wait(for: \.label, toEqual: "Branch", timeout: 5))
+        XCTAssertTrue(app.buttons["changed-file-KurageApp/Features/Conversation/ConversationView.swift"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Turn 20"].exists)
         tap(scope)
         tap(app.buttons["Last turn"])
         XCTAssertTrue(app.staticTexts["No recorded changes"].waitForExistence(timeout: 5))
         attachScreen(app, name: "Latest turn has no changes")
         tap(scope)
-        tap(app.buttons["All turns"])
-        XCTAssertTrue(app.staticTexts["Turn 20"].waitForExistence(timeout: 5))
+        tap(app.buttons["Branch"])
+        XCTAssertTrue(app.buttons["changed-file-KurageApp/Features/Conversation/ConversationView.swift"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Turn 20"].exists)
     }
 
     @MainActor
@@ -1284,8 +1295,8 @@ final class ShellFlowTests: XCTestCase {
         let mention = app.buttons["add-mention"]
         XCTAssertTrue(mention.waitForExistence(timeout: 5))
         XCTAssertTrue(mention.isHittable)
-        XCTAssertEqual(mention.frame.width, 44, accuracy: 0.5)
-        XCTAssertEqual(mention.frame.height, 44, accuracy: 0.5)
+        XCTAssertEqual(mention.frame.width, 36, accuracy: 0.5)
+        XCTAssertEqual(mention.frame.height, 36, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(mention.frame.minX, app.buttons["add-attachment"].frame.maxX)
         XCTAssertEqual(mention.label, "Mention")
         XCTAssertFalse(app.buttons["full-access-mode"].exists)
@@ -1318,6 +1329,19 @@ final class ShellFlowTests: XCTestCase {
         XCTAssertTrue(skill.isHittable)
         tap(skill)
         XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n$review-and-simplify-changes ")
+        mention.press(forDuration: 1)
+        let skillTrigger = app.buttons["insert-skill-trigger"]
+        XCTAssertTrue(skillTrigger.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["insert-mention-trigger"].exists)
+        attachScreen(app, name: "Mention button trigger menu \(newSession)-\(newTab)")
+        tap(skillTrigger)
+        XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n$review-and-simplify-changes $")
+        XCTAssertTrue(skill.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'mention-session-'")).count, 0)
+        assertMentionMenuGeometry(app, field: field, menu: menu, newSession: isNew)
+        attachScreen(app, name: "Mention button inserts skill trigger \(newSession)-\(newTab)")
+
+        field.typeText(XCUIKeyboardKey.delete.rawValue)
         tap(mention)
         XCTAssertEqual(field.value as? String, "Keep this draft🙂 \n$review-and-simplify-changes @")
         XCTAssertTrue(skill.waitForExistence(timeout: 5))

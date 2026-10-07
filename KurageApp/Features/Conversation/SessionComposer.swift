@@ -2,6 +2,7 @@ import SwiftUI
 
 enum ComposerControlMetrics {
     static let iconSize: CGFloat = 20
+    static let gaugeSize: CGFloat = 24
     static let hitSize: CGFloat = 36
     static let actionSize: CGFloat = 28
     static let actionSpacing: CGFloat = 4
@@ -370,9 +371,6 @@ struct SessionComposer: View {
                 targetGaugeProgress = progress ?? 1
                 if !presentationState.showsRunConfig && !presentationState.showsAdvanced { updateGauge() }
             }
-            .onChange(of: presentationState.showsRunConfig) { _, isPresented in
-                if !isPresented && !presentationState.showsAdvanced { updateGauge() }
-            }
             .background {
                 RunConfigOverlayAnchor(isPresented: presentationState.showsRunConfig, runConfig: runConfig,
                                        onChoose: onChooseRunConfig,
@@ -383,6 +381,9 @@ struct SessionComposer: View {
                                        onAdvanced: {
                                            presentationState.showsRunConfig = false
                                            presentationState.showsAdvanced = true
+                                       },
+                                       onClosed: {
+                                           if !presentationState.showsAdvanced { updateGauge() }
                                        })
             }
             .onChange(of: scenePhase) { _, phase in
@@ -546,7 +547,7 @@ struct SessionComposer: View {
         isFocused = true
     }
 
-    private func startMention() {
+    private func startMention(_ trigger: ComposerMentionQuery.Trigger = .combined) {
         guard !blocksEditing else { return }
         var replacement = draft.endIndex..<draft.endIndex
         if let selection, case .selection(let range) = selection.indices,
@@ -556,7 +557,7 @@ struct SessionComposer: View {
         }
         let needsSpace = replacement.lowerBound > draft.startIndex &&
             !draft[draft.index(before: replacement.lowerBound)].isWhitespace
-        let inserted = needsSpace ? " @" : "@"
+        let inserted = (needsSpace ? " " : "") + String(trigger.rawValue)
         let caret = replacement.lowerBound.utf16Offset(in: draft) + inserted.utf16.count
         var text = draft
         text.replaceSubrange(replacement, with: inserted)
@@ -581,7 +582,12 @@ struct SessionComposer: View {
                                     error: $attachmentError, presentation: presentationState, disabled: blocksEditing,
                                     showsSummary: !isExpanded)
                 if isExpanded {
-                    Button(action: startMention) {
+                    Menu {
+                        Button { startMention() } label: { Label("Mention", image: "at") }
+                            .accessibilityIdentifier("insert-mention-trigger")
+                        Button { startMention(.skill) } label: { Label("Skill", image: MentionText.skillImageName) }
+                            .accessibilityIdentifier("insert-skill-trigger")
+                    } label: {
                         Image("at")
                             .renderingMode(.template)
                             .resizable()
@@ -590,11 +596,15 @@ struct SessionComposer: View {
                             .foregroundStyle(.primary)
                             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
                             .contentShape(Rectangle())
+                    } primaryAction: {
+                        startMention()
                     }
+                    .tint(Color.primary)
+                    .menuOrder(.fixed)
                     .disabled(blocksEditing)
-                    .buttonStyle(.plain)
                     .accessibilityLabel("Mention")
-                    .accessibilityHint("Insert @ to mention a session or skill")
+                    .accessibilityHint("Insert @ to mention a session or skill. Touch and hold to insert $ for a skill.")
+                    .accessibilityAction(named: "Insert Skill") { startMention(.skill) }
                     .accessibilityIdentifier("add-mention")
                 }
             }
@@ -609,7 +619,7 @@ struct SessionComposer: View {
                     } label: {
                         ReasoningGauge(progress: gaugeProgress ?? runConfig.reasoningProgress,
                                        accentColor: accent.color)
-                            .frame(width: ComposerControlMetrics.iconSize, height: ComposerControlMetrics.iconSize)
+                            .frame(width: ComposerControlMetrics.gaugeSize, height: ComposerControlMetrics.gaugeSize)
                             .frame(width: ComposerControlMetrics.hitSize, height: ComposerControlMetrics.hitSize)
                             .contentShape(Rectangle())
                     }
@@ -795,6 +805,11 @@ private struct RunConfigPanel: View {
     let onChooseDefaultModel: ((DefaultModel) -> Void)?
     let onDismiss: () -> Void
     let onAdvanced: () -> Void
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var groupBackground: Color {
+        Color(uiColor: reduceTransparency ? .secondarySystemGroupedBackground : .secondarySystemFill)
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -837,7 +852,7 @@ private struct RunConfigPanel: View {
                         }
                     }
                 }
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                .background(groupBackground, in: .rect(cornerRadius: 20))
             } else {
                 Button(action: onAdvanced) {
                     HStack {
@@ -851,7 +866,7 @@ private struct RunConfigPanel: View {
                     .frame(maxWidth: .infinity, minHeight: 50)
                     .contentShape(.rect)
                 }
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                .background(groupBackground, in: .rect(cornerRadius: 20))
                 .accessibilityIdentifier("run-config-choose-model")
             }
             if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
@@ -874,7 +889,7 @@ private struct RunConfigPanel: View {
                     }
                 }
                 .padding(16)
-                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                .background(groupBackground, in: .rect(cornerRadius: 20))
             }
         }
         .buttonStyle(.plain)
@@ -1104,16 +1119,20 @@ private struct ReasoningGauge: View {
                 path.move(to: point(angle, radius: radius * 0.78))
                 path.addLine(to: point(angle, radius: radius))
                 let active = fraction <= progress
-                context.stroke(path, with: .color(.primary.opacity(active ? 1 : 0.22)),
+                context.stroke(path, with: .color(accentColor.opacity(active ? 1 : 0.22)),
                                style: StrokeStyle(lineWidth: 2, lineCap: .round))
             }
             let angle = start + sweep * progress
+            let hubRadius = 3.0
+            let hubLineWidth = 1.8
             var needle = Path()
-            needle.move(to: center)
+            needle.move(to: point(angle, radius: hubRadius))
             needle.addLine(to: point(angle, radius: radius * 0.6))
-            context.stroke(needle, with: .color(accentColor), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            context.fill(Path(ellipseIn: CGRect(x: center.x - 2.4, y: center.y - 2.4, width: 4.8, height: 4.8)),
-                         with: .color(accentColor))
+            context.stroke(needle, with: .color(.primary), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+            let hubPathRadius = hubRadius - hubLineWidth / 2
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - hubPathRadius, y: center.y - hubPathRadius,
+                                                  width: hubPathRadius * 2, height: hubPathRadius * 2)),
+                           with: .color(.primary), lineWidth: hubLineWidth)
         }
         .accessibilityHidden(true)
     }
@@ -1268,7 +1287,7 @@ private struct MentionSuggestionsOverlay<Content: View>: View {
 }
 
 /// A scene-local overlay preserves input focus. A transient content snapshot
-/// supplies the blurred backdrop; it is released when the overlay closes.
+/// supplies content for the material backdrop; it is released when the overlay closes.
 private struct RunConfigOverlayAnchor: UIViewRepresentable {
     let isPresented: Bool
     let runConfig: RunConfigMenu?
@@ -1276,6 +1295,7 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
     let onChooseDefaultModel: ((DefaultModel) -> Void)?
     let onDismiss: () -> Void
     let onAdvanced: () -> Void
+    let onClosed: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -1317,28 +1337,43 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
         private var host: UIHostingController<RunConfigOverlay>?
         private var previousRect: CGRect = .zero
         private var previousConfig: RunConfigMenu?
+        private var dismissalID: UUID?
 
         func update(from anchor: UIView) {
-            guard let configuration, configuration.isPresented,
-                  let config = configuration.runConfig,
+            guard let configuration else {
+                close()
+                return
+            }
+            guard configuration.isPresented else {
+                if anchor.window?.windowScene?.activationState == .foregroundActive {
+                    dismiss()
+                } else {
+                    close()
+                }
+                return
+            }
+            guard let config = configuration.runConfig,
                   let source = anchor.window, let scene = source.windowScene else {
                 close()
                 return
             }
+            let wasDismissing = dismissalID != nil
+            dismissalID = nil
             let rect = anchor.convert(anchor.bounds, to: source)
             if backdrop == nil || window?.bounds.size != source.bounds.size {
                 backdrop = UIGraphicsImageRenderer(bounds: source.bounds).image { _ in
                     source.drawHierarchy(in: source.bounds, afterScreenUpdates: false)
                 }
             }
-            let content = RunConfigOverlay(anchor: rect, backdrop: backdrop, runConfig: config,
+            let content = RunConfigOverlay(isPresented: true, onDismissed: {},
+                                           anchor: rect, backdrop: backdrop, runConfig: config,
                                            onChoose: configuration.onChoose,
                                            onChooseDefaultModel: configuration.onChooseDefaultModel,
                                            onDismiss: configuration.onDismiss,
                                            onAdvanced: configuration.onAdvanced)
             if let host, let window {
                 window.frame = source.frame
-                if rect != previousRect || config != previousConfig { host.rootView = content }
+                if wasDismissing || rect != previousRect || config != previousConfig { host.rootView = content }
             } else {
                 let window = OverlayWindow(windowScene: scene)
                 window.frame = source.frame
@@ -1359,18 +1394,36 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
             previousConfig = config
         }
 
+        private func dismiss() {
+            guard let host, dismissalID == nil else { return }
+            let id = UUID()
+            dismissalID = id
+            var content = host.rootView
+            content.isPresented = false
+            content.onDismissed = { [weak self] in
+                guard self?.dismissalID == id else { return }
+                self?.close()
+            }
+            host.rootView = content
+        }
+
         func close() {
+            let hadWindow = window != nil
+            dismissalID = nil
             window?.isHidden = true
             window?.rootViewController = nil
             host = nil
             window = nil
             backdrop = nil
             previousConfig = nil
+            if hadWindow { configuration?.onClosed() }
         }
     }
 }
 
 private struct RunConfigOverlay: View {
+    var isPresented: Bool
+    var onDismissed: () -> Void
     let anchor: CGRect
     let backdrop: UIImage?
     let runConfig: RunConfigMenu
@@ -1379,7 +1432,9 @@ private struct RunConfigOverlay: View {
     let onDismiss: () -> Void
     let onAdvanced: () -> Void
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var panelHeight: CGFloat = 0
+    @State private var isVisible = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -1388,26 +1443,16 @@ private struct RunConfigOverlay: View {
             let bottomInset = max(geometry.safeAreaInsets.bottom, 12, geometry.size.height - anchor.maxY)
             let availableHeight = max(0, geometry.size.height - geometry.safeAreaInsets.top - bottomInset - 12)
             ZStack(alignment: .bottom) {
-                Group {
-                    if reduceTransparency {
-                        Color(uiColor: .systemBackground)
-                    } else if let backdrop {
-                        Image(uiImage: backdrop)
-                            .resizable()
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .blur(radius: 8)
+                Color.black.opacity(isVisible ? 0.2 : 0)
+                    .background {
+                        if let backdrop {
+                            Image(uiImage: backdrop)
+                                .resizable()
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                        }
                     }
-                }
-                    .mask {
-                        let height = max(1, geometry.size.height)
-                        let start = max(0, anchor.minY - 180) / height
-                        LinearGradient(stops: [.init(color: .clear, location: 0),
-                                               .init(color: .clear, location: start),
-                                               .init(color: .black, location: min(1, start + 150 / height)),
-                                               .init(color: .black, location: 1)],
-                                       startPoint: .top, endPoint: .bottom)
-                    }
-                    .overlay { Color.clear.contentShape(.rect).onTapGesture(perform: onDismiss) }
+                    .contentShape(.rect)
+                    .onTapGesture(perform: onDismiss)
                     .accessibilityLabel("Dismiss model settings")
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { onDismiss() }
@@ -1421,7 +1466,9 @@ private struct RunConfigOverlay: View {
                     .scrollBounceBehavior(.basedOnSize)
                     .frame(height: min(panelHeight, availableHeight), alignment: .bottom)
                     .frame(maxWidth: 420)
-                    .background(Color(uiColor: .systemGroupedBackground))
+                    .background(reduceTransparency
+                        ? AnyShapeStyle(Color(uiColor: .systemGroupedBackground))
+                        : AnyShapeStyle(.regularMaterial), in: .rect(cornerRadius: 28))
                     .clipShape(.rect(cornerRadius: 28))
                     .overlay {
                         RoundedRectangle(cornerRadius: 28)
@@ -1429,6 +1476,9 @@ private struct RunConfigOverlay: View {
                             .allowsHitTesting(false)
                     }
                     .shadow(color: .black.opacity(0.15), radius: 16, y: 6)
+                    .opacity(isVisible ? 1 : 0)
+                    .scaleEffect(reduceMotion || isVisible ? 1 : 0.98, anchor: .bottom)
+                    .offset(y: reduceMotion || isVisible ? 0 : 18)
                     .accessibilityIdentifier("run-config-scroll")
                     .padding(.horizontal, 12)
                     .padding(.bottom, bottomInset)
@@ -1436,6 +1486,27 @@ private struct RunConfigOverlay: View {
             }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(isPresented)
+        .accessibilityHidden(!isPresented)
         .accessibilityAction(.escape, onDismiss)
+        .onChange(of: panelHeight) { _, height in
+            if height > 0, isPresented, !isVisible { animatePresentation() }
+        }
+        .onChange(of: isPresented) { _, _ in animatePresentation() }
+    }
+
+    private func animatePresentation() {
+        if isPresented {
+            guard panelHeight > 0 else { return }
+            withAnimation(reduceMotion ? .easeOut(duration: 0.12) : .spring(duration: 0.3, bounce: 0.08)) {
+                isVisible = true
+            }
+        } else {
+            withAnimation(.easeOut(duration: reduceMotion ? 0.12 : 0.18)) {
+                isVisible = false
+            } completion: {
+                onDismissed()
+            }
+        }
     }
 }

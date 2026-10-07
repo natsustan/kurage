@@ -52,6 +52,9 @@ protocol LodyClient: AnyObject {
     var supportsConversations: Bool { get }
     var supportsHistoricalFilePreviews: Bool { get }
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview
+    var supportsBranchChanges: Bool { get }
+    func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview
     var supportsTextSending: Bool { get }
     var supportsTextSendingWhileRunning: Bool { get }
     var supportsSessionCancellation: Bool { get }
@@ -201,6 +204,13 @@ extension LodyClient {
     var requiresExternalAuthorization: Bool { true }
     var supportsConversations: Bool { false }
     var supportsHistoricalFilePreviews: Bool { false }
+    var supportsBranchChanges: Bool { false }
+    func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges {
+        BranchFileChanges(status: .unavailable, reason: "unsupported")
+    }
+    func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        ConversationFilePreview(status: .unavailable, reason: "unsupported")
+    }
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
         ConversationFilePreview(status: .unavailable, reason: "unsupported")
     }

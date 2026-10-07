@@ -15,7 +15,7 @@ import { observeConversation, readSyncedConversation, syncedConversationVersion 
 import { sendText } from './conversation-send.mjs';
 import { mentionSkills } from './mention-skills.mjs';
 import { requestMachine } from './machine-rpc.mjs';
-import { turnDiffSource, loadTurnDiff } from './turn-diff.mjs';
+import { turnDiffSource, loadTurnDiff, loadBranchChanges, loadCurrentDiff } from './turn-diff.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
 import { newSessionOptions, recentModels, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
@@ -80,7 +80,7 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
-window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, path, operationID) => {
+async function readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, read) {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
@@ -104,13 +104,22 @@ window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, p
       nativeFetch.bindSignal(access.token, controller.signal);
       return access.token;
     } };
-    return JSON.stringify(await loadTurnDiff(source, access, workspaceID, sessionID, turnID, path,
-      controller.signal));
+    return JSON.stringify(await read(source, access, controller.signal));
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);
   }
-};
+}
+
+window.kurageTurnDiff = (workspaceID, sessionID, gatewayBaseURL, turnID, path, operationID) =>
+  readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, (source, access, signal) =>
+    loadTurnDiff(source, access, workspaceID, sessionID, turnID, path, signal));
+
+window.kurageBranchChanges = (workspaceID, sessionID, gatewayBaseURL, path, operationID) =>
+  readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, (source, access, signal) =>
+    path == null
+      ? loadBranchChanges(source, access, workspaceID, sessionID, signal)
+      : loadCurrentDiff(source, access, workspaceID, sessionID, path, signal));
 
 window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID, projectID, userID, operationID) => {
   const controller = new AbortController();
