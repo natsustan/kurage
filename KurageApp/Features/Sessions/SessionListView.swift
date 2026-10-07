@@ -833,7 +833,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
 }
 
 /// A one-shot read shares the transcript renderer without taking over tabs, drafts, or read receipts.
-private struct SessionConversationPreview: View {
+struct SessionConversationPreview: View {
     let sessionID: SessionSummary.ID
     let model: AppModel
     let workspaceGeneration: Int
@@ -847,7 +847,8 @@ private struct SessionConversationPreview: View {
 
     var body: some View {
         Group {
-            if model.workspaceGeneration != workspaceGeneration {
+            // Removing the renderer cancels its independent thumbnail tasks as well.
+            if !model.isApplicationActive || model.workspaceGeneration != workspaceGeneration {
                 Color(.systemBackground)
             } else if failedToLoad, conversation == nil {
                 ContentUnavailableView("Could not load preview", systemImage: "bubble.left.and.bubble.right",
