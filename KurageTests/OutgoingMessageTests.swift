@@ -4,6 +4,26 @@ import Testing
 
 @MainActor
 struct OutgoingMessageTests {
+    @Test func previewDoesNotAcknowledgeAnUnconfirmedSend() async throws {
+        let client = ControlledMessageClient()
+        client.unconfirmed = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        try model.stageOutgoingMessage("Guide", composerText: "Guide", mentions: .init(), attachments: [],
+                                       runConfig: nil, sessionID: "chat")
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.deliverOutgoingMessage(sessionID: "chat")
+        }
+        let pending = try #require(model.pendingTextSend(sessionID: "chat"))
+        client.confirmHistory(workspaceID: "a")
+
+        let preview = try await model.conversationPreview(sessionID: "chat")
+        #expect(preview.turns.first?.isDeliveryConfirmed == true)
+        #expect(model.pendingTextSend(sessionID: "chat") == pending)
+        #expect(model.outgoingMessage(sessionID: "chat")?.delivery == .unconfirmed)
+        #expect(model.cachedConversation(sessionID: "chat") == nil)
+    }
+
     @Test func consecutiveRejectionsSurviveRefreshRelaunchAndStaleConfirmation() async throws {
         let client = ControlledMessageClient()
         let model = AppModel(client: client)
@@ -69,6 +89,7 @@ struct OutgoingMessageTests {
         rejected.isDeliveryConfirmed = true
         client.setHistory([rejected], workspaceID: "a")
         client.setHistory([rejected], workspaceID: "b")
+        #expect(try await model.conversationPreview(sessionID: "chat").turns.first?.isDeliveryRejected == true)
         #expect(try await model.conversation(sessionID: "other-chat").turns.first?.isDeliveryRejected == false)
         await model.selectWorkspace("b")
         #expect(try await model.conversation(sessionID: "chat").turns.first?.isDeliveryRejected == false)

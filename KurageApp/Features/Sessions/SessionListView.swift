@@ -186,6 +186,7 @@ private struct SessionSidebarView: View {
     }
 
     var body: some View {
+        let workspaceGeneration = model.workspaceGeneration
         SessionList(
             sessions: model.sessions,
             canEdit: model.supportsSessionMetadataEditing,
@@ -207,6 +208,12 @@ private struct SessionSidebarView: View {
             query: searchQuery,
             searchBody: { model.sessionSearchBody(sessionID: $0) },
             canCreateSession: { model.supportsSessionCreation && model.newSessionTemplate(projectID: $0) != nil },
+            makeConversationPreview: { id in
+                guard model.workspaceGeneration == workspaceGeneration else { return nil }
+                return UIHostingController(rootView: SessionConversationPreview(
+                    sessionID: id, model: model, workspaceGeneration: workspaceGeneration
+                ))
+            },
             onOpen: onOpen,
             onChat: {
                 if let template = model.sessions.first(where: { $0.projectID?.hasPrefix("local:") == true }),
@@ -340,6 +347,7 @@ private struct SessionList: View {
     let query: String
     let searchBody: (SessionSummary.ID) -> String
     let canCreateSession: (String) -> Bool
+    let makeConversationPreview: (SessionSummary.ID) -> UIViewController?
     let onOpen: (SessionSummary.ID) -> Void
     let onChat: () -> Void
     let canChat: Bool
@@ -388,6 +396,7 @@ private struct SessionList: View {
                     opensSessions: supportsConversations,
                     selectedSessionID: selectedSessionID,
                     bottomContentInset: Self.floatingSearchClearance + (hasIncompleteSearch && !trimmedQuery.isEmpty ? 44 : 0),
+                    makeConversationPreview: makeConversationPreview,
                     onOpen: onOpen,
                     onTogglePinned: togglePinned,
                     onToggleProject: toggleProject,
@@ -570,6 +579,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
     var opensSessions: Bool
     var selectedSessionID: SessionSummary.ID?
     var bottomContentInset: CGFloat
+    var makeConversationPreview: (SessionSummary.ID) -> UIViewController?
     var onOpen: (SessionSummary.ID) -> Void
     var onTogglePinned: () -> Void
     var onToggleProject: (String) -> Void
@@ -584,6 +594,7 @@ private struct SessionBrowser: UIViewControllerRepresentable {
         controller.canEdit = canEdit
         controller.canCopyURL = canCopyURL
         controller.onAction = onAction
+        controller.makeConversationPreview = makeConversationPreview
         controller.onOpen = onOpen
         controller.onTogglePinned = onTogglePinned
         controller.onToggleProject = onToggleProject
@@ -607,6 +618,7 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
     var onAction: ((SessionSummary, SessionAction) -> Void)?
     var refreshAction: RefreshAction?
     private var refreshTask: Task<Void, Never>?
+    var makeConversationPreview: ((SessionSummary.ID) -> UIViewController?)?
     var onOpen: ((SessionSummary.ID) -> Void)?
     var onTogglePinned: (() -> Void)?
     var onToggleProject: ((String) -> Void)?
@@ -776,7 +788,16 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
                    point: CGPoint) -> UIContextMenuConfiguration? {
         guard let id = dataSource.itemIdentifier(for: indexPath),
               case let .session(session, _, dimmed) = rows[id], !dimmed else { return nil }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+        return UIContextMenuConfiguration(identifier: id as NSString, previewProvider: { [weak self] in
+            guard let self, opensSessions, case .session(_, _, false) = rows[id],
+                  let preview = makeConversationPreview?(session.id) else { return nil }
+            // Larger menu labels need more vertical space, especially when they wrap.
+            let textScale = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).pointSize / 17
+            preview.preferredContentSize = CGSize(width: min(tableView.bounds.width - 32, 520),
+                height: max(140, min(tableView.bounds.height * 0.62, 520) / max(1, textScale * textScale)))
+            preview.view.clipsToBounds = true
+            return preview
+        }) { [weak self] _ in
             guard let self else { return nil }
             var actions: [UIAction] = []
             if canEdit {
@@ -797,7 +818,86 @@ private final class SessionBrowserController: UIViewController, UITableViewDeleg
                     self?.onAction?(session, .archive)
                 })
             }
-            return UIMenu(children: actions)
+            return UIMenu(title: session.title, children: actions)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, willPerformPreviewActionForMenuWith configuration: UIContextMenuConfiguration,
+                   animator: any UIContextMenuInteractionCommitAnimating) {
+        guard let id = configuration.identifier as? String else { return }
+        animator.addCompletion { [weak self] in
+            guard let self, opensSessions, case let .session(session, _, false) = rows[id] else { return }
+            onOpen?(session.id)
+        }
+    }
+}
+
+/// A one-shot read shares the transcript renderer without taking over tabs, drafts, or read receipts.
+struct SessionConversationPreview: View {
+    let sessionID: SessionSummary.ID
+    let model: AppModel
+    let workspaceGeneration: Int
+    @State private var conversation: Conversation?
+    @State private var failedToLoad = false
+    @State private var isVisible = false
+
+    private var canLoad: Bool {
+        isVisible && model.isApplicationActive && model.workspaceGeneration == workspaceGeneration
+    }
+
+    var body: some View {
+        Group {
+            // Removing the renderer cancels its independent thumbnail tasks as well.
+            if !model.isApplicationActive || model.workspaceGeneration != workspaceGeneration {
+                Color(.systemBackground)
+            } else if failedToLoad, conversation == nil {
+                ContentUnavailableView("Could not load preview", systemImage: "bubble.left.and.bubble.right",
+                                       description: Text("Open the session to try again."))
+                    .accessibilityIdentifier("session-preview-error")
+            } else if let conversation, !conversation.turns.isEmpty {
+                ConversationLayout(
+                    turns: conversation.turns,
+                    includesFooter: false,
+                    isLoading: false,
+                    scrollRequestID: 0,
+                    loadImage: { image, variant in
+                        guard canLoad else { throw CancellationError() }
+                        return try await model.loadSessionImage(image, conversationSessionID: sessionID, variant: variant)
+                    },
+                    onPreviewImage: { _ in },
+                    onRefresh: {},
+                    footer: { EmptyView() }
+                )
+            } else if conversation != nil {
+                ContentUnavailableView("No messages yet", systemImage: "bubble.left.and.bubble.right")
+            } else {
+                ProgressView()
+                    .accessibilityLabel("Loading preview")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .background(Color(.systemBackground))
+        .tint(.primary)
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("session-preview-\(sessionID)")
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
+        .task(id: canLoad) {
+            guard canLoad else { return }
+            conversation = model.cachedConversation(sessionID: sessionID)
+            failedToLoad = false
+            do {
+                let loaded = try await model.conversationPreview(sessionID: sessionID)
+                try Task.checkCancellation()
+                guard canLoad else { return }
+                conversation = loaded
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, canLoad else { return }
+                failedToLoad = true
+            }
         }
     }
 }

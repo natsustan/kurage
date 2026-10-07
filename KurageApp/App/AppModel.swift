@@ -312,7 +312,7 @@ final class AppModel {
     private var searchIndexGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
     private var isSessionSearchActive = false
-    private var isApplicationActive = true
+    private(set) var isApplicationActive = true
     /// New subscriptions interrupt queued search reads; their first update resumes indexing.
     private var conversationObservationCount = 0
     private(set) var isIndexingSessionSearch = false
@@ -867,6 +867,21 @@ final class AppModel {
         return conversation
     }
 
+    /// A preview cannot replace live history or acknowledge pending sends.
+    func conversationPreview(sessionID: SessionSummary.ID) async throws -> Conversation {
+        try Task.checkCancellation()
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
+        guard loaded.sessionID == sessionID else { throw LodyClientError.notConnected }
+        // Read and observation delivery order does not establish snapshot freshness.
+        let conversation = applyingDeliveryState(to: loaded.removingLocalImageData(), workspaceID: workspaceID)
+        return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
+    }
+
     func sessionSearchBody(sessionID: SessionSummary.ID) -> String {
         guard let workspaceID = selectedWorkspaceID else { return "" }
         return searchBodies[workspaceID]?[sessionID] ?? ""
@@ -1301,13 +1316,7 @@ final class AppModel {
         var conversation = value.removingLocalImageData()
         rememberRejectedTurns(Set(conversation.turns.filter { $0.author == .user && $0.isDeliveryRejected }.map(\.id)),
                               sessionID: sessionID, workspaceID: workspaceID)
-        conversation.turns = applyingDeliveryRejections(conversation.turns, sessionID: sessionID, workspaceID: workspaceID)
-        if let ids = supersededMessages[workspaceID]?[sessionID] {
-            for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) &&
-                !conversation.turns[index].isDeliveryRejected {
-                conversation.turns[index].delivery = .superseded
-            }
-        }
+        conversation = applyingDeliveryState(to: conversation, workspaceID: workspaceID)
         if let message = outgoingByWorkspace[workspaceID]?[sessionID],
            let index = conversation.turns.firstIndex(where: { $0.id == message.id }) {
             imagePreviews.store(message.preservingPreviews(in: conversation.turns[index]),
@@ -1333,6 +1342,19 @@ final class AppModel {
                 conversation.fileChanges?.first(where: { $0.id == key.turnID })?.files.first(where: { $0.path == key.path }) == entry.file
         }
         return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
+    }
+
+    private func applyingDeliveryState(to value: Conversation, workspaceID: String) -> Conversation {
+        var conversation = value
+        let sessionID = conversation.sessionID
+        conversation.turns = applyingDeliveryRejections(conversation.turns, sessionID: sessionID, workspaceID: workspaceID)
+        if let ids = supersededMessages[workspaceID]?[sessionID] {
+            for index in conversation.turns.indices where ids.contains(conversation.turns[index].id) &&
+                !conversation.turns[index].isDeliveryRejected {
+                conversation.turns[index].delivery = .superseded
+            }
+        }
+        return conversation
     }
 
     private func rejectOutgoingMessage(turnID: String, sessionID: String, workspaceID: String) {

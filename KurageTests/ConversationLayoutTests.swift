@@ -344,6 +344,7 @@ struct ConversationLayoutTests {
 }
 
 @MainActor
+@Suite(.serialized)
 struct ConversationReadingTests {
     enum ComposerCover: CaseIterable {
         case advanced, attachmentPreview, photos, files
@@ -400,10 +401,44 @@ struct ConversationReadingTests {
         #expect(presentation.draft == "Keep this draft")
     }
 
-    private func waitUntil(_ condition: () -> Bool) async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func previewImagesCancelOnInactivityAndRestartOnReturn() async throws {
+        let client = ControlledConversationClient()
+        client.includesImage = true
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let controller = UIHostingController(rootView: SessionConversationPreview(
+            sessionID: "root", model: model, workspaceGeneration: model.workspaceGeneration
+        ))
+        let scene = try #require(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        window.rootViewController = controller
+        window.isHidden = false
+        defer { window.isHidden = true; window.rootViewController = nil }
+        try await waitUntil { client.imageReadCount > 0 }
+        let readsBeforePause = client.imageReadCount
+
+        // Keep the preview host onscreen so UIKit menu dismissal cannot cancel the read for us.
+        model.setApplicationActive(false)
+        try await waitUntil { client.cancelledImageReadCount == client.imageReadCount }
+        #expect(controller.view.window === window)
+        #expect(client.imageReadCount == readsBeforePause)
+
+        model.setApplicationActive(true)
+        try await waitUntil { client.imageReadCount > readsBeforePause }
+        #expect(client.readReceipts.isEmpty)
+        #expect(!client.isObserving)
+
+        window.isHidden = true
+        window.rootViewController = nil
+        try await waitUntil { client.cancelledImageReadCount == client.imageReadCount }
+    }
+
+    private func waitUntil(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        try #require(condition())
+        try #require(condition(), sourceLocation: sourceLocation)
     }
 }
 
@@ -441,6 +476,9 @@ private final class ControlledConversationClient: LodyClient {
     let supportsTextSending = true
     private(set) var isObserving = false
     private(set) var readReceipts: [Double] = []
+    var includesImage = false
+    private(set) var imageReadCount = 0
+    private(set) var cancelledImageReadCount = 0
     private var summary = SessionSummary(id: "root", title: "Root", agentName: "Agent", activity: .idle,
                                          preview: "", lastMessageAt: 100, lastReadAt: 100)
     private let updates: AsyncThrowingStream<ConversationUpdate, Error>
@@ -452,7 +490,22 @@ private final class ControlledConversationClient: LodyClient {
     func workspaces() async throws -> [WorkspaceSummary] { [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")] }
     func sessions(workspaceID: String) async throws -> [SessionSummary] { [summary] }
     func conversation(sessionID: String, workspaceID: String) async throws -> Conversation {
-        Conversation(sessionID: sessionID, turns: [ConversationTurn(id: "answer", author: .agent, text: "New output")], permission: nil)
+        let parts: [ConversationPart] = includesImage
+            ? [.text("New output"), .image(ConversationImage(imageID: "shot", mimeType: "image/png", width: 120, height: 80))]
+            : []
+        return Conversation(sessionID: sessionID, turns: [
+            ConversationTurn(id: "answer", author: .agent, text: "New output", parts: parts),
+        ], permission: nil)
+    }
+    func loadSessionImage(workspaceID: String, sessionID: String, imageID: String, variant: SessionImageVariant) async throws -> Data {
+        imageReadCount += 1
+        do {
+            try await Task.sleep(for: .seconds(30))
+            return FixtureImage.png
+        } catch is CancellationError {
+            cancelledImageReadCount += 1
+            throw CancellationError()
+        }
     }
     func observeConversation(sessionID: String, workspaceID: String) async throws -> AsyncThrowingStream<ConversationUpdate, Error> {
         isObserving = true

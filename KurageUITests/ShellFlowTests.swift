@@ -2377,6 +2377,70 @@ extension ShellFlowTests {
     }
 
     @MainActor
+    func testSessionContextPreviewKeepsUnreadAndOpensOnTap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertEqual(session.value as? String, "Idle, Unread")
+
+        session.press(forDuration: 1)
+        let preview = app.otherElements["Preview"].firstMatch
+        let content = app.descendants(matching: .any)["session-preview-session-long"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        attachScreen(app, name: "Session context preview initial state")
+        let latest = app.staticTexts["Latest reply in long conversation"].firstMatch
+        XCTAssertTrue(latest.waitForExistence(timeout: 5))
+        // UIKit renders the hosted content through a preview snapshot; its AX tree stays offscreen.
+        let latestFrame = latest.frame.offsetBy(dx: preview.frame.minX - content.frame.minX,
+                                                dy: preview.frame.minY - content.frame.minY)
+        XCTAssertTrue(preview.frame.contains(latestFrame))
+        XCTAssertTrue(app.buttons["Pin"].exists)
+        let archive = app.buttons["Archive"]
+        XCTAssertTrue(archive.isHittable)
+        XCTAssertLessThanOrEqual(archive.frame.maxY, app.frame.maxY)
+        XCTAssertFalse(app.descendants(matching: .any)["follow-up-field"].exists)
+        attachScreen(app, name: "Session latest-message context preview")
+
+        // Dismissing the preview leaves the unread receipt intact.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.08)).tap()
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(session.value as? String, "Idle, Unread")
+        session.press(forDuration: 1)
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        tap(preview)
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(latest.exists)
+        attachScreen(app, name: "Conversation opened from context preview")
+    }
+
+    @MainActor
+    func testSessionContextPreviewRecoversAfterReadFailure() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-search-failure", "--fixture-slow-conversation"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        session.press(forDuration: 1)
+        XCTAssertTrue(app.staticTexts["Could not load preview"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Pin"].exists)
+        XCTAssertTrue(app.buttons["Archive"].exists)
+        attachScreen(app, name: "Session context preview read failure")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.08)).tap()
+        XCTAssertTrue(app.staticTexts["Could not load preview"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(session.value as? String, "Idle, Unread")
+
+        session.press(forDuration: 1)
+        XCTAssertTrue(app.staticTexts["Latest reply in long conversation"].waitForExistence(timeout: 8))
+        XCTAssertEqual(session.value as? String, "Idle, Unread")
+        attachScreen(app, name: "Session context preview read recovered")
+    }
+
+    @MainActor
     func testSessionContextMenuPinRenameCopyAndArchive() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
