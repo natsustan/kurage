@@ -8,6 +8,7 @@ enum ConversationMetrics {
 /// UIKit owns keyboard avoidance and scrolling; SwiftUI owns message and composer content.
 struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     let turns: [ConversationTurn]
+    var includesFooter = true
     var fileChanges: [ConversationFileChangeGroup] = []
     var onOpenTurnChanges: (Int) -> Void = { _ in }
     let isLoading: Bool
@@ -26,7 +27,7 @@ struct ConversationLayout<Footer: View>: UIViewControllerRepresentable {
     @ViewBuilder let footer: () -> Footer
 
     func makeUIViewController(context: Context) -> ConversationLayoutController<Footer> {
-        ConversationLayoutController(footer: footer(), startsAtTop: startsAtTop)
+        ConversationLayoutController(footer: footer(), startsAtTop: startsAtTop, includesFooter: includesFooter)
     }
 
     func updateUIViewController(_ controller: ConversationLayoutController<Footer>, context: Context) {
@@ -77,6 +78,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     private var applyingSnapshot = false
     private var followsOutput = true
     private let startsAtTop: Bool
+    private let includesFooter: Bool
     private var isOpeningAtTop: Bool
     private var isUserScrolling = false
     private var isAdjustingLayout = false
@@ -86,8 +88,9 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
     var loadImage: (@MainActor (ConversationImage, SessionImageVariant) async throws -> Data)?
     var onPreviewImage: ((ConversationImage) -> Void)?
 
-    init(footer: Footer, startsAtTop: Bool = false) {
+    init(footer: Footer, startsAtTop: Bool = false, includesFooter: Bool = true) {
         self.startsAtTop = startsAtTop
+        self.includesFooter = includesFooter
         isOpeningAtTop = startsAtTop
         footerHost = UIHostingController(rootView: MeasuredConversationFooter(content: footer, onHeightChange: { _ in }))
         super.init(nibName: nil, bundle: nil)
@@ -113,7 +116,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
             contentView.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
             contentView.widthAnchor.constraint(lessThanOrEqualToConstant: ConversationMetrics.maximumContentWidth),
             fillsAvailableWidth,
-            contentView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+            contentView.bottomAnchor.constraint(equalTo: includesFooter ? view.keyboardLayoutGuide.topAnchor : view.bottomAnchor)
         ])
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -186,12 +189,13 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
 
         install(emptyHost, in: contentView)
         footerScrollView.translatesAutoresizingMaskIntoConstraints = false
+        footerScrollView.isHidden = !includesFooter
         footerScrollView.contentInsetAdjustmentBehavior = .never
         footerScrollView.scrollsToTop = false
         contentView.addSubview(footerScrollView)
         install(footerHost, in: footerScrollView)
-        footerHeightConstraint = footerHost.view.heightAnchor.constraint(equalToConstant: 78)
-        footerViewportHeightConstraint = footerScrollView.heightAnchor.constraint(equalToConstant: 78)
+        footerHeightConstraint = footerHost.view.heightAnchor.constraint(equalToConstant: includesFooter ? 78 : 0)
+        footerViewportHeightConstraint = footerScrollView.heightAnchor.constraint(equalToConstant: includesFooter ? 78 : 0)
         // Follow the keyboard, but stay above the home indicator while it is hidden.
         // The lower-priority equality yields when the safe-area cap is tighter.
         let footerFollowsKeyboard = footerScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor)
@@ -255,7 +259,7 @@ final class ConversationLayoutController<Footer: View>: UIViewController, UITabl
         needsReceiptLayout = true
         self.onRefresh = onRefresh
         footerHost.rootView = MeasuredConversationFooter(content: footer) { [weak self] height in
-            guard let self, height.isFinite, height > 0,
+            guard let self, includesFooter, height.isFinite, height > 0,
                   abs(footerHeightConstraint.constant - height) > 0.5 else { return }
             footerHeightConstraint.constant = ceil(height)
             needsFooterBottomScroll = true

@@ -312,7 +312,7 @@ final class AppModel {
     private var searchIndexGeneration = 0
     private var searchIndexTask: Task<Void, Never>?
     private var isSessionSearchActive = false
-    private var isApplicationActive = true
+    private(set) var isApplicationActive = true
     /// New subscriptions interrupt queued search reads; their first update resumes indexing.
     private var conversationObservationCount = 0
     private(set) var isIndexingSessionSearch = false

@@ -235,7 +235,7 @@
 		CF9509B93A448677F2BA6F70 /* KurageApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KurageApp.swift; sourceTree = "<group>"; };
 		D4E327BCE94AA9576F37427A /* NotificationModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationModels.swift; sourceTree = "<group>"; };
 		D5921136DCB54FC4A513BACA /* SessionTabsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTabsFlowTests.swift; sourceTree = "<group>"; };
-		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D8AB4457E0D00261BF02F78D /* Kurage.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Kurage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D91ED1C545E043732B429EBB /* AppearanceSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppearanceSettingsView.swift; sourceTree = "<group>"; };
 		DA1DD621756410C93F9CD01A /* LaunchCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchCoverView.swift; sourceTree = "<group>"; };
 		DC3422F598DD3B617DBA6325 /* DefaultModelsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultModelsSettingsView.swift; sourceTree = "<group>"; };
@@ -772,7 +772,7 @@
 				CODE_SIGN_ENTITLEMENTS = KurageApp/Kurage.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
@@ -803,7 +803,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = KurageNotificationService/KurageNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				INFOPLIST_FILE = KurageNotificationService/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -825,7 +825,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = KurageNotificationService/KurageNotificationService.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				INFOPLIST_FILE = KurageNotificationService/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -849,7 +849,7 @@
 				CODE_SIGN_ENTITLEMENTS = KurageApp/Kurage.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 12;
 				DEVELOPMENT_TEAM = V6GTS74AND;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
