@@ -15,20 +15,15 @@ struct QuickActionConfigurationState {
                      agentConfigID: String? = nil, allowsAgentRecovery: Bool = false) async throws -> Self {
         let preference = model.quickActionPreference(rootID: rootID, profile: profile)
         let agentID = agentConfigID ?? preference?.agentConfigID
-        var options: NewSessionOptions
+        let options: NewSessionOptions
         do {
-            options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: agentID,
-                                                        isTab: true)
-            if options.needsRefresh == true {
-                options = try await model.newSessionOptions(templateSessionID: rootID, agentConfigID: agentID,
-                                                            isTab: true, refresh: true)
-            }
+            options = try await model.quickActionOptions(rootID: rootID, agentConfigID: agentID)
         } catch {
             try Task.checkCancellation()
             guard allowsAgentRecovery, let agentID else { throw error }
             // Settings can offer the current catalog without applying a different
             // agent to a task or silently replacing the saved preference.
-            let available = try await model.newSessionOptions(templateSessionID: rootID, isTab: true, refresh: true)
+            let available = try await model.quickActionOptions(rootID: rootID, agentConfigID: nil, refresh: true)
             try Task.checkCancellation()
             guard !available.providers.contains(where: { $0.value == agentID }) else { throw error }
             return Self(options: available, isLoading: false,

@@ -348,4 +348,250 @@ struct QuickActionTests {
             try QuickActionPreference(agentConfigID: "codex", modelID: "removed").apply(to: &config)
         }
     }
+
+    @Test(.timeLimit(.minutes(1))) func concurrentProfilesShareInitialReadAndRefreshButApplyIndependentPreferences() async throws {
+        let suite = "QuickActionTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let client = ControlledQuickActionOptionsClient()
+        let model = AppModel(client: client, quickActionDefaults: defaults)
+        await model.adoptExistingAccount()
+        model.saveQuickActionPreference(.init(agentConfigID: "codex", modelID: "gpt-5.5", reasoning: "high"),
+            rootID: "session-pr", profile: .review, workspaceGeneration: model.workspaceGeneration)
+        model.saveQuickActionPreference(.init(agentConfigID: "codex", modelID: "gpt-5.4-mini", reasoning: "low"),
+            rootID: "session-pr", profile: .git, workspaceGeneration: model.workspaceGeneration)
+        var requests = client.started.makeAsyncIterator()
+        let review = await startLoad {
+            try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .review).runConfig
+        }
+        let initial = try #require(await requests.next())
+        let git = await startLoad {
+            try await QuickActionConfigurationState.load(model: model, rootID: "session-pr", profile: .git).runConfig
+        }
+        #expect(client.requests.count == 1)
+        client.finish(initial)
+        let refresh = try #require(await requests.next())
+        #expect(refresh.refresh)
+        client.finish(refresh)
+        let reviewConfig = try await review.value
+        let gitConfig = try await git.value
+        #expect(reviewConfig?.model?.value == "gpt-5.5")
+        #expect(reviewConfig?.selectedReasoning?.value == "high")
+        #expect(gitConfig?.model?.value == "gpt-5.4-mini")
+        #expect(gitConfig?.selectedReasoning?.value == "low")
+        #expect(client.requests.map(\.refresh) == [false, true])
+
+        // Sharing ends with the operation; a later visit still checks current options.
+        client.reportsStaleOptions = false
+        let later = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        client.finish(try #require(await requests.next()))
+        _ = try await later.value
+        #expect(client.requests.count == 3)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func inheritedAndExplicitAgentLoadsShareTheirResolvedRefresh() async throws {
+        let client = ControlledQuickActionOptionsClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        let inherited = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: nil) }
+        let inheritedRequest = try #require(await requests.next())
+        let explicit = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        let explicitRequest = try #require(await requests.next())
+        client.finish(inheritedRequest)
+        client.finish(explicitRequest)
+        let refresh = try #require(await requests.next())
+        #expect(client.requests.map(\.refresh) == [false, false, true])
+        client.finish(refresh)
+        #expect(try await inherited.value.agentConfigID == "codex")
+        #expect(try await explicit.value.agentConfigID == "codex")
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancellingOneProfileDuringRefreshKeepsTheOtherWaiting() async throws {
+        let client = ControlledQuickActionOptionsClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        let first = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: nil) }
+        let initial = try #require(await requests.next())
+        let second = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: nil) }
+        client.finish(initial)
+        let refresh = try #require(await requests.next())
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        #expect(client.cancelledRequests.isEmpty)
+        client.finish(refresh)
+        #expect(try await second.value.agentConfigID == "codex")
+        #expect(client.requests.count == 2)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func cancellingLastWaiterStopsRefreshAndAllowsANewLoad() async throws {
+        let client = ControlledQuickActionOptionsClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        var cancellations = client.cancelled.makeAsyncIterator()
+        let first = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        client.finish(try #require(await requests.next()))
+        let refresh = try #require(await requests.next())
+        first.cancel()
+        await #expect(throws: CancellationError.self) { try await first.value }
+        #expect(await cancellations.next() == refresh)
+        client.reportsStaleOptions = false
+        let retry = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        let next = try #require(await requests.next())
+        #expect(!next.refresh)
+        client.finish(next)
+        #expect(try await retry.value.agentConfigID == "codex")
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ["agent", "root", "refresh"])
+    func distinctQuickActionRequestsDoNotShareOptions(difference: String) async throws {
+        let client = ControlledQuickActionOptionsClient()
+        client.reportsStaleOptions = false
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        let first = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        let firstRequest = try #require(await requests.next())
+        let second = await startLoad {
+            try await model.quickActionOptions(rootID: difference == "root" ? "session-long" : "session-pr",
+                agentConfigID: difference == "agent" ? "claude" : "codex", refresh: difference == "refresh")
+        }
+        let secondRequest = try #require(await requests.next())
+        #expect(client.requests.count == 2)
+        client.finish(firstRequest)
+        client.finish(secondRequest)
+        #expect(try await first.value.agentConfigID == "codex")
+        #expect(try await second.value.agentConfigID == (difference == "agent" ? "claude" : "codex"))
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ["workspace", "sign-out"])
+    func contextChangesReleaseWaitersAndIgnoreLateOptions(change: String) async throws {
+        let client = ControlledQuickActionOptionsClient()
+        client.ignoresCancellation = true
+        client.reportsStaleOptions = false
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        var cancellations = client.cancelled.makeAsyncIterator()
+        let old = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        let oldRequest = try #require(await requests.next())
+        if change == "workspace" { await model.selectWorkspace("ws-other") }
+        else { model.signOut() }
+        await #expect(throws: CancellationError.self) { try await old.value }
+        #expect(await cancellations.next() == oldRequest)
+
+        if change == "workspace" {
+            let current = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+            let currentRequest = try #require(await requests.next())
+            #expect(currentRequest.workspaceID == "ws-other")
+            client.finish(oldRequest)
+            client.finish(currentRequest)
+            _ = try await current.value
+        } else {
+            client.finish(oldRequest)
+            #expect(!model.isSignedIn)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1))) func failedSharedRefreshReleasesBothWaitersAndCanRetry() async throws {
+        let client = ControlledQuickActionOptionsClient()
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var requests = client.started.makeAsyncIterator()
+        let first = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        let initial = try #require(await requests.next())
+        let second = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        client.finish(initial)
+        client.finish(try #require(await requests.next()), error: LodyClientError.unreachable)
+        await #expect(throws: LodyClientError.unreachable) { try await first.value }
+        await #expect(throws: LodyClientError.unreachable) { try await second.value }
+        client.reportsStaleOptions = false
+        let retry = await startLoad { try await model.quickActionOptions(rootID: "session-pr", agentConfigID: "codex") }
+        client.finish(try #require(await requests.next()))
+        _ = try await retry.value
+        #expect(client.requests.map(\.refresh) == [false, true, false])
+    }
+
+    private func startLoad<Value: Sendable>(
+        _ operation: @escaping @MainActor @Sendable () async throws -> Value
+    ) async -> Task<Value, Error> {
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        let task = Task {
+            signal.yield(())
+            return try await operation()
+        }
+        // The main-actor operation registers its waiter before yielding back here.
+        var events = started.makeAsyncIterator()
+        await events.next()
+        return task
+    }
+}
+
+@MainActor
+private final class ControlledQuickActionOptionsClient: LodyClient {
+    struct Request: Equatable, Sendable {
+        let id: Int
+        let workspaceID: String
+        let refresh: Bool
+    }
+    private let fixture = FixtureLodyClient(startsSignedIn: true, workspaceSummaries: [
+        WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"),
+        WorkspaceSummary(id: "ws-other", name: "Other", slug: "other"),
+    ])
+    private var gates: [Int: CheckedContinuation<Void, Error>] = [:]
+    private let startedSignal: AsyncStream<Request>.Continuation
+    private let cancelledSignal: AsyncStream<Request>.Continuation
+    let started: AsyncStream<Request>
+    let cancelled: AsyncStream<Request>
+    private(set) var requests: [Request] = []
+    private(set) var cancelledRequests: [Request] = []
+    var reportsStaleOptions = true
+    var ignoresCancellation = false
+    var account: Account? { fixture.account }
+
+    init() {
+        (started, startedSignal) = AsyncStream.makeStream()
+        (cancelled, cancelledSignal) = AsyncStream.makeStream()
+    }
+
+    func finish(_ request: Request, error: Error? = nil) {
+        guard let gate = gates.removeValue(forKey: request.id) else { return }
+        if let error { gate.resume(throwing: error) }
+        else { gate.resume() }
+    }
+
+    func newSessionOptions(templateSessionID: String, agentConfigID: String?, projectID: String?,
+                           isTab: Bool, refresh: Bool, workspaceID: String) async throws -> NewSessionOptions {
+        let request = Request(id: requests.count, workspaceID: workspaceID, refresh: refresh)
+        requests.append(request)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (gate: CheckedContinuation<Void, Error>) in
+                gates[request.id] = gate
+                startedSignal.yield(request)
+            }
+        } onCancel: {
+            Task { @MainActor in
+                guard self.gates[request.id] != nil else { return }
+                self.cancelledRequests.append(request)
+                self.cancelledSignal.yield(request)
+                if !self.ignoresCancellation { self.finish(request, error: CancellationError()) }
+            }
+        }
+        return NewSessionOptions(machineName: "Fixture", agentConfigID: agentConfigID ?? "codex", providers: [],
+            runConfig: .fixture, needsRefresh: reportsStaleOptions && !refresh)
+    }
+
+    func restoreSession() async -> Account? { await fixture.restoreSession() }
+    func workspaces() async throws -> [WorkspaceSummary] { try await fixture.workspaces() }
+    func sessions(workspaceID: String) async throws -> [SessionSummary] { try await fixture.sessions(workspaceID: workspaceID) }
+    func signOut() { fixture.signOut() }
+    func beginDeviceAuthorization() async throws -> DeviceAuthorization { try await fixture.beginDeviceAuthorization() }
+    func finishDeviceAuthorization(_ authorization: DeviceAuthorization) async throws { try await fixture.finishDeviceAuthorization(authorization) }
+    func conversation(sessionID: String, workspaceID: String) async throws -> Conversation { throw LodyClientError.notConnected }
+    func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?, turnID: String,
+              sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { throw LodyClientError.notConnected }
+    func cancelSession(sessionID: String, workspaceID: String) async throws { throw LodyClientError.notConnected }
+    func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws { throw LodyClientError.notConnected }
 }
