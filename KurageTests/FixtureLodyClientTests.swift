@@ -925,6 +925,10 @@ private final class DeferredSessionClient: LodyClient {
 
 @MainActor
 struct ConversationPreviewTests {
+    enum SnapshotRace: CaseIterable {
+        case readGrowth, readDeletion, liveGrowth, liveDeletion
+    }
+
     private func model(client: DeferredSessionClient) throws -> AppModel {
         client.cachedSession = SessionCache(account: try #require(client.account), workspaces: [
             WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
@@ -948,15 +952,20 @@ struct ConversationPreviewTests {
         #expect(model.cachedConversation(sessionID: "s") == cached)
     }
 
-    @Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
-    func latePreviewReadUsesLiveGrowthAndDeletions(hasCache: Bool, deletesTurns: Bool) async throws {
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true], SnapshotRace.allCases)
+    func oneShotPreviewAndLiveCacheRemainIndependent(hasCache: Bool, race: SnapshotRace) async throws {
         let client = DeferredSessionClient()
         let model = try model(client: client)
+        let initial = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "Initial")])
         let original = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "Partial")])
+        let deletesTurns = race == .readDeletion || race == .liveDeletion
         let latest = Conversation(sessionID: "s", turns: deletesTurns ? [] : [
             ConversationTurn(id: "a", author: .agent, text: "Partial output has grown"),
             ConversationTurn(id: "b", author: .agent, text: "Another turn"),
         ])
+        let readIsNewer = race == .readGrowth || race == .readDeletion
+        let loaded = readIsNewer ? latest : original
+        let live = readIsNewer ? original : latest
         let (received, signal) = AsyncStream<Void>.makeStream()
         var updates = received.makeAsyncIterator()
         var subscriptions = client.observationsStarted.makeAsyncIterator()
@@ -964,7 +973,7 @@ struct ConversationPreviewTests {
         defer { client.observation?.finish(); observing.cancel() }
         #expect(await subscriptions.next() == "ws-a")
         if hasCache {
-            client.observation?.yield(ConversationUpdate(conversation: original, activity: .running, syncState: .live))
+            client.observation?.yield(ConversationUpdate(conversation: initial, activity: .running, syncState: .live))
             _ = await updates.next()
         }
 
@@ -972,13 +981,13 @@ struct ConversationPreviewTests {
         var reads = client.conversationStarted.stream.makeAsyncIterator()
         let preview = Task { try await model.conversationPreview(sessionID: "s") }
         #expect(await reads.next() == "ws-a")
-        // Publish and consume a newer update before releasing the earlier one-shot result.
-        client.observation?.yield(ConversationUpdate(conversation: latest, activity: .running, syncState: .live))
+        // Arrival order cannot establish freshness between independently synchronized snapshots.
+        client.observation?.yield(ConversationUpdate(conversation: live, activity: .running, syncState: .live))
         _ = await updates.next()
-        client.finishConversation(original)
+        client.finishConversation(loaded)
 
-        #expect(try await preview.value == latest)
-        #expect(model.cachedConversation(sessionID: "s") == latest)
+        #expect(try await preview.value == loaded)
+        #expect(model.cachedConversation(sessionID: "s") == live)
         client.observation?.finish()
         try await observing.value
     }

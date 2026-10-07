@@ -873,16 +873,12 @@ final class AppModel {
         guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
         let generation = authenticationGeneration
         let selection = workspaceGeneration
-        let cachedBeforeRead = conversationCache[workspaceID]?[sessionID]
         let loaded = try await client.conversation(sessionID: sessionID, workspaceID: workspaceID)
         try Task.checkCancellation()
         guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
         guard loaded.sessionID == sessionID else { throw LodyClientError.notConnected }
-        // A live update can arrive after the bridge projects the one-shot result.
-        // Compare complete values so deletions and corrections count as updates too.
-        let cached = conversationCache[workspaceID]?[sessionID]
-        let snapshot = cached != cachedBeforeRead ? cached ?? loaded : loaded
-        let conversation = applyingDeliveryState(to: snapshot.removingLocalImageData(), workspaceID: workspaceID)
+        // Read and observation delivery order does not establish snapshot freshness.
+        let conversation = applyingDeliveryState(to: loaded.removingLocalImageData(), workspaceID: workspaceID)
         return imagePreviews.applying(to: conversation, workspaceID: workspaceID)
     }
 
