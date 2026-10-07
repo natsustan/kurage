@@ -428,36 +428,26 @@ final class HTTPLodyClient: LodyClient {
     var supportsBranchChanges: Bool { true }
 
     func branchChanges(sessionID: String, workspaceID: String) async throws -> BranchFileChanges {
-        try Task.checkCancellation()
-        let generation = authenticationGeneration
-        guard let expectedAccount = account else { throw LodyClientError.signedOut }
-        let access = try await streamsAccess(workspaceID: workspaceID)
-        try Task.checkCancellation()
-        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
-        let bridge = sessionBridge ?? makeSessionBridge()
-        sessionBridge = bridge
-        let result = try await bridge.branchChanges(sessionID: sessionID,
-                                                  workspaceID: workspaceID, access: access)
-        try Task.checkCancellation()
-        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
-        return result
+        try await readFileChanges(workspaceID: workspaceID) { bridge, access in
+            try await bridge.branchChanges(sessionID: sessionID, workspaceID: workspaceID, access: access)
+        }
     }
+
     func branchFilePreview(sessionID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
-        try Task.checkCancellation()
-        let generation = authenticationGeneration
-        guard let expectedAccount = account else { throw LodyClientError.signedOut }
-        let access = try await streamsAccess(workspaceID: workspaceID)
-        try Task.checkCancellation()
-        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
-        let bridge = sessionBridge ?? makeSessionBridge()
-        sessionBridge = bridge
-        let result = try await bridge.branchFilePreview(sessionID: sessionID, path: path,
-                                                  workspaceID: workspaceID, access: access)
-        try Task.checkCancellation()
-        guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
-        return result
+        try await readFileChanges(workspaceID: workspaceID) { bridge, access in
+            try await bridge.branchFilePreview(sessionID: sessionID, path: path, workspaceID: workspaceID, access: access)
+        }
     }
+
     func filePreview(sessionID: String, turnID: String, path: String, workspaceID: String) async throws -> ConversationFilePreview {
+        try await readFileChanges(workspaceID: workspaceID) { bridge, access in
+            try await bridge.filePreview(sessionID: sessionID, turnID: turnID, path: path,
+                                         workspaceID: workspaceID, access: access)
+        }
+    }
+
+    private func readFileChanges<Value>(workspaceID: String,
+                                       read: (SessionSyncBridge, StreamsAccess) async throws -> Value) async throws -> Value {
         try Task.checkCancellation()
         let generation = authenticationGeneration
         guard let expectedAccount = account else { throw LodyClientError.signedOut }
@@ -466,8 +456,7 @@ final class HTTPLodyClient: LodyClient {
         guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
         let bridge = sessionBridge ?? makeSessionBridge()
         sessionBridge = bridge
-        let result = try await bridge.filePreview(sessionID: sessionID, turnID: turnID, path: path,
-                                                  workspaceID: workspaceID, access: access)
+        let result = try await read(bridge, access)
         try Task.checkCancellation()
         guard generation == authenticationGeneration, account == expectedAccount else { throw LodyClientError.signedOut }
         return result

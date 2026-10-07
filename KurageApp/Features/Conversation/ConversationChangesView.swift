@@ -128,16 +128,18 @@ struct ConversationChangesView: View {
             )
             Divider()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                Group {
                     if showsBranch {
                         BranchChangesContent(branch: branch, failed: branchFailed, loadPreview: loadBranchPreview,
                                              onRetry: { branchAttempt += 1 })
                     } else {
-                        if visibleGroups.isEmpty {
-                            ContentUnavailableView("No recorded changes", systemImage: "doc.text")
-                        }
-                        ForEach(visibleGroups) { group in
-                            FileChangeTurnSection(group: group, showsHeading: false, loadPreview: loadPreview)
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            if visibleGroups.isEmpty {
+                                ContentUnavailableView("No recorded changes", systemImage: "doc.text")
+                            }
+                            ForEach(visibleGroups) { group in
+                                FileChangeTurnSection(group: group, showsHeading: false, loadPreview: loadPreview)
+                            }
                         }
                     }
                 }
@@ -182,7 +184,7 @@ private struct BranchChangesContent: View {
     let onRetry: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        LazyVStack(alignment: .leading, spacing: 16) {
             if failed {
                 FilePreviewNotice(message: "Could not load branch changes. Check the session machine and connection, then retry.",
                                   onRetry: onRetry)

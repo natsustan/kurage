@@ -1,5 +1,11 @@
 # Kurage 会话功能
 
+## 分支审查简化（2026-10-08）
+
+- Branch 文件列表改为独立的 `LazyVStack`，直接置于抽屉滚动区域中，按可见范围加载文件卡片，避免用普通 `VStack` 一次布局全部文件。
+- JavaScript 的历史／Branch 差异读取共用 `readSessionDiff`，统一 metadata 锁、鉴权刷新、取消及资源清理；原生三个差异读取入口共用 `readFileChanges`，统一 Streams access 获取、bridge 初始化和读取前后的账号代次／取消检查。
+- 本轮 frozen-lockfile 安装、362 项 JavaScript 测试及 bundle 重建通过；iPhone 17／iOS 27 Simulator 测试构建、59 项 `ConversationChangesTests`／`HTTPLodyClientTests`／`StreamFetchHandlerTests` 和 1 项 Changes 抽屉 fixture UI 回归通过，覆盖取消、隔离、范围切换、代码展开、缩放与草稿保留。已复核浅色紧凑／展开抽屉及代码差异的 4 张截图，无重叠或意外裁切。构建产物与资源 bundle 哈希一致，`git diff --check` 通过。本轮未验证真实账号、万文件规模的性能、深色／大字号、iOS 26 或真机。
+
 ## Changes 的 Branch 范围（2026-10-07）
 
 - 输入区 file changed 药丸打开抽屉时默认显示 `Branch`，替代按轮次排列的 `All turns`。Branch 用机器解析的分支／会话基线与当前目录比较，每个路径只显示一次，增删数使用整体净差异；`Last turn`／`This turn` 继续读取对应 assistant turn 的历史快照。Branch 不累计历史记录，也不把单轮工具片段当作整体代码差异。药丸目前仍以历史文件摘要发现入口；抽屉的 Branch 列表和计数来自独立的当前差异读取。

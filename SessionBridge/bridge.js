@@ -80,7 +80,7 @@ window.kurageCancel = (operationID) => {
   sessionRefreshes.get(operationID)?.abort();
 };
 
-window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, path, operationID) => {
+async function readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, read) {
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
@@ -104,46 +104,22 @@ window.kurageTurnDiff = async (workspaceID, sessionID, gatewayBaseURL, turnID, p
       nativeFetch.bindSignal(access.token, controller.signal);
       return access.token;
     } };
-    return JSON.stringify(await loadTurnDiff(source, access, workspaceID, sessionID, turnID, path,
-      controller.signal));
+    return JSON.stringify(await read(source, access, controller.signal));
   } finally {
     controller.abort();
     if (operationID) sessionRefreshes.delete(operationID);
   }
-};
+}
 
-window.kurageBranchChanges = async (workspaceID, sessionID, gatewayBaseURL, path, operationID) => {
-  const controller = new AbortController();
-  if (operationID) sessionRefreshes.set(operationID, controller);
-  try {
-    // Resolve metadata under the read lock, then perform the machine read outside
-    // it. A slow diff must not block conversation or workspace refreshes.
-    const sourceController = new AbortController();
-    const cancelSource = () => sourceController.abort();
-    controller.signal.addEventListener('abort', cancelSource, { once: true });
-    let source;
-    try {
-      controller.signal.throwIfAborted();
-      source = await withWorkspaceReadRepo(workspaceID, gatewayBaseURL,
-        repo => turnDiffSource(repo, sessionID, controller.signal), operationID, sourceController);
-    } finally { controller.signal.removeEventListener('abort', cancelSource); }
-    controller.signal.throwIfAborted();
-    const access = { baseURL: gatewayBaseURL, auth: async context => {
-      const access = await window.webkit.messageHandlers.streamFetch.postMessage({
-        command: 'auth', workspaceID, operationID, refresh: context?.reason === 'unauthorized',
-      });
-      controller.signal.throwIfAborted();
-      nativeFetch.bindSignal(access.token, controller.signal);
-      return access.token;
-    } };
-    return JSON.stringify(path == null
-      ? await loadBranchChanges(source, access, workspaceID, sessionID, controller.signal)
-      : await loadCurrentDiff(source, access, workspaceID, sessionID, path, controller.signal));
-  } finally {
-    controller.abort();
-    if (operationID) sessionRefreshes.delete(operationID);
-  }
-};
+window.kurageTurnDiff = (workspaceID, sessionID, gatewayBaseURL, turnID, path, operationID) =>
+  readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, (source, access, signal) =>
+    loadTurnDiff(source, access, workspaceID, sessionID, turnID, path, signal));
+
+window.kurageBranchChanges = (workspaceID, sessionID, gatewayBaseURL, path, operationID) =>
+  readSessionDiff(workspaceID, sessionID, gatewayBaseURL, operationID, (source, access, signal) =>
+    path == null
+      ? loadBranchChanges(source, access, workspaceID, sessionID, signal)
+      : loadCurrentDiff(source, access, workspaceID, sessionID, path, signal));
 
 window.kurageProjectGit = async (workspaceID, gatewayBaseURL, templateSessionID, projectID, userID, operationID) => {
   const controller = new AbortController();
