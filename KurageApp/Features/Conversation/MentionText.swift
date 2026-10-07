@@ -3,10 +3,13 @@ import UIKit
 
 /// Presentation only: the underlying draft and the sent protocol text remain intact.
 enum MentionText {
+    static let sessionImageName = "mention-chat"
+    static let skillImageName = "mention-skill"
+
     struct Reference {
         let range: NSRange
         let label: String
-        let symbol: String
+        let imageName: String
     }
 
     private static let sessionPattern = try! NSRegularExpression(
@@ -23,10 +26,10 @@ enum MentionText {
         let range = NSRange(location: 0, length: source.length)
         let sessions = sessionPattern.matches(in: text, range: range).map {
             Reference(range: $0.range, label: unescape(source.substring(with: $0.range(at: 1))),
-                      symbol: "bubble.left.and.text.bubble.right")
+                      imageName: sessionImageName)
         }
         let skills = skillPattern.matches(in: text, range: range).map {
-            Reference(range: $0.range, label: source.substring(with: $0.range(at: 1)), symbol: "sparkles")
+            Reference(range: $0.range, label: source.substring(with: $0.range(at: 1)), imageName: skillImageName)
         }
         var end = 0
         return (sessions + skills).sorted { $0.range.location < $1.range.location }.filter {
@@ -53,16 +56,16 @@ enum MentionText {
         for range in ranges {
             guard range.start >= 0, range.end <= result.length, range.end > range.start,
                   (text as NSString).substring(with: NSRange(location: range.start, length: range.end - range.start)) == range.token else { continue }
-            let symbol: String
+            let imageName: String
             switch range.kind {
-            case .session: symbol = "bubble.left.and.text.bubble.right"
-            case .skill: symbol = "sparkles"
+            case .session: imageName = sessionImageName
+            case .skill: imageName = skillImageName
             }
             let tokenRange = NSRange(location: range.start, length: range.end - range.start)
             result.addAttributes([.foregroundColor: color, .font: font], range: tokenRange)
             let prefix = (text as NSString).substring(with: NSRange(location: range.start, length: 1))
             result.replaceCharacters(in: NSRange(location: range.start, length: 1),
-                                     with: icon(symbol, original: prefix, font: font, color: color))
+                                     with: icon(imageName, original: prefix, font: font, color: color))
         }
         return result
     }
@@ -76,7 +79,7 @@ enum MentionText {
             result.append(NSAttributedString(string: source.substring(with: NSRange(
                 location: position, length: reference.range.location - position
             )), attributes: [.font: font, .foregroundColor: textColor]))
-            let chip = NSMutableAttributedString(attributedString: icon(reference.symbol, original: "", font: font, color: color))
+            let chip = NSMutableAttributedString(attributedString: icon(reference.imageName, original: "", font: font, color: color))
             chip.append(NSAttributedString(string: reference.label, attributes: [.font: font, .foregroundColor: color]))
             // Copying any selection that includes this complete reference keeps
             // its original target, while the screen shows its human label.
@@ -111,13 +114,17 @@ enum MentionText {
         return result
     }
 
-    private static func icon(_ symbol: String, original: String, font: UIFont, color: UIColor) -> NSAttributedString {
+    private static func icon(_ imageName: String, original: String, font: UIFont, color: UIColor) -> NSAttributedString {
         let attachment = MentionIconAttachment(original: original)
         let size = font.pointSize
-        let image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: size * 0.85, weight: .medium))
-        attachment.image = image?.withTintColor(color, renderingMode: .alwaysOriginal)
-        let ratio = (image?.size.width ?? size) / max(1, image?.size.height ?? size)
-        attachment.bounds = CGRect(x: 0, y: (font.capHeight - size) / 2, width: size * ratio + 4, height: size)
+        let bounds = CGSize(width: size + 4, height: size)
+        let image = UIImage(named: imageName)?.withTintColor(color, renderingMode: .alwaysOriginal)
+        // Reserve trailing space without stretching the square vector artwork.
+        attachment.image = UIGraphicsImageRenderer(size: bounds).image { _ in
+            image?.draw(in: CGRect(x: 0, y: 0, width: size, height: size))
+        }
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - size) / 2,
+                                   width: bounds.width, height: bounds.height)
         return NSAttributedString(attachment: attachment)
     }
 }
