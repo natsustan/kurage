@@ -154,6 +154,79 @@ test('recent models use applied runtime and registry model option values, skip r
   await assert.rejects(recentModels(repo, 'ws', 'template', undefined, controller.signal), { name: 'AbortError' });
 });
 
+test('recent models reuse fresh baselines and invalidate changed, expired and observed history', async () => {
+  const { repo, rows, docs, calls } = fixture();
+  rows.get('session-template').lastMessageAt = 1;
+  let time = 0;
+  const cache = createSessionOptionsCache(() => time);
+  const read = (isObserved = () => false) => recentModels(repo, 'ws', 'template', undefined, undefined,
+    cache.reader({ allowStale: false, isObserved }));
+  const first = await read();
+  calls.length = 0;
+  assert.deepEqual(await read(), first);
+  assert.equal(calls.filter(call => call.docIds).length, 0);
+  docs.get('session-template').getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  docs.get('session-template').getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  rows.get('session-template').lastMessageAt = 6;
+  calls.length = 0;
+  assert.equal((await read())[0].modelID, 'gpt-5.4-mini');
+  assert.deepEqual(calls.filter(call => call.docIds).map(call => call.docIds), [['session-template']]);
+  calls.length = 0;
+  await read(id => id === 'session-template');
+  assert.equal(calls.filter(call => call.docIds).length, 1);
+  calls.length = 0;
+  time = 30_000;
+  await read();
+  assert.equal(calls.filter(call => call.docIds).length, 2);
+  cache.clear();
+  calls.length = 0;
+  await read();
+  assert.equal(calls.filter(call => call.docIds).length, 2);
+});
+
+test('recent cold reads are bounded and keep recency when requests finish out of order', async () => {
+  const { repo, rows, docs } = fixture();
+  const template = rows.get('session-template');
+  for (let index = 0; index < 7; index++) {
+    rows.set(`session-extra-${index}`, { ...template, lastMessageAt: 10 + index });
+    const doc = new LoroDoc();
+    doc.getList('history').push({ id: `turn-${index}`, role: 'user', inputConfig: {
+      modelId: index === 6 ? 'gpt-5.4-mini' : 'gpt-5.5',
+    } });
+    docs.set(`session-extra-${index}`, doc);
+  }
+  const sync = repo.sync;
+  let active = 0, peak = 0;
+  repo.sync = async options => {
+    if (!options.docIds) return sync(options);
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, options.docIds[0] === 'session-extra-6' ? 15 : 1));
+    active--;
+    return sync(options);
+  };
+  const models = await recentModels(repo, 'ws', 'template');
+  assert.equal(peak, 3);
+  assert.equal(active, 0);
+  assert.deepEqual(models.map(model => model.modelID), ['gpt-5.4-mini', 'gpt-5.5', 'opus']);
+});
+
+test('a favorite effort resolved from capability overrides a still-supported inherited effort in the first turn', async () => {
+  const { repo, docs, flock } = fixture();
+  const choices = structuredClone(capability);
+  choices.modelReasoningEfforts['gpt-5.4-mini'] = ['low', 'medium', 'high'];
+  flock.set('acpCapability/cfg', choices);
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.runConfig.reasoning.value, 'high');
+  assert.equal(options.runConfig.reasoning.defaultValue, 'medium');
+  assert.equal(await start(repo, { selections: [
+    { configOptionID: null, value: 'gpt-5.4-mini' },
+    { configOptionID: 'reasoning_effort', value: options.runConfig.reasoning.defaultValue },
+  ] }), 'sent');
+  const config = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(config.modelId, 'gpt-5.4-mini');
+  assert.equal(config.configOptionValues.reasoning_effort, 'medium');
+});
+
 test('provider icons follow configured brand and type, not a mutable display name', async () => {
   assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude', name: 'Codex', brandId: 'deepseek' }), 'deepseek');
   assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude',

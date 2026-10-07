@@ -88,7 +88,7 @@ async function readDocumentBaseline(repo, docID, signal, cache) {
 
 // Read only the newest root sessions, never every transcript in a workspace.
 // These are observed model choices, not capability defaults or web-local preferences.
-export async function recentModels(repo, workspaceID, sessionID, agentConfigID, signal) {
+export async function recentModels(repo, workspaceID, sessionID, agentConfigID, signal, cache) {
   const rows = await repo.listDoc();
   signal?.throwIfAborted();
   const source = rows.find(row => row.docId === `session-${sessionID}` && !row.deleted);
@@ -108,30 +108,35 @@ export async function recentModels(repo, workspaceID, sessionID, agentConfigID, 
     .slice(0, 30);
   const models = [];
   const seen = new Set();
-  for (const row of candidates) {
+  // Bound cold reads while retaining metadata order, regardless of completion order.
+  for (let offset = 0; offset < candidates.length; offset += 3) {
     signal?.throwIfAborted();
-    const provider = providers.find(provider => provider.id === row.meta.agentConfigId);
-    if (provider.cliType !== row.meta.cliType || provider.agentType !== row.meta.agentType) continue;
-    let baseline;
-    try {
-      baseline = await readDocumentBaseline(repo, row.docId, signal);
-    } catch {
+    const batch = candidates.slice(offset, offset + 3);
+    const results = await Promise.allSettled(batch.map(async row => {
+      const provider = providers.find(provider => provider.id === row.meta.agentConfigId);
+      if (provider.cliType !== row.meta.cliType || provider.agentType !== row.meta.agentType) return null;
+      const baseline = await readDocumentBaseline(repo, row.docId, signal, cache);
       signal?.throwIfAborted();
-      // An unreadable session must not hide the remaining recent choices.
-      continue;
-    }
+      const config = projectNewSessionRunConfig({ ...provider,
+        capability: flock.get(['acpCapability', provider.id]), baseline });
+      const modelID = text(config?.model?.configOptionID
+        ? baseline.configOptionValues?.[config.model.configOptionID] ?? baseline.modelId : baseline.modelId);
+      const option = config?.model?.options.find(option => option.value === modelID);
+      return option ? { agentConfigID: provider.id, modelID, providerName: provider.name,
+        modelName: option.label, icon: provider.icon } : null;
+    }));
+    // Drain the batch before returning or releasing its replica on cancellation.
     signal?.throwIfAborted();
-    const config = projectNewSessionRunConfig({ ...provider,
-      capability: flock.get(['acpCapability', provider.id]), baseline });
-    const modelID = text(config?.model?.configOptionID
-      ? baseline.configOptionValues?.[config.model.configOptionID] ?? baseline.modelId : baseline.modelId);
-    const option = config?.model?.options.find(option => option.value === modelID);
-    const key = JSON.stringify([provider.id, modelID]);
-    if (!option || seen.has(key)) continue;
-    seen.add(key);
-    models.push({ agentConfigID: provider.id, modelID, providerName: provider.name,
-      modelName: option.label, icon: provider.icon });
-    if (models.length === 5) break;
+    for (const result of results) {
+      // An unreadable session must not hide the remaining recent choices.
+      if (result.status !== 'fulfilled' || !result.value) continue;
+      const model = result.value;
+      const key = JSON.stringify([model.agentConfigID, model.modelID]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      models.push(model);
+      if (models.length === 5) return models;
+    }
   }
   return models;
 }

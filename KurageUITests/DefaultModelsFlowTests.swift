@@ -89,11 +89,19 @@ final class DefaultModelsFlowTests: XCTestCase {
         let dial = app.otherElements["reasoning-dial"]
         tap(full)
         XCTAssertTrue(dial.waitForExistence(timeout: 5))
+        XCTAssertEqual(dial.value as? String, "Medium")
+        XCTAssertEqual(app.staticTexts["run-config-reasoning-value"].label, "Medium")
+        XCTAssertFalse(app.staticTexts["Default"].exists)
+        attach(app, "Favorite without memory shows concrete Medium")
         dial.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
         let fullEffort = dial.value as? String
         XCTAssertNotEqual(fullEffort, "Low")
         tap(mini)
-        // The fixture mini offers only Low, so its choice is in Advanced instead of a dial.
+        XCTAssertEqual(app.staticTexts["run-config-reasoning-value"].label, "Low")
+        XCTAssertFalse(dial.exists)
+        XCTAssertFalse(app.staticTexts["Default"].exists)
+        attach(app, "Single supported effort is visible as Low")
+        // Advanced and the compact picker show the same single supported value.
         tap(app.buttons["run-config-advanced"])
         tap(app.buttons["run-config-reasoning"])
         tap(app.buttons["Low"])

@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## 分支审查修复：明确 reasoning 与近期模型读取（2026-10-07）
+
+- 新会话 reasoning 始终从当前模型支持的选项解析具体值，并把显示值显式写入首轮 `inputConfig`。收藏没有有效记忆时优先取 capability 的 `currentValue`（以独立 `defaultValue` 字段投影），不支持或缺失时取该模型首个有效选项；不再通过省略选项而误继承模板 effort。旧投影仍能解码；有效记忆、已有会话的编辑限制与首轮重试配置保持原语义。
+- 模型面板、Advanced 与辅助功能不再使用 `Default` 占位。只有一个 reasoning 档位的模型也明确显示其值；确实缺少值的已有会话提供选择提示，不假称已知当前档位。关闭按钮的 44pt 点击区域移入实际 label。
+- 最近模型扫描使用独立、可取消的同步副本，不占用工作区读取队列；复用当前 workspace／gateway 的 compact baseline 缓存。缓存校验 metadata、排除正在观察的会话并在 30 秒后重新读取；冷读取每批最多 3 份，按原 metadata 顺序去重，整批结束后再取消／释放。机器能力与 metadata 每次重新同步，结果仍受账号／workspace generation 检查。
+- 本轮 frozen-lockfile 安装、358 项 JavaScript 测试与 bundle 重建通过；iPhone 17／iOS 27 的 317 项 Swift 单元测试、后加原生取消用例所在的 8 项桥接测试和 2 项 fixture UI 回归通过。原生单用例过滤首次匹配到 0 项，已改跑完整桥接组并确认新增取消用例实际通过。回归覆盖首轮实际配置、缓存命中／变更／过期、并发顺序、取消／队列隔离及收藏切换／重启恢复；已核对 Medium、单档位 Low、已有会话深浅色截图与层级，软键盘上方显示正常。`git diff --check` 与构建产物 bundle 哈希核对通过。未验证真机、iOS 26、真实账号、大字号或关闭按钮边缘点击。
+
 ## 收藏模型独立记忆 reasoning（2026-10-07）
 
 - 每个收藏的 provider＋model 保存上次选择的 reasoning 及其 config option ID，沿用账号／workspace／机器隔离的本机存储；旧收藏可直接读取。仅值变化时写入，删除收藏同时删除记忆，上限仍为 5 项。

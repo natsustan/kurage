@@ -8,7 +8,7 @@ import { createNativeFetch } from './native-fetch.mjs';
 import { readSyncedConversation, syncedConversationVersion } from './conversation-observer.mjs';
 import { selectMentionSkills } from './mention-skills.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
-import { newSessionOptions } from './session-start.mjs';
+import { newSessionOptions, recentModels } from './session-start.mjs';
 import { runningSessionTabParents } from './session-tabs.mjs';
 import { projectSessionActivity } from './session-activity.mjs';
 import { turnDiffSource } from './turn-diff.mjs';
@@ -74,6 +74,7 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
     syncedConversationVersion: extras.syncedConversationVersion ?? syncedConversationVersion,
     cancelSession: cancel,
     newSessionOptions: extras.newSessionOptions ?? newSessionOptions,
+    recentModels: extras.recentModels ?? recentModels,
     startSession: extras.startSession,
     sessionProjects: extras.sessionProjects,
     archiveSession: archive,
@@ -100,6 +101,37 @@ function makeBridge(sync = async () => ({ ok: true }), rows = [], cancel = async
   vm.runInContext(source, context);
   return { window, repos, transports };
 }
+
+test('recent model scans release the workspace queue, isolate caches and cancel their own replica', async () => {
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  let scanSignal, scanRepo;
+  const caches = [];
+  const { window, repos } = makeBridge(async () => ({ ok: true, outcome: 'synced' }), [], undefined, undefined, {
+    recentModels: async (repo, workspace, _session, _agent, signal, cache) => {
+      caches.push(cache);
+      if (workspace === 'other') return [];
+      scanRepo = repo;
+      scanSignal = signal;
+      started();
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  });
+  await window.kurageSessions('workspace', 'https://streams.test');
+  const pending = window.kurageRecentModels('workspace', 'chat', null, 'https://streams.test', 'recent');
+  void pending.catch(() => {});
+  await ready;
+  assert.ok(caches[0]);
+  await window.kurageSessions('workspace', 'https://streams.test');
+  assert.equal(scanSignal.aborted, false);
+  assert.equal(scanRepo.destroyed, false);
+  assert.equal(await window.kurageRecentModels('other', 'chat', null, 'https://streams.test', 'other'), '[]');
+  assert.equal(caches[1], undefined);
+  window.kurageCancel('recent');
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(scanRepo.destroyed, true);
+  assert.equal(repos[0].destroyed, false);
+});
 
 test('notification destination uses freshly synced workspace metadata only and releases its replica', async () => {
   const pulls = [];

@@ -19,12 +19,15 @@ struct DefaultModel: Codable, Equatable, Identifiable, Sendable {
         let value: String
     }
 
-    /// Never carry another model's effort into a favorite with no valid memory.
+    /// Resolve a concrete, sendable effort without inheriting another model's value.
     func restoreReasoning(in config: inout NewSessionRunConfig) {
         config.reasoning?.value = nil
-        guard let lastReasoning,
-              config.reasoning?.configOptionID == lastReasoning.configOptionID else { return }
-        config.selectReasoning(lastReasoning.value)
+        if let lastReasoning,
+           config.reasoning?.configOptionID == lastReasoning.configOptionID {
+            config.selectReasoning(lastReasoning.value)
+        }
+        let resolved = config.selectedReasoning?.value
+        config.reasoning?.value = resolved
     }
     var id: ID { ID(agentConfigID: agentConfigID, modelID: modelID) }
 

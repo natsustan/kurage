@@ -124,19 +124,47 @@ struct DefaultModelTests {
         // An unavailable effort or a changed option identity must not reuse the previous model's value.
         mini.lastReasoning = .init(configOptionID: "reasoning_effort", value: "retired")
         #expect(configuration.selectDefaultModel(mini, saved: [mini]))
-        #expect(configuration.runConfig?.selectedReasoning == nil)
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
         mini.lastReasoning = .init(configOptionID: "thought_level", value: "low")
         #expect(configuration.selectDefaultModel(mini, saved: [mini]))
-        #expect(configuration.runConfig?.selectedReasoning == nil)
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
         mini.lastReasoning = nil
         #expect(configuration.selectDefaultModel(mini, saved: [mini]))
         await configuration.load(providerID: "codex") { id in
             try await fixture.newSessionOptions(templateSessionID: "session-pr", agentConfigID: id, workspaceID: "ws-demo")
         }
-        #expect(configuration.runConfig?.selectedReasoning == nil)
-        #expect(configuration.runConfig?.selections.count == 1)
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
+        #expect(configuration.runConfig?.selections.count == 2)
         #expect(configuration.selectDefaultModel(full, saved: saved))
         #expect(configuration.runConfig?.selectedReasoning?.value == "high")
+    }
+
+    @Test func missingOrInvalidFavoriteMemoryDisplaysAndSendsAnExplicitCapabilityValue() throws {
+        var config = NewSessionRunConfig.fixture
+        let favorite = entry("codex", "gpt-5.5")
+        for memory in [nil, DefaultModel.Reasoning(configOptionID: "old-option", value: "high"),
+                       DefaultModel.Reasoning(configOptionID: "reasoning_effort", value: "retired")] {
+            config.selectReasoning("high")
+            var saved = favorite
+            saved.lastReasoning = memory
+            saved.restoreReasoning(in: &config)
+            #expect(config.reasoning?.value == "medium")
+            #expect(config.selections.last == RunConfigChoice(configOptionID: "reasoning_effort", value: "medium"))
+            let options = NewSessionOptions(machineName: "Machine", agentConfigID: "codex", providers: [], runConfig: config)
+            #expect(options.menu(config).reasoningLabel == "Medium")
+            let roundTrip = try JSONDecoder().decode(NewSessionRunConfig.self, from: JSONEncoder().encode(config))
+            #expect(roundTrip.reasoning?.defaultValue == "medium")
+            #expect(roundTrip.selections == config.selections)
+        }
+        // A capability preference that this model cannot use resolves to its offered value.
+        config.selectModel("gpt-5.4-mini")
+        #expect(config.selectedReasoning?.value == "low")
+        #expect(config.selections.last?.value == "low")
+        // Legacy capability projections without a preferred value still send what they display.
+        config.reasoning?.defaultValue = nil
+        config.reasoning?.value = nil
+        #expect(config.selectedReasoning?.value == "low")
+        #expect(config.selections.last?.value == "low")
     }
 
     @Test func existingSessionNeverMatchesAnotherProvidersModelOrByDisplayName() throws {

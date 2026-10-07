@@ -804,9 +804,10 @@ private struct RunConfigPanel: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 20, height: 20)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
                     .accessibilityLabel("Close")
-                    .frame(width: 44, height: 44)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
                     .accessibilityIdentifier("run-config-close")
                 Spacer(minLength: 0)
@@ -854,19 +855,23 @@ private struct RunConfigPanel: View {
                 .accessibilityIdentifier("run-config-choose-model")
             }
             if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
-               reasoning.options.count > 1 {
+               !reasoning.options.isEmpty {
                 VStack(spacing: 12) {
                     HStack {
                         Text("Reasoning")
                         Spacer()
-                        Text(runConfig.reasoningLabel ?? "Default").foregroundStyle(.secondary)
+                        Text(runConfig.reasoningLabel ?? "Choose…")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("run-config-reasoning-value")
                     }
-                    ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
-                        .background(.regularMaterial, in: Capsule())
-                        .overlay {
-                            Capsule().strokeBorder(.primary.opacity(0.16), lineWidth: 0.5)
-                                .allowsHitTesting(false)
-                        }
+                    if reasoning.options.count > 1 {
+                        ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay {
+                                Capsule().strokeBorder(.primary.opacity(0.16), lineWidth: 0.5)
+                                    .allowsHitTesting(false)
+                            }
+                    }
                 }
                 .padding(16)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
@@ -976,7 +981,7 @@ private struct ReasoningDial: View {
         .frame(height: 48)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reasoning")
-        .accessibilityValue(section.options.first { $0.value == section.selection }?.label ?? "Default")
+        .accessibilityValue(section.options.first { $0.value == section.selection }?.label ?? "Choose reasoning")
         .accessibilityAdjustableAction { direction in
             let current = selectedIndex ?? -1
             let index = direction == .increment ? min(section.options.count - 1, current + 1) : max(0, current - 1)
@@ -1053,7 +1058,7 @@ private struct RunConfigAdvanced: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text(section.options.first { $0.value == section.selection }?.label ?? value ?? "Default")
+                        Text(section.options.first { $0.value == section.selection }?.label ?? value ?? "Choose…")
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption.weight(.semibold))
                     }

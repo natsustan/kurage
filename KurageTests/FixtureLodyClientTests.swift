@@ -397,17 +397,18 @@ struct FixtureLodyClientTests {
         #expect(menu.accessibilitySummary == "Provider Codex, model Big, reasoning High")
 
         config.selectModel("mini")
-        // High is not offered for Mini, so the agent's default applies.
-        #expect(config.selectedReasoning == nil)
-        #expect(config.selections == [RunConfigChoice(configOptionID: nil, value: "mini")])
+        // High is not offered for Mini; show and send its concrete supported effort.
+        #expect(config.selectedReasoning?.value == "low")
+        #expect(config.selections == [RunConfigChoice(configOptionID: nil, value: "mini"),
+                                     RunConfigChoice(configOptionID: "reasoning_effort", value: "low")])
         #expect(options.menu(config).sections.map(\.kind) == [.provider, .model, .reasoning])
         #expect(options.menu(config).modelLabel == "Mini")
-        #expect(options.menu(config).reasoningLabel == nil)
+        #expect(options.menu(config).reasoningLabel == "Low")
         var single = options
         single.providers = [SessionRunConfig.Value(value: "cfg", label: "Codex")]
         #expect(single.menu(config).sections.map(\.kind) == [.model, .reasoning])
         config.selectReasoning("unknown")
-        #expect(config.selectedReasoning == nil)
+        #expect(config.selectedReasoning?.value == "low")
         config.selectModel("big")
         #expect(config.selectedReasoning?.value == "high")
         config.selectModel("unknown")

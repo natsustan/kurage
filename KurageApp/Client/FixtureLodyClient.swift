@@ -945,7 +945,7 @@ extension NewSessionRunConfig {
                 SessionRunConfig.Value(value: "low", label: "Low"),
             ]),
         ]),
-        reasoning: Reasoning(configOptionID: "reasoning_effort", value: "high", options: [])
+        reasoning: Reasoning(configOptionID: "reasoning_effort", value: "high", options: [], defaultValue: "medium")
     )
 
     static let fixtureModelOnly = NewSessionRunConfig(

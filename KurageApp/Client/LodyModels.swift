@@ -631,6 +631,8 @@ struct NewSessionRunConfig: Codable, Equatable, Sendable {
         var value: String?
         /// Used when the agent has no model list to carry per-model choices.
         var options: [SessionRunConfig.Value]
+        /// Capability's preferred value, separate from the inherited turn value.
+        var defaultValue: String? = nil
     }
 
     var model: Model?
@@ -646,8 +648,12 @@ struct NewSessionRunConfig: Codable, Equatable, Sendable {
     }
 
     /// The stored reasoning is kept across model changes and applies only while offered.
+    /// Otherwise display and send the capability preference or the first supported value.
     var selectedReasoning: SessionRunConfig.Value? {
-        reasoningOptions.first { $0.value == reasoning?.value }
+        let options = reasoningOptions
+        return options.first { $0.value == reasoning?.value }
+            ?? options.first { $0.value == reasoning?.defaultValue }
+            ?? options.first
     }
 
     mutating func selectModel(_ value: String) {
