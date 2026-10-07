@@ -36,13 +36,13 @@ export function createSessionOptionsCache(now = Date.now) {
   return {
     rememberMachine,
     clear: () => { machines.clear(); baselines.clear(); },
-    reader({ refresh = false, isObserved = () => false } = {}) {
+    reader({ refresh = false, isObserved = () => false, allowStale = true } = {}) {
       const reader = {
         needsRefresh: false,
         usedCache: false,
         machine(id) {
           const entry = !refresh && touch(machines, id);
-          if (!entry) return undefined;
+          if (!entry || (!allowStale && now() - entry.savedAt >= FRESH_MS)) return undefined;
           reader.usedCache = true;
           if (now() - entry.savedAt >= FRESH_MS) reader.needsRefresh = true;
           // A read-only projection cannot inherit a live room's auth or cursor.
@@ -55,7 +55,8 @@ export function createSessionOptionsCache(now = Date.now) {
         baseline(id, row) {
           const stamp = marker(row);
           const entry = !refresh && !isObserved(id) && touch(baselines, id);
-          if (!entry || stamp === undefined || entry.marker !== stamp) return undefined;
+          if (!entry || stamp === undefined || entry.marker !== stamp ||
+              (!allowStale && now() - entry.savedAt >= FRESH_MS)) return undefined;
           reader.usedCache = true;
           if (now() - entry.savedAt >= FRESH_MS) reader.needsRefresh = true;
           return copy(entry.baseline);

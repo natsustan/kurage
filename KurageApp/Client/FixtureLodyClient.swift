@@ -16,6 +16,7 @@ final class FixtureLodyClient: LodyClient {
 
     private var records: [SessionRecord]
     private let fixtureAccountID: String?
+    private let hasModelHistory: Bool
     private var archivedSessionIDs: Set<SessionSummary.ID>
     private var archivedActivity: [SessionSummary.ID: Date] = [
         "archived-newer": Date(timeIntervalSince1970: 1_700_000_000),
@@ -119,9 +120,11 @@ final class FixtureLodyClient: LodyClient {
         workspaceSummaries: [WorkspaceSummary] = [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo")],
         workspaceRefreshDelay: Duration? = nil,
         failWorkspaceRefreshOnce: Bool = false,
+        hasModelHistory: Bool = true,
         accountID: String? = nil
     ) {
         self.fixtureAccountID = accountID
+        self.hasModelHistory = hasModelHistory
         self.workspaceSummaries = workspaceSummaries
         self.workspaceRefreshDelay = workspaceRefreshDelay
         self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
@@ -226,6 +229,7 @@ final class FixtureLodyClient: LodyClient {
             .filter { !archivedSessionIDs.contains($0.summary.id) && $0.summary.parentSessionID == nil }
             .map { record in
                 var summary = record.summary
+                summary.agentConfigID = summary.agentName
                 summary.hasRunningTabs = fixtureTabs(sessionID: summary.id).contains {
                     $0.id != summary.id && $0.activity == .running
                 }
@@ -365,7 +369,11 @@ final class FixtureLodyClient: LodyClient {
         // random, so sorting by them would shuffle the bar between runs.
         let tabs = records.filter { ($0.summary.id == rootID || $0.summary.parentSessionID == rootID) &&
             !archivedSessionIDs.contains($0.summary.id) }
-            .map(\.summary)
+            .map { record in
+                var summary = record.summary
+                summary.agentConfigID = summary.agentName
+                return summary
+            }
         return tabs.filter { $0.id == rootID } + tabs.filter { $0.id != rootID }
     }
 
@@ -477,6 +485,29 @@ final class FixtureLodyClient: LodyClient {
         return effectiveRunConfig
     }
 
+    func recentModels(sessionID: String, agentConfigID: String?, workspaceID: String) async throws -> [DefaultModel] {
+        try requireAccount()
+        try requireWorkspace(workspaceID)
+        let source = try record(sessionID)
+        guard hasModelHistory, let machine = QuickActionMachine.machineID(projectID: source.summary.projectID) else { return [] }
+        var seen = Set<DefaultModel.ID>()
+        return Array(records.sorted { ($0.summary.lastMessageAt ?? 0) > ($1.summary.lastMessageAt ?? 0) }
+            .compactMap { record -> DefaultModel? in
+                let summary = record.summary
+                let provider = summary.agentConfigID ?? summary.agentName
+                guard summary.parentSessionID == nil, !archivedSessionIDs.contains(summary.id),
+                      QuickActionMachine.machineID(projectID: summary.projectID) == machine,
+                      agentConfigID == nil || agentConfigID == provider,
+                      let model = record.runConfig?.model else { return nil }
+                let available = provider == "codex" ? NewSessionRunConfig.fixture : .fixtureModelOnly
+                guard ["codex", "claude"].contains(provider),
+                      available.model?.options.contains(where: { $0.value == model.value }) == true else { return nil }
+                let entry = DefaultModel(agentConfigID: provider, modelID: model.value,
+                    providerName: provider == "codex" ? "Codex" : "Claude Code", modelName: model.label, icon: provider)
+                return seen.insert(entry.id).inserted ? entry : nil
+            }.prefix(DefaultModel.limit))
+    }
+
     func newSessionOptions(
         templateSessionID: SessionSummary.ID,
         agentConfigID: String?,
@@ -498,14 +529,16 @@ final class FixtureLodyClient: LodyClient {
                   template.summary.projectID?.hasPrefix("local:") == true else { throw LodyClientError.sessionMissing }
         }
         let providers = [
-            SessionRunConfig.Value(value: "claude", label: "Claude Code"),
-            SessionRunConfig.Value(value: "codex", label: "Codex"),
+            SessionRunConfig.Value(value: "claude", label: "Claude Code", icon: "claude"),
+            SessionRunConfig.Value(value: "codex", label: "Codex", icon: "codex"),
         ]
         let chosen = agentConfigID ?? template.summary.agentName
         guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
+        var runConfig: NewSessionRunConfig = chosen == "codex" ? .fixture : .fixtureModelOnly
+        if !hasModelHistory { runConfig.model?.value = "" }
         return NewSessionOptions(machineName: isTab ? template.summary.machineName ?? "Machine" : "spike@mac",
                                  agentConfigID: chosen, providers: providers,
-                                 runConfig: chosen == "codex" ? .fixture : .fixtureModelOnly)
+                                 runConfig: runConfig)
     }
 
     private var addedProjects: [String: SessionProject] = [:]
@@ -912,7 +945,7 @@ extension NewSessionRunConfig {
                 SessionRunConfig.Value(value: "low", label: "Low"),
             ]),
         ]),
-        reasoning: Reasoning(configOptionID: "reasoning_effort", value: "high", options: [])
+        reasoning: Reasoning(configOptionID: "reasoning_effort", value: "high", options: [], defaultValue: "medium")
     )
 
     static let fixtureModelOnly = NewSessionRunConfig(

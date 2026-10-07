@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import { projectSessionTabs, runningSessionTabParents } from './session-tabs.mjs';
 const row = (id, meta = {}) => ({ docId: `session-${id}`, meta });
 
+test('provider identity is per tab and never inferred from the agent display name', () => {
+  const tabs = projectSessionTabs([
+    row('root', { agentType: 'claude', agentConfigId: 'config-a' }),
+    row('tab', { parentSessionId: 'root', agentType: 'claude', agentConfigId: 'config-b' }),
+    row('legacy', { parentSessionId: 'root', agentType: 'codex' }),
+  ], 'root');
+  assert.equal(tabs.find(tab => tab.id === 'root').agentConfigID, 'config-a');
+  assert.equal(tabs.find(tab => tab.id === 'tab').agentConfigID, 'config-b');
+  assert.equal(tabs.find(tab => tab.id === 'legacy').agentConfigID, null);
+});
+
 test('tabs contain the root and direct children in stable creation order, including closed tabs', () => {
   const rows = [row('unrelated'), row('b', { parentSessionId: 'root', createdAt: '2', isTabClosed: true }),
     row('a', { parentSessionId: 'root', createdAt: '1', lastMessageAt: 5 }), row('root'),

@@ -17,7 +17,7 @@ import { mentionSkills } from './mention-skills.mjs';
 import { requestMachine } from './machine-rpc.mjs';
 import { turnDiffSource, loadTurnDiff } from './turn-diff.mjs';
 import { cancelSession } from './conversation-cancel.mjs';
-import { newSessionOptions, startSession } from './session-start.mjs';
+import { newSessionOptions, recentModels, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 import { activityTime, archiveSession, deleteArchivedSession, readLocalProjectState, restoreArchivedSession, selectArchivedSessions } from './session-archive.mjs';
 
@@ -371,6 +371,7 @@ window.kurageSessions = async (workspaceID, gatewayBaseURL, operationID) => {
         title: typeof row.meta.title === 'string' && row.meta.title.length > 0
           ? row.meta.title : 'Untitled session',
         agentName: row.meta.agentType ?? row.meta.cliType ?? 'Agent',
+        agentConfigID: typeof row.meta.agentConfigId === 'string' ? row.meta.agentConfigId : null,
         activity: projectSessionActivity(row.meta.status),
         hasRunningTabs: runningTabParents.has(row.docId.slice('session-'.length)),
         preview: row.meta.repoFullName ?? '',
@@ -530,7 +531,7 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
     };
     const steering = { state, signal: controller.signal, request: (machineID, params) => requestMachine(access, workspaceID, machineID,
       'session/steer', params, controller.signal, 5000) };
-    result = await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    result = await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL,
       repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering),
       { operationID, signal: controller.signal }, controller.signal);
     return result;
@@ -542,7 +543,7 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
   }
 };
 
-async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, signal) {
+async function withSyncedIsolatedRepo(workspaceID, gatewayBaseURL, work, options, signal) {
   signal?.throwIfAborted();
   const repo = await createWorkspaceRepo(workspaceID, gatewayBaseURL, options);
   try {
@@ -555,6 +556,26 @@ async function withSyncedWriteRepo(workspaceID, gatewayBaseURL, work, options, s
     await repo.destroy();
   }
 }
+
+window.kurageRecentModels = async (workspaceID, sessionID, agentConfigID, gatewayBaseURL, operationID) => {
+  const controller = new AbortController();
+  if (operationID) sessionRefreshes.set(operationID, controller);
+  try {
+    const state = cachedWorkspace;
+    const cache = state?.workspaceID === workspaceID && state.gatewayBaseURL === gatewayBaseURL
+      ? state.optionsCache.reader({ allowStale: false, isObserved: id => [...observations.values()].some(observation =>
+        observation.workspaceID === workspaceID && `session-${observation.sessionID}` === id &&
+        !observation.controller.signal.aborted) }) : undefined;
+    // History discovery owns a cancellable replica so a cold scan never queues
+    // unrelated workspace reads. Reuse only compact, metadata-validated baselines.
+    return await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL, async repo =>
+      JSON.stringify(await recentModels(repo, workspaceID, sessionID, agentConfigID, controller.signal, cache)),
+      { operationID, signal: controller.signal }, controller.signal);
+  } finally {
+    controller.abort();
+    if (operationID) sessionRefreshes.delete(operationID);
+  }
+};
 
 window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentConfigID, gatewayBaseURL, operationID, projectID, tab = false, refresh = false) => {
   const controller = new AbortController();
@@ -585,7 +606,7 @@ window.kurageNewSessionOptions = async (workspaceID, templateSessionID, agentCon
 window.kurageStartSession = async (workspaceID, gatewayBaseURL, request) => {
   let result;
   try {
-    result = await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    result = await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL,
       repo => startSession(repo, workspaceID, request), { createStreams: true });
     return result;
   } finally {
@@ -597,10 +618,10 @@ window.kurageStartSession = async (workspaceID, gatewayBaseURL, request) => {
 };
 
 window.kurageCancelSession = (workspaceID, sessionID, gatewayBaseURL) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL, repo => cancelSession(repo, sessionID));
+  withSyncedIsolatedRepo(workspaceID, gatewayBaseURL, repo => cancelSession(repo, sessionID));
 
 window.kurageArchiveSession = (workspaceID, sessionID, gatewayBaseURL) =>
-  withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+  withSyncedIsolatedRepo(workspaceID, gatewayBaseURL,
     repo => archiveSession(repo, sessionID).then(JSON.stringify));
 
 window.kurageRestoreArchivedSession = async (workspaceID, sessionID, gatewayBaseURL) => {
@@ -669,7 +690,7 @@ window.kurageUpdateSessionMetadata = async (workspaceID, sessionID, gatewayBaseU
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    return await withSyncedWriteRepo(workspaceID, gatewayBaseURL,
+    return await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL,
       repo => updateSessionMetadata(repo, sessionID, change, controller.signal),
       { operationID, signal: controller.signal }, controller.signal);
   } finally {
@@ -682,7 +703,7 @@ window.kurageRespondQuestion = async (workspaceID, sessionID, baseURL, turnID, r
   const controller = new AbortController();
   if (operationID) sessionRefreshes.set(operationID, controller);
   try {
-    return await withSyncedWriteRepo(workspaceID, baseURL,
+    return await withSyncedIsolatedRepo(workspaceID, baseURL,
       repo => respondQuestion(repo, sessionID, turnID, requestID, answers, controller.signal),
       { operationID, signal: controller.signal }, controller.signal);
   } finally {
@@ -709,7 +730,7 @@ window.kurageSessionProjects = async (workspaceID, gatewayBaseURL, templateSessi
       access, controller.signal);
     if (action === 'select') {
       try {
-        return await withSyncedWriteRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
+        return await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL, async repo => JSON.stringify(await run(repo)),
           { operationID, signal: controller.signal }, controller.signal);
       } finally {
         if (cachedWorkspace?.workspaceID === workspaceID) cachedWorkspace.optionsCache.clear();

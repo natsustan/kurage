@@ -3,6 +3,71 @@ import UIKit
 
 final class SettingsFlowTests: XCTestCase {
     @MainActor
+    func testDefaultModelsCompactSettings() {
+        for (theme, largeText) in [("light", false), ("dark", false), ("light", true)] {
+            var arguments = ["-appTheme", theme]
+            if largeText {
+                arguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            let app = launch(arguments: arguments)
+            tap(app.buttons["account-menu"])
+            let models = app.buttons["settings-default-models"]
+            let actions = app.buttons["settings-quick-actions"]
+            XCTAssertTrue(models.waitForExistence(timeout: 5))
+            XCTAssertTrue(actions.exists)
+            XCTAssertLessThan(models.frame.minY, actions.frame.minY)
+            XCTAssertEqual(actions.frame.minY, models.frame.maxY, accuracy: 1)
+            let variant = "\(theme)\(largeText ? " large text" : "")"
+            attach(app, "Settings grouped models and actions \(variant)")
+            tap(models)
+
+            for _ in 0..<5 {
+                let row = app.descendants(matching: .any).matching(
+                    NSPredicate(format: "identifier BEGINSWITH %@", "default-model-")).firstMatch
+                guard row.waitForExistence(timeout: 1) else { break }
+                row.swipeLeft()
+                tap(app.buttons["Delete"].firstMatch)
+            }
+            attach(app, "Default Models empty \(variant)")
+            tap(app.buttons["default-models-add"])
+            let sonnet = app.buttons["add-default-model-claude-sonnet"]
+            XCTAssertTrue(sonnet.waitForExistence(timeout: 5))
+            if !largeText {
+                let cell = app.collectionViews.cells.containing(.button, identifier: sonnet.identifier).firstMatch
+                // Accessibility frames include the native sheet's presentation scale.
+                XCTAssertGreaterThanOrEqual(cell.frame.height, 44)
+                XCTAssertLessThanOrEqual(cell.frame.height, 51)
+            }
+            tap(sonnet)
+            tap(app.buttons["default-models-add"])
+            XCTAssertTrue(sonnet.waitForExistence(timeout: 5))
+            XCTAssertTrue(sonnet.isSelected)
+            XCTAssertFalse(sonnet.isEnabled)
+            attach(app, "Add Model compact selected \(variant)")
+            let search = app.searchFields.firstMatch
+            tap(search)
+            search.typeText("GPT-5.5")
+            let codex = app.buttons["add-default-model-codex-gpt-5.5"]
+            XCTAssertTrue(codex.waitForExistence(timeout: 5))
+            XCTAssertFalse(sonnet.exists)
+            attach(app, "Add Model filtered \(variant)")
+            tap(codex)
+            let saved = app.descendants(matching: .any)["default-model-codex-gpt-5.5"].firstMatch
+            XCTAssertTrue(saved.waitForExistence(timeout: 5))
+            if !largeText {
+                let cell = app.collectionViews.cells.containing(.any, identifier: saved.identifier).firstMatch
+                XCTAssertGreaterThanOrEqual(cell.frame.height, 44)
+                XCTAssertLessThanOrEqual(cell.frame.height, 51)
+            }
+            attach(app, "Default Models compact selected \(variant)")
+            tap(app.buttons["Edit"])
+            attach(app, "Default Models editing \(variant)")
+            tap(app.buttons["Done"])
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testSettingsKeepsReferenceHeightAndCachedWorkspacesRefreshQuietly() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .phone)
         let app = launch(arguments: ["--fixture-settings", "--fixture-slow-workspaces"])

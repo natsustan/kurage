@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LoroDoc } from 'loro-crdt';
 import { applyNewSessionChoices, projectNewSessionRunConfig } from './run-config.mjs';
-import { newSessionOptions, startSession } from './session-start.mjs';
+import { newSessionOptions, providerIcon, recentModels, startSession } from './session-start.mjs';
 import { createSessionOptionsCache } from './session-options-cache.mjs';
 
 const capability = {
@@ -78,13 +78,182 @@ const start = (repo, overrides = {}) => startSession(repo, 'ws', {
   text: 'Build the thing', timestamp: '2026-09-25T00:00:00.000Z', selections: [], ...overrides,
 });
 
+test('recent models are newest-first, deduplicated by provider and capped at five', async () => {
+  const { repo, rows, docs, flock, calls } = fixture();
+  const models = ['shared', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+  const modelCapability = { cliType: 'builtin', agentType: 'codex', configOptions: [
+    { id: 'model', category: 'model', type: 'select', currentValue: 'sixth',
+      options: models.map(value => ({ value, name: `Label ${value}` })) },
+  ] };
+  flock.set('acpCapability/cfg', modelCapability);
+  flock.set('acpCapability/claude', { ...modelCapability, agentType: 'claude' });
+  // Deliberately insert out of recency order; duplicates must not consume the limit.
+  for (const [id, provider, model, time] of [
+    ['old', 'cfg', 'sixth', 10], ['third', 'cfg', 'third', 70], ['same-other-provider', 'claude', 'shared', 90],
+    ['latest', 'cfg', 'shared', 100], ['duplicate', 'cfg', 'shared', 95], ['fifth', 'cfg', 'fifth', 50],
+    ['second', 'cfg', 'second', 80], ['fourth', 'cfg', 'fourth', 60],
+  ]) {
+    const source = provider === 'cfg' ? 'session-template' : 'session-claude-elsewhere';
+    rows.set(`session-${id}`, { ...rows.get(source), lastMessageAt: time });
+    const doc = new LoroDoc();
+    doc.getList('history').push({ id, role: 'user', inputConfig: { modelId: model } });
+    doc.commit();
+    docs.set(`session-${id}`, doc);
+  }
+  const result = await recentModels(repo, 'workspace-a', 'template');
+  assert.deepEqual(result.map(model => [model.agentConfigID, model.modelID]),
+    [['cfg', 'shared'], ['claude', 'shared'], ['cfg', 'second'], ['cfg', 'third'], ['cfg', 'fourth']]);
+  assert.equal(result[0].modelName, 'Label shared');
+  assert.equal(result[0].icon, 'codex');
+  assert.deepEqual(calls[0].flockDocIds, ['workspace-a:mf:mac']);
+  assert.deepEqual((await recentModels(repo, 'ws', 'template', 'cfg')).map(model => model.modelID),
+    ['shared', 'second', 'third', 'fourth', 'fifth']);
+});
+
+test('recent models exclude foreign, archived, child, deleted and unavailable sessions without inventing defaults', async () => {
+  const { repo, rows, docs } = fixture();
+  const template = rows.get('session-template');
+  for (const [id, patch] of [
+    ['foreign', { machineId: 'pc' }], ['archived', { isArchived: true }],
+    ['child', { parentSessionId: 'template' }], ['deleted', {}],
+    ['removed-provider', { agentConfigId: 'removed' }], ['replaced-provider', { agentType: 'claude' }],
+  ]) {
+    rows.set(`session-${id}`, { ...template, lastMessageAt: 100, ...patch });
+    const doc = new LoroDoc();
+    doc.import(docs.get('session-template').export({ mode: 'snapshot' }));
+    docs.set(`session-${id}`, doc);
+  }
+  const list = repo.listDoc;
+  repo.listDoc = async () => (await list()).map(row => row.docId === 'session-deleted' ? { ...row, deleted: true } : row);
+  // A retired model and a turn without an explicit model must not become capability defaults.
+  docs.get('session-template').getList('history').push({ id: 'removed', role: 'user', inputConfig: { modelId: 'retired' } });
+  docs.get('session-claude-elsewhere').getList('history').push({ id: 'none', role: 'user', inputConfig: {} });
+  assert.deepEqual(await recentModels(repo, 'ws', 'template'), []);
+});
+
+test('recent models use applied runtime and registry model option values, skip read failures, and honor cancellation', async () => {
+  const { repo, docs, rows, flock } = fixture();
+  docs.get('session-template').getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  docs.get('session-template').getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  rows.get('session-claude-elsewhere').cliType = 'registry';
+  flock.get('agentConfig/claude').cliType = 'registry';
+  flock.get('acpCapability/claude').cliType = 'registry';
+  docs.get('session-claude-elsewhere').getList('history').push({ id: 'registry', role: 'user',
+    inputConfig: { modelId: 'sonnet', configOptionValues: { model: 'opus' } } });
+  const result = await recentModels(repo, 'ws', 'template');
+  assert.deepEqual(result.map(model => model.modelID), ['opus', 'gpt-5.4-mini']);
+  const sync = repo.sync;
+  repo.sync = async options => options.docIds?.includes('session-claude-elsewhere')
+    ? { ok: false, outcome: 'failed' } : sync(options);
+  assert.deepEqual((await recentModels(repo, 'ws', 'template')).map(model => model.modelID), ['gpt-5.4-mini']);
+  const controller = new AbortController();
+  repo.sync = async options => {
+    if (options.docIds) { controller.abort(); throw new Error('Cancelled transport'); }
+    return sync(options);
+  };
+  await assert.rejects(recentModels(repo, 'ws', 'template', undefined, controller.signal), { name: 'AbortError' });
+});
+
+test('recent models reuse fresh baselines and invalidate changed, expired and observed history', async () => {
+  const { repo, rows, docs, calls } = fixture();
+  rows.get('session-template').lastMessageAt = 1;
+  let time = 0;
+  const cache = createSessionOptionsCache(() => time);
+  const read = (isObserved = () => false) => recentModels(repo, 'ws', 'template', undefined, undefined,
+    cache.reader({ allowStale: false, isObserved }));
+  const first = await read();
+  calls.length = 0;
+  assert.deepEqual(await read(), first);
+  assert.equal(calls.filter(call => call.docIds).length, 0);
+  docs.get('session-template').getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  docs.get('session-template').getMap('acpRuntimeConfig').set('modelId', 'gpt-5.4-mini');
+  rows.get('session-template').lastMessageAt = 6;
+  calls.length = 0;
+  assert.equal((await read())[0].modelID, 'gpt-5.4-mini');
+  assert.deepEqual(calls.filter(call => call.docIds).map(call => call.docIds), [['session-template']]);
+  calls.length = 0;
+  await read(id => id === 'session-template');
+  assert.equal(calls.filter(call => call.docIds).length, 1);
+  calls.length = 0;
+  time = 30_000;
+  await read();
+  assert.equal(calls.filter(call => call.docIds).length, 2);
+  cache.clear();
+  calls.length = 0;
+  await read();
+  assert.equal(calls.filter(call => call.docIds).length, 2);
+});
+
+test('recent cold reads are bounded and keep recency when requests finish out of order', async () => {
+  const { repo, rows, docs } = fixture();
+  const template = rows.get('session-template');
+  for (let index = 0; index < 7; index++) {
+    rows.set(`session-extra-${index}`, { ...template, lastMessageAt: 10 + index });
+    const doc = new LoroDoc();
+    doc.getList('history').push({ id: `turn-${index}`, role: 'user', inputConfig: {
+      modelId: index === 6 ? 'gpt-5.4-mini' : 'gpt-5.5',
+    } });
+    docs.set(`session-extra-${index}`, doc);
+  }
+  const sync = repo.sync;
+  let active = 0, peak = 0;
+  repo.sync = async options => {
+    if (!options.docIds) return sync(options);
+    peak = Math.max(peak, ++active);
+    await new Promise(resolve => setTimeout(resolve, options.docIds[0] === 'session-extra-6' ? 15 : 1));
+    active--;
+    return sync(options);
+  };
+  const models = await recentModels(repo, 'ws', 'template');
+  assert.equal(peak, 3);
+  assert.equal(active, 0);
+  assert.deepEqual(models.map(model => model.modelID), ['gpt-5.4-mini', 'gpt-5.5', 'opus']);
+});
+
+test('a favorite effort resolved from capability overrides a still-supported inherited effort in the first turn', async () => {
+  const { repo, docs, flock } = fixture();
+  const choices = structuredClone(capability);
+  choices.modelReasoningEfforts['gpt-5.4-mini'] = ['low', 'medium', 'high'];
+  flock.set('acpCapability/cfg', choices);
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.runConfig.reasoning.value, 'high');
+  assert.equal(options.runConfig.reasoning.defaultValue, 'medium');
+  assert.equal(await start(repo, { selections: [
+    { configOptionID: null, value: 'gpt-5.4-mini' },
+    { configOptionID: 'reasoning_effort', value: options.runConfig.reasoning.defaultValue },
+  ] }), 'sent');
+  const config = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+  assert.equal(config.modelId, 'gpt-5.4-mini');
+  assert.equal(config.configOptionValues.reasoning_effort, 'medium');
+});
+
+test('provider icons follow configured brand and type, not a mutable display name', async () => {
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude', name: 'Codex', brandId: 'deepseek' }), 'deepseek');
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude',
+    env: { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' } }), 'glm');
+  assert.equal(providerIcon({ cliType: 'builtin', agentType: 'claude',
+    env: { ANTHROPIC_BASE_URL: 'https://deepseek.com.invalid.test' } }), 'claude');
+  for (const [agentType, icon] of [['gemini', 'gemini'], ['amp-acp', 'amp'], ['pi-acp', 'pi'],
+    ['github-copilot-cli', 'copilot'], ['reasonix', 'deepseek'], ['new-agent', null]]) {
+    assert.equal(providerIcon({ cliType: 'registry', agentType }), icon);
+  }
+  assert.equal(providerIcon({ cliType: 'custom', agentType: 'claude', brandId: 'deepseek' }), null);
+  const { repo, flock } = fixture();
+  flock.set('agentConfig/claude', { name: 'Private provider', machineId: 'mac', cliType: 'builtin',
+    agentType: 'claude', brandId: 'minimax', env: { ANTHROPIC_AUTH_TOKEN: 'fixture-secret' } });
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.deepEqual(options.providers.find(provider => provider.value === 'claude'),
+    { value: 'claude', label: 'Private provider', icon: 'minimax' });
+  assert.equal(JSON.stringify(options).includes('fixture-secret'), false);
+});
+
 test('a new session offers both the model and its reasoning from the template baseline', async () => {
   const { repo } = fixture();
   const options = await newSessionOptions(repo, 'ws', 'template');
   assert.equal(options.machineName, 'spike@mac');
   assert.equal(options.agentConfigID, 'cfg');
   assert.deepEqual(options.providers, [
-    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+    { value: 'claude', label: 'Claude Code', icon: 'claude' }, { value: 'cfg', label: 'Codex', icon: 'codex' },
   ]);
   assert.equal(options.runConfig.model.value, 'gpt-5.5');
   assert.equal(options.runConfig.model.configOptionID, null);
@@ -619,7 +788,7 @@ test('tab options offer the machine providers and inherit the parent run configu
   const { repo, docs, rows } = fixture();
   const options = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, true);
   assert.deepEqual(options.providers, [
-    { value: 'claude', label: 'Claude Code' }, { value: 'cfg', label: 'Codex' },
+    { value: 'claude', label: 'Claude Code', icon: 'claude' }, { value: 'cfg', label: 'Codex', icon: 'codex' },
   ]);
   assert.equal(options.agentConfigID, 'cfg');
   assert.equal(options.runConfig.model.value, 'gpt-5.5');

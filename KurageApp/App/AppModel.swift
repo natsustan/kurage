@@ -30,6 +30,7 @@ final class AppModel {
         var waiters: [UUID: CheckedContinuation<NewSessionOptions, Error>]
     }
     private(set) var quickActionPreferenceRevision = 0
+    private(set) var defaultModelsRevision = 0
     let notifications: NotificationModel
     private(set) var notificationNavigation: NotificationNavigation?
     private(set) var notificationOpenGeneration = 0
@@ -82,6 +83,16 @@ final class AppModel {
     func setActiveSessionTab(_ tabID: SessionSummary.ID, rootID: String) {
         guard let workspaceID = selectedWorkspaceID else { return }
         activeTabsByWorkspace[workspaceID, default: [:]][rootID] = tabID
+    }
+
+    func recentModels(sessionID: String, agentConfigID: String? = nil) async throws -> [DefaultModel] {
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let generation = authenticationGeneration
+        let selection = workspaceGeneration
+        let models = try await client.recentModels(sessionID: sessionID, agentConfigID: agentConfigID, workspaceID: workspaceID)
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), workspaceGeneration == selection else { throw CancellationError() }
+        return models
     }
 
     func newSessionOptions(templateSessionID: SessionSummary.ID, agentConfigID: String? = nil,
@@ -378,6 +389,40 @@ final class AppModel {
         _ = quickActionPreferenceRevision
         guard let key = quickActionPreferenceKey(rootID: rootID), let data = quickActionDefaults.data(forKey: key) else { return nil }
         return QuickActionPreferences.decode(data)?[profile]
+    }
+
+    private func defaultModelsKey(sessionID: String) -> String? {
+        guard let account, let workspaceID = selectedWorkspaceID,
+              let machineID = QuickActionMachine.machineID(projectID: sessionSummary(sessionID)?.projectID) else { return nil }
+        return DefaultModel.storageKey(account: account, workspaceID: workspaceID, machineID: machineID)
+    }
+
+    func defaultModels(sessionID: String) -> [DefaultModel] {
+        _ = defaultModelsRevision
+        guard let key = defaultModelsKey(sessionID: sessionID), let data = quickActionDefaults.data(forKey: key),
+              let models = try? JSONDecoder().decode([DefaultModel].self, from: data) else { return [] }
+        return models
+    }
+
+    func saveDefaultModels(_ models: [DefaultModel], sessionID: String, workspaceGeneration: Int) {
+        guard self.workspaceGeneration == workspaceGeneration, models.count <= DefaultModel.limit,
+              Set(models.map(\.id)).count == models.count,
+              let key = defaultModelsKey(sessionID: sessionID),
+              let data = try? JSONEncoder().encode(models) else { return }
+        quickActionDefaults.set(data, forKey: key)
+        defaultModelsRevision += 1
+    }
+
+    func rememberDefaultModelReasoning(agentConfigID: String, modelID: String,
+                                       reasoning: DefaultModel.Reasoning, sessionID: String,
+                                       workspaceGeneration: Int, onlyIfMissing: Bool = false) {
+        guard self.workspaceGeneration == workspaceGeneration else { return }
+        var saved = defaultModels(sessionID: sessionID)
+        guard let index = saved.firstIndex(where: { $0.agentConfigID == agentConfigID && $0.modelID == modelID }),
+              saved[index].lastReasoning != reasoning,
+              !onlyIfMissing || saved[index].lastReasoning == nil else { return }
+        saved[index].lastReasoning = reasoning
+        saveDefaultModels(saved, sessionID: sessionID, workspaceGeneration: workspaceGeneration)
     }
 
     func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String,

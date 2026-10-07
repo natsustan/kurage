@@ -9,6 +9,28 @@ const text = value => typeof value === 'string' && value.length > 0 ? value : un
 const INHERITED_CONFIG_KEYS = ['modeId', 'modelId', 'configOptionValues', 'mcpServerIds'];
 const TITLE_LENGTH = 50;
 
+// Project only a public icon key, never agent environment or credentials.
+export function providerIcon(config) {
+  if (config?.cliType === 'custom') return null;
+  const brands = { deepseek: ['deepseek.com'], mimo: ['xiaomimimo.com'],
+    minimax: ['minimaxi.com', 'minimax.io'], glm: ['bigmodel.cn', 'z.ai'] };
+  if (Object.hasOwn(brands, config?.brandId ?? '')) return config.brandId;
+  if (config?.cliType === 'builtin') {
+    try {
+      const host = new URL(config.env?.ANTHROPIC_BASE_URL).hostname.toLowerCase();
+      for (const [brand, domains] of Object.entries(brands)) {
+        if (domains.some(domain => host === domain || host.endsWith(`.${domain}`))) return brand;
+      }
+    } catch { /* A missing or custom endpoint has no inferred brand. */ }
+  }
+  const aliases = { 'claude-p': 'claude', 'amp-acp': 'amp', 'pi-acp': 'pi',
+    'github-copilot-cli': 'copilot', 'gemini-cli': 'gemini', 'grok-build': 'grok',
+    'reasonix': 'deepseek' };
+  const type = aliases[config?.agentType] ?? config?.agentType;
+  return ['codex', 'claude', 'gemini', 'deepseek', 'kimi', 'grok', 'minimax', 'glm', 'mimo',
+    'pi', 'devin', 'amp', 'cursor', 'opencode', 'copilot'].includes(type) ? type : null;
+}
+
 const isRootSession = (row, allowArchived = false) => row.docId?.startsWith('session-') &&
   !row.docId.startsWith('session-comment-') && !row.deleted &&
   (allowArchived || !row.meta?.isArchived) && !row.meta?.parentSessionId;
@@ -21,7 +43,8 @@ function readProviders(flock, machineID) {
     const config = row.value;
     if (!text(id) || !text(config?.cliType) || !text(config?.agentType) ||
         (text(config.machineId) && config.machineId !== machineID)) continue;
-    providers.push({ id, name: text(config.name) ?? config.agentType, cliType: config.cliType, agentType: config.agentType });
+    providers.push({ id, name: text(config.name) ?? config.agentType, cliType: config.cliType,
+      agentType: config.agentType, icon: providerIcon(config) });
   }
   return providers.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -61,6 +84,61 @@ async function readDocumentBaseline(repo, docID, signal, cache) {
     cache.rememberBaseline(docID, before, after, baseline);
   }
   return baseline;
+}
+
+// Read only the newest root sessions, never every transcript in a workspace.
+// These are observed model choices, not capability defaults or web-local preferences.
+export async function recentModels(repo, workspaceID, sessionID, agentConfigID, signal, cache) {
+  const rows = await repo.listDoc();
+  signal?.throwIfAborted();
+  const source = rows.find(row => row.docId === `session-${sessionID}` && !row.deleted);
+  const machineID = text(source?.meta?.machineId);
+  if (!machineID) return [];
+  const flockDocID = `${workspaceID}:mf:${machineID}`;
+  const { flock } = await repo.openFlockDoc(flockDocID);
+  if (!synced(await repo.sync({ scope: 'doc', flockDocIds: [flockDocID], requireTransports: ['cloud'], signal }))) {
+    throw new Error('Machine configuration sync failed');
+  }
+  signal?.throwIfAborted();
+  const providers = readProviders(flock, machineID);
+  const candidates = rows.filter(row => isRootSession(row) && row.meta?.machineId === machineID &&
+      (!agentConfigID || row.meta.agentConfigId === agentConfigID) &&
+      providers.some(provider => provider.id === row.meta.agentConfigId))
+    .sort((a, b) => activityTime(b.meta) - activityTime(a.meta) || a.docId.localeCompare(b.docId))
+    .slice(0, 30);
+  const models = [];
+  const seen = new Set();
+  // Bound cold reads while retaining metadata order, regardless of completion order.
+  for (let offset = 0; offset < candidates.length; offset += 3) {
+    signal?.throwIfAborted();
+    const batch = candidates.slice(offset, offset + 3);
+    const results = await Promise.allSettled(batch.map(async row => {
+      const provider = providers.find(provider => provider.id === row.meta.agentConfigId);
+      if (provider.cliType !== row.meta.cliType || provider.agentType !== row.meta.agentType) return null;
+      const baseline = await readDocumentBaseline(repo, row.docId, signal, cache);
+      signal?.throwIfAborted();
+      const config = projectNewSessionRunConfig({ ...provider,
+        capability: flock.get(['acpCapability', provider.id]), baseline });
+      const modelID = text(config?.model?.configOptionID
+        ? baseline.configOptionValues?.[config.model.configOptionID] ?? baseline.modelId : baseline.modelId);
+      const option = config?.model?.options.find(option => option.value === modelID);
+      return option ? { agentConfigID: provider.id, modelID, providerName: provider.name,
+        modelName: option.label, icon: provider.icon } : null;
+    }));
+    // Drain the batch before returning or releasing its replica on cancellation.
+    signal?.throwIfAborted();
+    for (const result of results) {
+      // An unreadable session must not hide the remaining recent choices.
+      if (result.status !== 'fulfilled' || !result.value) continue;
+      const model = result.value;
+      const key = JSON.stringify([model.agentConfigID, model.modelID]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      models.push(model);
+      if (models.length === 5) return models;
+    }
+  }
+  return models;
 }
 
 // A new session reuses the machine and local project of a recent root session
@@ -118,7 +196,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   // The inherited agent remains selectable even while viewing another provider.
   if (!providers.some(provider => provider.id === meta.agentConfigId)) {
     providers = [{ id: meta.agentConfigId, name: meta.agentType,
-      cliType: meta.cliType, agentType: meta.agentType }, ...providers];
+      cliType: meta.cliType, agentType: meta.agentType, icon: providerIcon(meta) }, ...providers];
   }
   const chosenID = text(agentConfigID) ?? meta.agentConfigId;
   const agent = providers.find(provider => provider.id === chosenID);
@@ -144,7 +222,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     agent,
     baseline,
     machineName: machineName ?? meta.machineId,
-    providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name })),
+    providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name, icon: provider.icon })),
     runConfig: projectNewSessionRunConfig({
       cliType: agent.cliType, agentType: agent.agentType,
       capability: flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined,

@@ -30,6 +30,8 @@ struct SessionSummary: Codable, Identifiable, Equatable, Hashable, Sendable {
     var lastActivityAt: Double? = nil
     /// List-only aggregation; `activity` remains the state of this exact tab.
     var hasRunningTabs: Bool? = nil
+    /// Stable configured provider identity; never infer it from the display name.
+    var agentConfigID: String? = nil
 
     var isRunningInList: Bool { activity == .running || hasRunningTabs == true }
 
@@ -562,6 +564,8 @@ struct SessionRunConfig: Codable, Equatable, Sendable {
     struct Value: Codable, Equatable, Sendable, Identifiable {
         var value: String
         var label: String
+        /// Public brand key for provider choices; absent on model/reasoning values.
+        var icon: String? = nil
         var id: String { value }
     }
 
@@ -627,6 +631,8 @@ struct NewSessionRunConfig: Codable, Equatable, Sendable {
         var value: String?
         /// Used when the agent has no model list to carry per-model choices.
         var options: [SessionRunConfig.Value]
+        /// Capability's preferred value, separate from the inherited turn value.
+        var defaultValue: String? = nil
     }
 
     var model: Model?
@@ -642,8 +648,12 @@ struct NewSessionRunConfig: Codable, Equatable, Sendable {
     }
 
     /// The stored reasoning is kept across model changes and applies only while offered.
+    /// Otherwise display and send the capability preference or the first supported value.
     var selectedReasoning: SessionRunConfig.Value? {
-        reasoningOptions.first { $0.value == reasoning?.value }
+        let options = reasoningOptions
+        return options.first { $0.value == reasoning?.value }
+            ?? options.first { $0.value == reasoning?.defaultValue }
+            ?? options.first
     }
 
     mutating func selectModel(_ value: String) {

@@ -1,5 +1,59 @@
 # Kurage 会话功能
 
+## 分支审查修复：明确 reasoning 与近期模型读取（2026-10-07）
+
+- 新会话 reasoning 始终从当前模型支持的选项解析具体值，并把显示值显式写入首轮 `inputConfig`。收藏没有有效记忆时优先取 capability 的 `currentValue`（以独立 `defaultValue` 字段投影），不支持或缺失时取该模型首个有效选项；不再通过省略选项而误继承模板 effort。旧投影仍能解码；有效记忆、已有会话的编辑限制与首轮重试配置保持原语义。
+- 模型面板、Advanced 与辅助功能不再使用 `Default` 占位。只有一个 reasoning 档位的模型也明确显示其值；确实缺少值的已有会话提供选择提示，不假称已知当前档位。关闭按钮的 44pt 点击区域移入实际 label。
+- 最近模型扫描使用独立、可取消的同步副本，不占用工作区读取队列；复用当前 workspace／gateway 的 compact baseline 缓存。缓存校验 metadata、排除正在观察的会话并在 30 秒后重新读取；冷读取每批最多 3 份，按原 metadata 顺序去重，整批结束后再取消／释放。机器能力与 metadata 每次重新同步，结果仍受账号／workspace generation 检查。
+- 本轮 frozen-lockfile 安装、358 项 JavaScript 测试与 bundle 重建通过；iPhone 17／iOS 27 的 317 项 Swift 单元测试、后加原生取消用例所在的 8 项桥接测试和 2 项 fixture UI 回归通过。原生单用例过滤首次匹配到 0 项，已改跑完整桥接组并确认新增取消用例实际通过。回归覆盖首轮实际配置、缓存命中／变更／过期、并发顺序、取消／队列隔离及收藏切换／重启恢复；已核对 Medium、单档位 Low、已有会话深浅色截图与层级，软键盘上方显示正常。`git diff --check` 与构建产物 bundle 哈希核对通过。未验证真机、iOS 26、真实账号、大字号或关闭按钮边缘点击。
+
+## 收藏模型独立记忆 reasoning（2026-10-07）
+
+- 每个收藏的 provider＋model 保存上次选择的 reasoning 及其 config option ID，沿用账号／workspace／机器隔离的本机存储；旧收藏可直接读取。仅值变化时写入，删除收藏同时删除记忆，上限仍为 5 项。
+- 新会话／新 tab 通过快捷列表或 Advanced 选择收藏模型时恢复该模型的档位；没有记录、档位不再可用或 option ID 变化时回到 Agent 默认值，不沿用另一模型的 reasoning。打开页面仍继承原配置，不主动替换模型或 reasoning；非收藏的最近模型维持原行为。新建页调整档位、离开当前模型或发送首轮时记录有效值；已有会话调整 reasoning 也更新对应收藏，保留会话的能力限制与重试语义。
+- 本轮 iPhone 17／iOS 27 Simulator 构建、17 项 DefaultModel／NewSessionConfiguration 单元测试和 1 项 fixture UI 回归通过；UI 覆盖两收藏模型独立档位、Advanced 单档位选择、往返切换与重启恢复。首轮 UI 测试误用仅单档位模型上不存在的拨盘，改用实际 Advanced 入口后通过。`git diff --check` 通过；未改 JavaScript bridge 或服务端协议，未验证真机／iOS 26／真实账号，也未做运行时性能 profiling。
+
+## Default Models settings layout（2026-10-07）
+
+- Settings groups Default Models above Quick Actions in one card. Selected and Add Model use compact icon/name rows matching the chat picker, with provider names retained in accessibility labels, bare blue selection checks, and wrapping at accessibility text sizes.
+- Model settings sections use explicit 20pt outer corners and 16pt page margins while preserving native deletion and drag reordering. Normal model rows have a 50pt minimum height.
+- Catalog loading keeps the saved list in place and shows a centered system activity indicator, with no caption. Add Model uses the same indicator at the bottom once any provider is visible, and a large centered indicator only while the catalog is still empty.
+- Current validation: iPhone 17 / iOS 27 Simulator build and two targeted fixture UI tests passed, including search, selection, deletion, reordering, persistence, cross-provider chat selection, and Advanced navigation. Inspected light, dark, maximum accessibility text, empty, editing, and filtered screenshots. Initial checks caught misplaced section styling and a sheet-scaled row-height assertion; both were corrected. The initial reorder attempt failed; the final unchanged reorder test passed. `git diff --check` passed. Physical devices, iOS 26, and real accounts were not tested.
+- Catalog loading indicator: a later iPhone 17 / iOS 27 Simulator build succeeded. Fixture catalog responses return before the spinner can be screenshotted, so the in-progress appearance was not captured on the simulator or a device.
+
+## 空收藏使用最近模型（2026-10-07）
+
+- Selected model contrast: the chat shortcut row bypasses `PlainButtonStyle`'s automatic disabled dimming while retaining disabled interaction and accessibility semantics. Current models stay at full contrast; unavailable unselected models remain dimmed. A targeted fixture UI test passed in light and dark on iPhone 17 / iOS 27, preserving selected/disabled state and reasoning changes; before/after screenshots were inspected. Physical devices and iOS 26 were not tested.
+- 未设置 Default Models 时，不再展示 capability 的全部模型；从同 workspace、同机器最近活动的未归档根会话提取有效 model，按 provider＋model 去重，最多 5 项（补充当前模型时仍保持 5 项上限）。已有会话先按当前 provider 过滤，继续遵守 model／reasoning 编辑限制；收藏不为空时仍按收藏顺序展示。
+- 列表与当前模型都为空时显示 `Choose a model… ›`，点击进入原 Advanced；从 Advanced 显式选择后展示当前模型，不自动发送或写入收藏。读取失败仅保留当前模型／空状态入口，不退回全部选项。
+- 最近使用来自已同步历史的最新用户 turn 与匹配的 `acpRuntimeConfig`，不是 Lody 网页 localStorage 中的 `recentRunConfigs`。打开面板时按需读取，关闭、后台及作用域切换取消；账号／workspace generation 拦截迟到结果。为限制同步量，最多检查最近 30 个候选根会话，跳过无法读取、已失效或 provider 类型已变的记录，不把 capability 默认值当历史记录。
+- 本轮 frozen-lockfile 安装、354 项 JS 测试、bridge bundle 重建及 57 项相关 Swift 测试通过。iPhone 17／iOS 27 的近期列表、深浅色空状态→Advanced→显式选择、已有会话 reasoning 三项 UI 测试通过；收藏拖拽排序首轮失败，单独重跑通过。已检查截图，最大辅助字号的 Reasoning 断词仍存在。临时软键盘设置已恢复，真机、iOS 26 和真实账号跨端历史未验证。
+
+## Select model 面板图标（2026-10-07）
+
+- Chat 的 Select model 面板按钮使用用户提供的 settings_6_regular SVG，采用模板颜色适配深浅外观；保留关闭操作、44pt 点击区域和 `run-config-close` 可访问性标识。
+- 当前 settings_6_regular 版本的 iOS Simulator 通用目标构建和 `git diff --check` 通过；未运行 UI 测试或检查模拟器截图。
+
+## 模型面板浮层背景（2026-10-07）
+
+- Select model 使用与 Advanced 原生 sheet 相同的 elevated 层级与系统分组背景色，添加细边框和阴影；背景、圆角和边框固定在滚动视口，保留键盘焦点与原有避让行为。
+- 本轮 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，已检查深色、浅色最大字号滚动和 Advanced 对照截图。首轮因模拟器自动收起软键盘失败，临时关闭该设置后复测通过，验证后已恢复。最大字号的 Reasoning 断词仍存在，本轮未调整文字布局；真机与 iOS 26 未验证。
+
+## 模型面板键盘避让与 Codex 图标修复（2026-10-07）
+
+- 模型面板恢复原 reasoning overlay 的 composer 锚点定位，底部跟随键盘（含候选栏），不再固定到屏幕底部；滚动区高度取内容实测高度与键盘上方可用高度的较小值，避免 `fixedSize` 绕过高度限制。
+- Codex SVG 的路径命令与数字改用显式分隔符，修复 Xcode 解析紧凑路径时的图形缺损；保留原始路径几何、渐变和颜色。规范化前后在浏览器中 320px 渲染逐像素一致，来源说明同步记录该兼容性调整。
+- UI 回归增加真实软键盘可见性、候选栏顶部与面板边界的断言；最大辅助字号验证实际滚动、reasoning 可达及关闭操作。此前截图没有可见软键盘，不能作为键盘避让证据。本次测试模拟器通过关闭 `com.apple.keyboard.preferences` 中的 `AutomaticMinimizationEnabled` 与 `HardwareKeyboardLastSeen` 并重启，恢复实际软键盘；验证后恢复原设置。
+- 本轮最终 iPhone 17／iOS 27 Simulator 构建及 3 项 fixture UI 回归通过，覆盖深色跨 provider 选择、reasoning 保留、Advanced、浅色最大辅助字号滚动及已有会话 reasoning 操作；已检查真实软键盘下的最终截图。`git diff --check` 通过；真机、iOS 26 与真实账号尚未验证。
+
+## Default Models（2026-10-07）
+
+- Settings 增加 Default Models，按账号、workspace、机器在本机保存最多 5 个 provider＋model；按模型记住上次 reasoning（见上文），不自动修改新会话或 Quick Actions 的默认配置。支持搜索、按 provider 分组添加、删除、Edit 拖动排序及重启恢复；目录刷新失败保留收藏，确认失效的项显示 Unavailable。
+- Composer 模型面板采用单行小 provider 图标＋模型名，当前项为裸勾号；标题 `Select model ›` 打开原 Advanced，不展示 All Models、管理入口、下一轮提示或 Fast mode。Reasoning 复用现有拨盘。新会话／新 tab 按收藏顺序快捷选择 provider 和 model；已有会话仅使用自身 provider 且遵守 capability 的 model／reasoning 编辑限制。当前模型不在收藏中时补充显示，空收藏使用最多 5 个最近模型（见上文）。
+- 会话列表与 tab 投影新增可选 `agentConfigID`，使用真实配置 ID 隔离同名模型，旧缓存仍可解码。Provider 选项只投影公开品牌 key，优先识别 Lody `brandId`、兼容旧内置配置的已知服务域名，再匹配 Agent 类型；不把环境变量或凭据传到原生侧。
+- 图标按 LobeHub skills 文档使用固定 `@lobehub/icons-static-svg` 1.95.1 的 15 个必要品牌资源，不引入 React 或整套图标库。有彩色版本时保留品牌色，否则使用随外观变化的模板单色；未知／自定义 provider 回退为通用图标，不限制其模型选择。来源与 MIT 许可随 App bundle 分发。Lody 参考为本机 `agent-icon.tsx`、`agent-brand.ts` 及 agent 配置创建界面。
+- 本轮验证：JavaScript 351 项与 Swift 310 项测试通过，bridge bundle 已重建。iPhone 17 模拟器 4 项 fixture UI 回归通过，覆盖添加／删除、拖动排序及重启恢复、跨 provider 选择、reasoning 保留、空收藏和 Advanced；已检查深色与浅色大字号截图并修正面板底部对齐。首轮大字号 UI 测试因焦点时序无法定位按钮，显式聚焦 composer 并等待键盘后复测通过。真实账号、真机及 iOS 26 尚未验证。
+
 ## Settings 使用系统默认圆角（2026-10-07）
 
 - 按用户要求删除 Settings sheet 的 `.presentationCornerRadius(36)`，由系统决定面板圆角。

@@ -87,6 +87,7 @@ struct RunConfigMenu: Equatable {
     var providerLabel: String? = nil
     var isLoading = false
     var loadFailed = false
+    var modelShortcuts: [ModelShortcut] = []
 
     /// Expand familiar display aliases without changing the provider's wire values.
     static func displayReasoningLabel(_ label: String) -> String {
@@ -200,6 +201,7 @@ struct SessionComposer: View {
     let onSend: () -> Bool
     let onCancel: () -> Void
     let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
+    var onChooseDefaultModel: ((DefaultModel) -> Void)? = nil
     @ScaledMetric(relativeTo: .body) private var mentionViewportUnit = 64
     @ScaledMetric(relativeTo: .body) private var mentionRowHeight = 44
     @ScaledMetric(relativeTo: .body) private var mentionIconWidth = 20
@@ -374,6 +376,7 @@ struct SessionComposer: View {
             .background {
                 RunConfigOverlayAnchor(isPresented: presentationState.showsRunConfig, runConfig: runConfig,
                                        onChoose: onChooseRunConfig,
+                                       onChooseDefaultModel: onChooseDefaultModel,
                                        onDismiss: {
                                            presentationState.showsRunConfig = false
                                        },
@@ -789,42 +792,131 @@ private struct SessionCacheUsageDetails: View {
 private struct RunConfigPanel: View {
     let runConfig: RunConfigMenu
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
+    let onChooseDefaultModel: ((DefaultModel) -> Void)?
+    let onDismiss: () -> Void
     let onAdvanced: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Button(action: onAdvanced) {
-                HStack(spacing: 6) {
-                    Text(runConfig.modelLabel ?? "Model").fontWeight(.semibold)
-                    Text(runConfig.reasoningLabel ?? "Default").foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
+        VStack(spacing: 16) {
+            HStack {
+                Button(action: onDismiss) {
+                    Image("settings-6-regular")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.rect)
                 }
-                .font(.title3)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("run-config-advanced")
-            if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
-               reasoning.options.count > 1 {
-                ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
-                    .padding(12)
-                    // Glass can render this dial invisible in the separate overlay window.
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay {
-                        Capsule().strokeBorder(.primary.opacity(0.16), lineWidth: 0.5)
-                            .allowsHitTesting(false)
+                    .accessibilityLabel("Close")
+                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: Circle())
+                    .accessibilityIdentifier("run-config-close")
+                Spacer(minLength: 0)
+                Button(action: onAdvanced) {
+                    HStack(spacing: 6) {
+                        Text("Select model").fontWeight(.semibold)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(minHeight: 44)
+                }
+                .accessibilityIdentifier("run-config-advanced")
+                .accessibilityHint("Open Advanced settings")
+                Spacer(minLength: 0)
+                Color.clear.frame(width: 44, height: 44)
+                    .accessibilityHidden(true)
+            }
+            if !runConfig.modelShortcuts.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(runConfig.modelShortcuts) { shortcut in
+                        RunConfigModelRow(shortcut: shortcut) {
+                            if let onChooseDefaultModel { onChooseDefaultModel(shortcut.model) }
+                            else { onChoose(.model, shortcut.model.modelID) }
+                        }
+                        if shortcut.id != runConfig.modelShortcuts.last?.id {
+                            Divider().padding(.leading, 48)
+                        }
+                    }
+                }
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
             } else {
-                Text("Reasoning is not adjustable for this model.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Button(action: onAdvanced) {
+                    HStack {
+                        Text("Choose a model…")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .contentShape(.rect)
+                }
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
+                .accessibilityIdentifier("run-config-choose-model")
+            }
+            if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
+               !reasoning.options.isEmpty {
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("Reasoning")
+                        Spacer()
+                        Text(runConfig.reasoningLabel ?? "Choose…")
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("run-config-reasoning-value")
+                    }
+                    if reasoning.options.count > 1 {
+                        ReasoningDial(section: reasoning) { onChoose(.reasoning, $0) }
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay {
+                                Capsule().strokeBorder(.primary.opacity(0.16), lineWidth: 0.5)
+                                    .allowsHitTesting(false)
+                            }
+                    }
+                }
+                .padding(16)
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 20))
             }
         }
+        .buttonStyle(.plain)
+        .padding(16)
         .frame(maxWidth: 420)
-        .padding(.horizontal, 30)
+    }
+}
+
+private struct RunConfigModelRow: View {
+    let shortcut: RunConfigMenu.ModelShortcut
+    let choose: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(spacing: 12) {
+                ModelProviderIcon(icon: shortcut.model.icon)
+                Text(shortcut.model.modelName)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if shortcut.isSelected {
+                    Image(systemName: "checkmark").foregroundStyle(.blue)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: 50)
+            .contentShape(.rect)
+        }
+        .buttonStyle(ModelSelectionStyle())
+        .disabled(!shortcut.isEnabled)
+        .opacity(shortcut.isEnabled || shortcut.isSelected ? 1 : 0.45)
+        .accessibilityLabel("\(shortcut.model.modelName), \(shortcut.model.providerName)")
+        .accessibilityAddTraits(shortcut.isSelected ? .isSelected : [])
+        .accessibilityIdentifier("model-shortcut-\(shortcut.model.agentConfigID)-\(shortcut.model.modelID)")
+    }
+
+    // The row owns unavailable-state opacity; PlainButtonStyle also dims selected, locked models.
+    private struct ModelSelectionStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
+        }
     }
 }
 
@@ -889,7 +981,7 @@ private struct ReasoningDial: View {
         .frame(height: 48)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Reasoning")
-        .accessibilityValue(section.options.first { $0.value == section.selection }?.label ?? "Default")
+        .accessibilityValue(section.options.first { $0.value == section.selection }?.label ?? "Choose reasoning")
         .accessibilityAdjustableAction { direction in
             let current = selectedIndex ?? -1
             let index = direction == .increment ? min(section.options.count - 1, current + 1) : max(0, current - 1)
@@ -966,7 +1058,7 @@ private struct RunConfigAdvanced: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Text(section.options.first { $0.value == section.selection }?.label ?? value ?? "Default")
+                        Text(section.options.first { $0.value == section.selection }?.label ?? value ?? "Choose…")
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption.weight(.semibold))
                     }
@@ -1181,6 +1273,7 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
     let isPresented: Bool
     let runConfig: RunConfigMenu?
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
+    let onChooseDefaultModel: ((DefaultModel) -> Void)?
     let onDismiss: () -> Void
     let onAdvanced: () -> Void
 
@@ -1240,6 +1333,7 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
             }
             let content = RunConfigOverlay(anchor: rect, backdrop: backdrop, runConfig: config,
                                            onChoose: configuration.onChoose,
+                                           onChooseDefaultModel: configuration.onChooseDefaultModel,
                                            onDismiss: configuration.onDismiss,
                                            onAdvanced: configuration.onAdvanced)
             if let host, let window {
@@ -1251,6 +1345,8 @@ private struct RunConfigOverlayAnchor: UIViewRepresentable {
                 window.windowLevel = .alert + 1
                 window.backgroundColor = .clear
                 window.overrideUserInterfaceStyle = source.traitCollection.userInterfaceStyle
+                // Match the elevated semantic backgrounds used by native sheets.
+                window.traitOverrides.userInterfaceLevel = .elevated
                 let host = UIHostingController(rootView: content)
                 host.view.backgroundColor = .clear
                 host.view.accessibilityViewIsModal = true
@@ -1279,12 +1375,18 @@ private struct RunConfigOverlay: View {
     let backdrop: UIImage?
     let runConfig: RunConfigMenu
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
+    let onChooseDefaultModel: ((DefaultModel) -> Void)?
     let onDismiss: () -> Void
     let onAdvanced: () -> Void
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var panelHeight: CGFloat = 0
 
     var body: some View {
         GeometryReader { geometry in
+            // The composer already follows the keyboard, including its candidate
+            // bar. Keep the panel inside that same usable viewport.
+            let bottomInset = max(geometry.safeAreaInsets.bottom, 12, geometry.size.height - anchor.maxY)
+            let availableHeight = max(0, geometry.size.height - geometry.safeAreaInsets.top - bottomInset - 12)
             ZStack(alignment: .bottom) {
                 Group {
                     if reduceTransparency {
@@ -1310,8 +1412,26 @@ private struct RunConfigOverlay: View {
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { onDismiss() }
                     .accessibilityIdentifier("run-config-dismiss")
-                RunConfigPanel(runConfig: runConfig, onChoose: onChoose, onAdvanced: onAdvanced)
-                    .padding(.bottom, max(geometry.safeAreaInsets.bottom, geometry.size.height - anchor.maxY))
+                ScrollView {
+                    RunConfigPanel(runConfig: runConfig, onChoose: onChoose,
+                        onChooseDefaultModel: onChooseDefaultModel, onDismiss: onDismiss, onAdvanced: onAdvanced)
+                        .frame(maxWidth: .infinity)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+                }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(height: min(panelHeight, availableHeight), alignment: .bottom)
+                    .frame(maxWidth: 420)
+                    .background(Color(uiColor: .systemGroupedBackground))
+                    .clipShape(.rect(cornerRadius: 28))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 28)
+                            .strokeBorder(Color(uiColor: .separator), lineWidth: 0.5)
+                            .allowsHitTesting(false)
+                    }
+                    .shadow(color: .black.opacity(0.15), radius: 16, y: 6)
+                    .accessibilityIdentifier("run-config-scroll")
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, bottomInset)
                     .frame(maxWidth: .infinity)
             }
         }

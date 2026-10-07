@@ -143,6 +143,7 @@ export function projectNewSessionRunConfig({ cliType, agentType, capability, bas
   const reasoning = reasoningOption ? {
     configOptionID: reasoningOption.id,
     value: text(values[reasoningOption.id]) ?? text(reasoningOption.currentValue) ?? null,
+    defaultValue: text(reasoningOption.currentValue) ?? null,
     // Used when there is no model list to carry per-model choices.
     options: reasoningChoicesFor(usable, reasoningOption, model?.value),
   } : null;

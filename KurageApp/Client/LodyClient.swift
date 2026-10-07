@@ -107,6 +107,8 @@ protocol LodyClient: AnyObject {
     /// `agentConfigID` picks another agent on that machine; `nil` keeps the template's.
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
                          workspaceID: String) async throws -> SessionProjectResult
+    /// Up to five observed provider/model pairs on the session's machine, newest first.
+    func recentModels(sessionID: String, agentConfigID: String?, workspaceID: String) async throws -> [DefaultModel]
     /// `isTab` reads the options a tab inherits: the template is the parent
     /// session and only that agent's run configuration stays editable.
     func newSessionOptions(
@@ -225,6 +227,10 @@ extension LodyClient {
     func sessionProjects(templateSessionID: String, action: SessionProjectAction, path: String?, cursor: String?,
                          workspaceID: String) async throws -> SessionProjectResult {
         throw LodyClientError.notConnected
+    }
+
+    func recentModels(sessionID: String, agentConfigID: String?, workspaceID: String) async throws -> [DefaultModel] {
+        []
     }
 
     func newSessionOptions(
