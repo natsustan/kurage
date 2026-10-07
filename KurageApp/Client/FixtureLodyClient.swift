@@ -287,7 +287,8 @@ final class FixtureLodyClient: LodyClient {
             permission: record.permission,
             fileChanges: record.fileChanges,
             subtasks: record.subtasks,
-            questions: record.questions
+            questions: record.questions,
+            cacheUsage: record.cacheUsage
         )
     }
 
@@ -336,7 +337,8 @@ final class FixtureLodyClient: LodyClient {
     private func conversationUpdate(sessionID: String, rootSessionID: String) throws -> ConversationUpdate {
         let record = try record(sessionID)
         let snapshot = Conversation(sessionID: sessionID, turns: record.turns, permission: record.permission,
-            fileChanges: record.fileChanges, subtasks: record.subtasks, questions: record.questions)
+            fileChanges: record.fileChanges, subtasks: record.subtasks, questions: record.questions,
+            cacheUsage: record.cacheUsage)
         return ConversationUpdate(conversation: snapshot, activity: record.summary.activity, syncState: .live,
             runConfig: record.runConfig, contextWindowUsage: record.contextWindowUsage,
             lastMessageAt: record.summary.lastMessageAt, sessionTabs: fixtureTabs(sessionID: rootSessionID))
@@ -874,6 +876,7 @@ struct SessionRecord: Equatable, Sendable {
     var canRestore: Bool = true
     var subtasks: [ConversationSubtask] = []
     var questions: [ConversationQuestionRequest] = []
+    var cacheUsage: ConversationCacheUsage? = nil
 }
 
 extension SessionRunConfig {
@@ -1017,7 +1020,9 @@ extension SessionRecord {
             permission: nil,
             runConfig: .fixtureReasoning,
             contextWindowUsage: ContextWindowUsage(size: 258_000, used: 217_000),
-            fileChanges: [.fixture]
+            fileChanges: [.fixture],
+            cacheUsage: ConversationCacheUsage(inputTokens: 60_000, cacheReadInputTokens: 320_000,
+                cacheCreationInputTokens: 20_000, reportedTurns: 18, totalTurns: 20)
         ),
         SessionRecord(
             summary: SessionSummary(

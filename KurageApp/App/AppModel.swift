@@ -15,6 +15,20 @@ struct StatusNote: Equatable {
 final class AppModel {
     private let client: any LodyClient
     @ObservationIgnored private let quickActionDefaults: UserDefaults
+    @ObservationIgnored private var quickActionOptionsLoads: [QuickActionOptionsKey: QuickActionOptionsLoad] = [:]
+    private struct QuickActionOptionsKey: Hashable {
+        let workspaceID: String
+        let authenticationGeneration: Int
+        let workspaceGeneration: Int
+        let rootID: String
+        let agentConfigID: String?
+        let refresh: Bool
+    }
+    private struct QuickActionOptionsLoad {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: CheckedContinuation<NewSessionOptions, Error>]
+    }
     private(set) var quickActionPreferenceRevision = 0
     let notifications: NotificationModel
     private(set) var notificationNavigation: NotificationNavigation?
@@ -82,6 +96,79 @@ final class AppModel {
         return result
     }
 
+    /// Share the initial read and stale-cache refresh; each profile applies its own preferences afterward.
+    func quickActionOptions(rootID: String, agentConfigID: String?, refresh: Bool = false) async throws -> NewSessionOptions {
+        try Task.checkCancellation()
+        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+        let key = QuickActionOptionsKey(workspaceID: workspaceID, authenticationGeneration: authenticationGeneration,
+            workspaceGeneration: workspaceGeneration, rootID: rootID, agentConfigID: agentConfigID, refresh: refresh)
+        let waiterID = UUID()
+        let options = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<NewSessionOptions, Error>) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if quickActionOptionsLoads[key] != nil {
+                    quickActionOptionsLoads[key]?.waiters[waiterID] = continuation
+                    return
+                }
+                let loadID = UUID()
+                let task = Task<Void, Never> { [client, weak self] in
+                    let result: Result<NewSessionOptions, Error>
+                    do {
+                        var loaded = try await client.newSessionOptions(templateSessionID: rootID, agentConfigID: agentConfigID,
+                            projectID: nil, isTab: true, refresh: refresh, workspaceID: workspaceID)
+                        try Task.checkCancellation()
+                        if !refresh, loaded.needsRefresh == true {
+                            guard let self else { throw CancellationError() }
+                            // A default-agent read and an explicit selection can resolve to the same agent.
+                            loaded = try await self.quickActionOptions(rootID: rootID,
+                                agentConfigID: loaded.agentConfigID.isEmpty ? nil : loaded.agentConfigID, refresh: true)
+                        }
+                        try Task.checkCancellation()
+                        result = .success(loaded)
+                    } catch {
+                        result = .failure(error)
+                    }
+                    self?.finishQuickActionOptionsLoad(result, key: key, loadID: loadID)
+                }
+                quickActionOptionsLoads[key] = QuickActionOptionsLoad(id: loadID, task: task, waiters: [waiterID: continuation])
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.cancelQuickActionOptionsWaiter(waiterID, key: key) }
+        }
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(key.authenticationGeneration), workspaceGeneration == key.workspaceGeneration else {
+            throw CancellationError()
+        }
+        return options
+    }
+
+    private func cancelQuickActionOptionsWaiter(_ waiterID: UUID, key: QuickActionOptionsKey) {
+        guard let waiter = quickActionOptionsLoads[key]?.waiters.removeValue(forKey: waiterID) else { return }
+        waiter.resume(throwing: CancellationError())
+        if quickActionOptionsLoads[key]?.waiters.isEmpty == true {
+            quickActionOptionsLoads.removeValue(forKey: key)?.task.cancel()
+        }
+    }
+
+    private func finishQuickActionOptionsLoad(_ result: Result<NewSessionOptions, Error>, key: QuickActionOptionsKey, loadID: UUID) {
+        guard quickActionOptionsLoads[key]?.id == loadID,
+              let load = quickActionOptionsLoads.removeValue(forKey: key) else { return }
+        let current = isCurrentAuthentication(key.authenticationGeneration) && workspaceGeneration == key.workspaceGeneration
+        for waiter in load.waiters.values { waiter.resume(with: current ? result : .failure(CancellationError())) }
+    }
+
+    private func cancelQuickActionOptionsLoads() {
+        let loads = quickActionOptionsLoads.values
+        quickActionOptionsLoads = [:]
+        for load in loads {
+            load.task.cancel()
+            for waiter in load.waiters.values { waiter.resume(throwing: CancellationError()) }
+        }
+    }
+
     private var sessionsByWorkspace: [String: [SessionSummary]] = [:]
     private var isRestoringAccount = false
     private var pendingStartsByWorkspace: [WorkspaceSummary.ID: [PendingSessionStart]] = [:]
@@ -100,7 +187,10 @@ final class AppModel {
     private(set) var workspaceGeneration = 0
     private(set) var selectedWorkspaceID: WorkspaceSummary.ID? {
         didSet {
-            if oldValue != selectedWorkspaceID { workspaceGeneration += 1 }
+            if oldValue != selectedWorkspaceID {
+                workspaceGeneration += 1
+                cancelQuickActionOptionsLoads()
+            }
         }
     }
     // Views resolve the same session several times per body; the index keeps
@@ -139,7 +229,9 @@ final class AppModel {
     var statusNote: StatusNote? { workspaceStatusNote ?? currentStatusNote }
     private(set) var deviceAuthorization: DeviceAuthorization?
     private var signInTask: Task<Void, Never>?
-    private var authenticationGeneration = 0
+    private var authenticationGeneration = 0 {
+        didSet { cancelQuickActionOptionsLoads() }
+    }
     private var workspaceRefreshGeneration = 0
     private var sessionRefreshGeneration = 0
     private var sessionRefreshTask: Task<[SessionSummary], Error>?
@@ -282,15 +374,19 @@ final class AppModel {
         return QuickActionPreference.storageKey(account: account, workspaceID: workspaceID, machineID: machineID)
     }
 
-    func quickActionPreference(rootID: String) -> QuickActionPreference? {
+    func quickActionPreference(rootID: String, profile: QuickActionProfile) -> QuickActionPreference? {
         _ = quickActionPreferenceRevision
         guard let key = quickActionPreferenceKey(rootID: rootID), let data = quickActionDefaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(QuickActionPreference.self, from: data)
+        return QuickActionPreferences.decode(data)?[profile]
     }
 
-    func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String, workspaceGeneration: Int) {
+    func saveQuickActionPreference(_ preference: QuickActionPreference?, rootID: String,
+                                   profile: QuickActionProfile, workspaceGeneration: Int) {
         guard self.workspaceGeneration == workspaceGeneration, let key = quickActionPreferenceKey(rootID: rootID) else { return }
-        if let preference, let data = try? JSONEncoder().encode(preference) {
+        var preferences = quickActionDefaults.data(forKey: key).flatMap(QuickActionPreferences.decode) ?? .init()
+        preferences[profile] = preference
+        if preferences.review != nil || preferences.git != nil {
+            guard let data = try? JSONEncoder().encode(preferences) else { return }
             quickActionDefaults.set(data, forKey: key)
         } else {
             quickActionDefaults.removeObject(forKey: key)

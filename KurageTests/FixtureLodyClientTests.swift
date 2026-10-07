@@ -217,6 +217,40 @@ struct FixtureLodyClientTests {
         #expect(update.contextWindowUsage?.usedFraction == 217.0 / 258.0)
     }
 
+    @Test func sessionCacheUsagePatchesReplaceClearAndSurviveCacheCoding() throws {
+        let initial = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "Answer")], permission: nil)
+        let json = """
+        {"sessionID":"s","order":["a"],"changed":[],"permission":null,"activity":"idle","syncState":"live",
+         "cacheUsage":{"inputTokens":60000,"cacheReadInputTokens":320000,"cacheCreationInputTokens":20000,"reportedTurns":18,"totalTurns":20}}
+        """
+        let patch = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.utf8))
+        let loaded = try patch.applying(to: initial).conversation
+        let usage = try #require(loaded.cacheUsage)
+        #expect(usage.isValid)
+        #expect(usage.hitFraction == 0.8)
+        #expect(loaded.turns == initial.turns)
+        let cached = try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(loaded))
+        #expect(cached.cacheUsage == usage)
+        let cleared = json.replacingOccurrences(of: #"{"inputTokens":60000,"cacheReadInputTokens":320000,"cacheCreationInputTokens":20000,"reportedTurns":18,"totalTurns":20}"#, with: "null")
+        #expect(try JSONDecoder().decode(ConversationPatch.self, from: Data(cleared.utf8)).applying(to: loaded).conversation.cacheUsage == nil)
+        let other = try JSONDecoder().decode(ConversationPatch.self, from: Data(json.replacingOccurrences(of: "\"s\"", with: "\"other\"").utf8))
+        #expect(throws: LodyClientError.notConnected) { try other.applying(to: loaded) }
+    }
+
+    @Test func sessionCacheRateDistinguishesZeroInputFromZeroHits() {
+        var usage = ConversationCacheUsage(inputTokens: 0, cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0, reportedTurns: 1, totalTurns: 2)
+        #expect(usage.hitFraction == nil)
+        usage.inputTokens = 100
+        #expect(usage.hitFraction == 0)
+        usage.cacheReadInputTokens = 300
+        usage.cacheCreationInputTokens = 100
+        #expect(usage.hitFraction == 0.6)
+        usage.reportedTurns = 3
+        #expect(!usage.isValid)
+        #expect(usage.hitFraction == nil)
+    }
+
     @Test func machineDirectoryPreservesDistinctRowsForCanonicalPathAliases() throws {
         let json = #"{"path":"/projects","parentPath":"/","truncated":false,"entries":[{"name":"app","absolutePath":"/projects/app","isSymlink":false},{"name":"app-link","absolutePath":"/projects/app","isSymlink":true},{"name":"here","absolutePath":"/projects","isSymlink":true}]}"#
         let directory = try JSONDecoder().decode(MachineDirectory.self, from: Data(json.utf8))
@@ -917,7 +951,8 @@ struct ConversationStreamingTests {
         #expect(await subscriptions.next() == "ws-a")
         let first = ConversationUpdate(conversation: Conversation(sessionID: "s", turns: [
             ConversationTurn(id: "a", author: .agent, text: "Partial"),
-        ], permission: nil), activity: .running, syncState: .live)
+        ], permission: nil, cacheUsage: ConversationCacheUsage(inputTokens: 100, cacheReadInputTokens: 300,
+            cacheCreationInputTokens: 100, reportedTurns: 1, totalTurns: 2)), activity: .running, syncState: .live)
         client.observation?.yield(first)
         #expect(await changes.next() == first)
         #expect(model.cachedConversation(sessionID: "s") == first.conversation)

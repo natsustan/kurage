@@ -1,5 +1,24 @@
 # Kurage 会话功能
 
+## 撤回 Sheet 底部外部留白（2026-10-07）
+
+- 按用户要求取消独立浮动面板方案，删除 `FloatingSheet`，设置、归档会话、机器文件夹、Advanced、错误详情、文件修改及子代理详情恢复原来的系统 `.sheet`、detents、背景、圆角与拖动条。移除该方案引入的留白和自定义拖动测试断言，相关测试恢复到改动前。
+- 保留同一提交中的缓存统计、Quick Actions 配置／图标／工具栏顺序及其他功能改动；当前未提交的 Quick Actions 加载修改不包含在本次撤销提交中。工程已重新生成。
+- 本轮在独立检出目录验证，iPhone 16 Pro／iOS 27 Simulator 构建与设置、错误详情、Advanced 三项 fixture UI 回归最终通过；截图及 AX 层级确认恢复系统面板、原高度和拖动条，工作区导航、复制／关闭／重开、配置修改和返回 composer 正常。Advanced 首轮发送步骤因键盘动画期间测试使用旧坐标而误点键盘，源码与测试均未修改，唯一一次原样重试通过。`git diff --check` 通过；本轮未复测真机、iOS 26、iPad、深色大字号或真实账号，未改同步协议或 bridge。
+
+## Quick Actions 分支图标（2026-10-06）
+
+- 会话右上角 Quick Actions 使用用户提供的 `git-branch.svg` 替换 SF Symbol 闪电。保留 SVG 的分支结构、圆形节点、圆角端点和线宽，24pt 原生尺寸与相邻加号一致；资源使用矢量与 template 渲染，继承工具栏前景色，随系统浅／深色外观变化。沿用 Quick Actions 的菜单、加载状态和辅助功能标识。
+- 按用户要求将 New tab 加号与 Quick Actions 对调，工具栏从左到右为加号、分支图标、会话选项省略号。
+- 本轮 iPhone 17／iOS 27 Simulator 编译及 3 项 fixture UI 验证通过（浅色默认字号 2 项、系统深色 accessibility-medium 1 项），覆盖 Quick Actions 菜单、PR 子菜单、任务创建，以及新位置加号的 New Tab／切换／关闭／重开与独立草稿。浅／深色截图和 AX 层级确认图标清晰、颜色正确、三个按钮对齐且顺序一致，辅助功能标识保留；SVG 几何逐项与用户附件核对一致，`git diff --check` 通过。初轮构建遇到并发更新的浮层工程引用及 UI 测试编译问题，现行文件更新后重新构建并完成验证。专属模拟器已关闭并删除；真机、iOS 26、iPad、最大辅助字号与 VoiceOver 实操本次未验证。
+
+## Quick Actions 样式与独立 Review 配置（2026-10-06）
+
+- Settings → Quick Actions 使用与其他设置页一致的背景、灰色 20pt 圆角卡片、16pt 页边距、18pt 行内留白和细分隔线，替换系统 Form。机器仅保留一行选择；菜单值使用次级颜色，长名称或辅助字号放不下时改为纵向排列。
+- 配置分为 Review 与 Git Actions。Review Changes 使用独立的 Agent／Model／Reasoning；创建分支、提交、推送和两种 PR 共用 Git Actions 配置。执行时按动作选择对应配置，仅影响新任务 tab 的首轮输入，不改变主会话。按用户要求不提供 Use Session Defaults 按钮，包括错误 alert。
+- 保存范围仍为本机的账号／工作区／机器。旧共享配置在读取时作为两组初始值，首次更新保存为独立组；修改其中一组保留另一组。失效配置只阻止对应动作组，界面提示到 Settings 更新。已保存的 Agent 被移除时，设置页刷新当前可用 Agent 目录并让用户重新选择，不静默改用另一 Agent 执行。保留能力校验、取消、工作区隔离和命名 tab 的既有协议。
+- 本轮 Simulator 编译、26 项 QuickAction／SessionTabs Swift 定向测试、3 项 fixture UI 验证通过（浅色默认字号 2 项，系统深色 accessibility-medium 1 项）。回归覆盖八种动作的首轮配置路由、旧配置迁移、持久化、失效配置组隔离、已移除 Agent 的设置恢复逻辑、两组独立修改、重启保存、命名任务 tab 与主草稿保留。截图及 AX 层级确认三行卡片、无默认按钮／尾线、辅助字号换行、滚动和底部菜单正常；没有新增 Swift 并发警告。`git diff --check` 通过，专属模拟器已关闭并删除。未修改 JavaScript bridge，未运行 JavaScript 测试；真实账号执行、真实长主机名、移除 Agent 的恢复 UI、真机、iOS 26、iPad、最大辅助字号与 VoiceOver 实操尚未验证。
+
 ## Markdown 链接圆点加粗（2026-10-06）
 
 - 按参考截图将链接圆点直径从 `max(0.7, 行高 / 24)` 调整为 `max(1.3, 行高 / 13)`，常规字号直径约增加 85%；中心间距从直径的 2.8 倍改为 2.4 倍，使粗细与疏密更接近参考。圆点随正文与辅助字号缩放，保留语义灰色、每行位置与末尾单色箭头。改动位于现有 MarkdownView fork 的圆点绘制器，客户端依赖固定到 `39166ee72f79d61c00065544bf3b4938f084cef6`，XcodeGen 已重新生成工程。
@@ -960,3 +979,17 @@
 - 归档仅有未依赖 AppIntents.framework 的元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
 
 - 2026-10-04 恢复账号访问后再次重试，现有 0.4.2（11）归档上传成功，日志确认 `Upload succeeded`。Apple 已开始处理，尚未确认 TestFlight 可安装状态；本次仅重试上传，未重新归档或运行测试。
+
+## Context window 会话缓存用量（2026-10-07）
+
+- Context window 浮层增加 Session cache，显示缓存命中率、读取 token、写入 token 和用量覆盖轮次；现有上下文窗口环及已用／总量保持原口径。命中率使用 `cacheReadInputTokens / (inputTokens + cacheReadInputTokens + cacheCreationInputTokens)`，没有输入 token 时显示未知，不把缺失用量当作零命中。普通字号保持紧凑浮层，辅助字号或键盘导致可用高度不足时改为可滚动内容。
+- 桥从当前会话 history 的 assistant `tokenUsage` 汇总已记录轮次，包括没有可见正文的结束轮次；不叠加子代理任务中的用量或其它 tab／会话。校验五类 token 为安全非负整数，缺失／无效记录只计入覆盖范围。每次 history 更新重新投影；用量晚到、修正或删除，即使正文不变也会发送最新统计，原生快照替换该字段，沿用现有账号／工作区／会话缓存隔离和 Codable 兼容。
+- 协议参考：官方 Lody main `72b118b5` 的 `packages/shared/src/session-data/token-usage.ts`、`apps/cli/src/lib/usage/turn-token-usage.ts` 与 `message-handler.ts`，以及固定 ACP Core `85ec3aba` 的 `ModelUsage` 互斥计数口径。当前界面展示已同步历史中的记录，不能补齐旧 daemon／不报告 delta 的 Agent 未写入的轮次，也不是云端账单汇总。
+- 本轮 frozen lockfile 安装、349 项 JavaScript 测试与 bundle 重建、iOS Simulator 构建及 32 项 FixtureLodyClient／ConversationStreaming 原生测试通过，回归覆盖隐藏轮次、无效／缺失／零值、数值边界、正文不变时的迟到／清除、Codable 往返与工作区隔离。iPhone 17／iOS 27 浅色 large 的缓存浮层及既有 composer 配置两项 fixture UI 检查、深色 accessibility-extra-large 的缓存浮层一项检查通过；截图与层级确认普通浮层紧凑、辅助字号可滚动读取顶部与完整覆盖说明，关闭后草稿保留。测试对键盘完成布局后按实测坐标点击／滚动，避免 XCTest 使用旧点击坐标或空滚动区域。生成 bundle 与 app 内资源哈希一致，`git diff --check` 通过；真实账号、真机、iOS 26、iPad 与 VoiceOver 实操尚未验证。
+
+## Quick Actions 配置加载去重（2026-10-07）
+
+- Review 与 Git Actions 的相同基础选项请求由 `AppModel` 合并，覆盖首次读取和过期缓存刷新，再分别应用各组 Agent／Model／Reasoning 偏好。合并范围包含账号代次、工作区及其选择代次、根会话、Agent 与刷新模式；继承默认 Agent 和显式选择相同 Agent 的读取在解析出实际 Agent ID 后共享强制刷新。只共享进行中的任务，不保存额外结果缓存，后续打开或重试仍检查当前能力。
+- 每个调用者拥有独立等待者，取消其中一组立即结束该组等待，最后一个等待者退出才取消底层请求。退出账号或切换工作区立即释放所有等待者；加载 ID 校验丢弃取消后迟到的结果，避免覆盖新请求。配置恢复目录也沿用相同合并入口。
+- 新增受控客户端回归，验证请求次数、独立偏好、默认／显式 Agent 刷新合并、单个／最后一个等待者取消、失败后重试、不同根会话／Agent／刷新模式隔离，以及工作区切换／退出账号与迟到结果。
+- 本轮 iPhone 17／iOS 27 Simulator 编译及 52 项 QuickActionTests／FixtureLodyClientTests／ConversationStreamingTests 通过，`git diff --check` 通过。未修改 JavaScript bridge，未运行 JavaScript 或 UI 测试；真实账号网络请求与延迟、真机及后台切换尚未实测。

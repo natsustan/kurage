@@ -6,7 +6,9 @@ final class QuickActionsFlowTests: XCTestCase {
         let app = launch()
         tap(app.buttons["account-menu"])
         tap(app.buttons["settings-quick-actions"])
-        tap(app.buttons["quick-action-reset"])
+        choose("quick-action-review-agent", value: "Codex", app: app)
+        choose("quick-action-review-model", value: "gpt-5.5", app: app)
+        choose("quick-action-review-reasoning", value: "Medium", app: app)
         choose("quick-action-agent", value: "Codex", app: app)
         choose("quick-action-model", value: "gpt-5.4-mini", app: app)
         choose("quick-action-reasoning", value: "Low", app: app)
@@ -54,6 +56,8 @@ final class QuickActionsFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["quick-action-model"].waitForExistence(timeout: 5))
         waitForLabel("gpt-5.4-mini", on: app.buttons["quick-action-model"])
         waitForLabel("Low", on: app.buttons["quick-action-reasoning"])
+        waitForLabel("gpt-5.5", on: app.buttons["quick-action-review-model"])
+        waitForLabel("Medium", on: app.buttons["quick-action-review-reasoning"])
         attach(app, "Settings shows saved Quick Actions defaults")
         app.terminate()
         app.launch()
@@ -62,8 +66,36 @@ final class QuickActionsFlowTests: XCTestCase {
         tap(app.buttons["settings-quick-actions"])
         waitForLabel("gpt-5.4-mini", on: app.buttons["quick-action-model"])
         waitForLabel("Low", on: app.buttons["quick-action-reasoning"])
+        waitForLabel("gpt-5.5", on: app.buttons["quick-action-review-model"])
+        waitForLabel("Medium", on: app.buttons["quick-action-review-reasoning"])
         attach(app, "Quick Actions defaults persist after relaunch")
-        tap(app.buttons["quick-action-reset"])
+    }
+
+    @MainActor
+    func testReviewAndGitConfigurationsCanChangeIndependently() {
+        let app = launch()
+        tap(app.buttons["account-menu"])
+        tap(app.buttons["settings-quick-actions"])
+        XCTAssertFalse(app.buttons["Use Session Defaults"].exists)
+        choose("quick-action-review-agent", value: "Claude Code", app: app)
+        choose("quick-action-review-model", value: "Opus", app: app)
+        XCTAssertFalse(app.buttons["quick-action-review-reasoning"].exists)
+        choose("quick-action-agent", value: "Codex", app: app)
+        choose("quick-action-model", value: "gpt-5.4-mini", app: app)
+        choose("quick-action-reasoning", value: "Low", app: app)
+        waitForLabel("Opus", on: app.buttons["quick-action-review-model"])
+        attach(app, "Review uses its own agent and model")
+        choose("quick-action-model", value: "gpt-5.5", app: app)
+        choose("quick-action-reasoning", value: "Medium", app: app)
+        waitForLabel("Opus", on: app.buttons["quick-action-review-model"])
+        attach(app, "Changing Git Actions preserves Review")
+        choose("quick-action-review-agent", value: "Codex", app: app)
+        choose("quick-action-review-model", value: "gpt-5.5", app: app)
+        choose("quick-action-review-reasoning", value: "High", app: app)
+        waitForLabel("gpt-5.5", on: app.buttons["quick-action-review-model"])
+        waitForLabel("Medium", on: app.buttons["quick-action-reasoning"])
+        XCTAssertFalse(app.buttons["Use Session Defaults"].exists)
+        attach(app, "Both profiles use the settings card style")
     }
 
     @MainActor
@@ -230,7 +262,10 @@ final class QuickActionsFlowTests: XCTestCase {
     @MainActor
     private func reveal(_ element: XCUIElement) {
         let app = XCUIApplication()
-        let container = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.scrollViews["settings-content"]
+        let container: XCUIElement
+        if app.collectionViews.firstMatch.exists { container = app.collectionViews.firstMatch }
+        else if app.scrollViews["quick-actions-settings"].exists { container = app.scrollViews["quick-actions-settings"] }
+        else { container = app.scrollViews["settings-content"] }
         guard container.exists else { return }
         for _ in 0..<5 {
             if element.waitForExistence(timeout: 1), element.isHittable { return }
@@ -242,7 +277,8 @@ final class QuickActionsFlowTests: XCTestCase {
     @MainActor
     private func waitForLabel(_ value: String, on element: XCUIElement) {
         reveal(element)
-        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", value), object: element)
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", value, value), object: element)
         XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 8), .completed)
     }
 
