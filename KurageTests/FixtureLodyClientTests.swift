@@ -882,7 +882,23 @@ private final class DeferredSessionClient: LodyClient {
     }
 
     func conversation(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID) async throws -> Conversation {
+        if defersConversation {
+            return try await withCheckedThrowingContinuation { continuation in
+                conversationContinuation = continuation
+                conversationStarted.continuation.yield(workspaceID)
+            }
+        }
+        if let conversationResponse { return conversationResponse }
         throw LodyClientError.notConnected
+    }
+    var defersConversation = false
+    var conversationResponse: Conversation?
+    let conversationStarted = AsyncStream<String>.makeStream()
+    var conversationContinuation: CheckedContinuation<Conversation, Error>?
+
+    func finishConversation(_ conversation: Conversation) {
+        conversationContinuation?.resume(returning: conversation)
+        conversationContinuation = nil
     }
     @discardableResult
     func send(
@@ -904,6 +920,96 @@ private final class DeferredSessionClient: LodyClient {
         workspaceID: WorkspaceSummary.ID
     ) async throws {
         throw LodyClientError.notConnected
+    }
+}
+
+@MainActor
+struct ConversationPreviewTests {
+    private func model(client: DeferredSessionClient) throws -> AppModel {
+        client.cachedSession = SessionCache(account: try #require(client.account), workspaces: [
+            WorkspaceSummary(id: "ws-a", name: "A", slug: "a"),
+            WorkspaceSummary(id: "ws-b", name: "B", slug: "b"),
+        ], selectedWorkspaceID: "ws-a", sessionsByWorkspace: [:])
+        return AppModel(client: client)
+    }
+
+    @Test(arguments: [false, true])
+    func previewReadsLeaveColdAndWarmCachesUnchanged(hasCache: Bool) async throws {
+        let client = DeferredSessionClient()
+        let model = try model(client: client)
+        let original = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "Original")])
+        client.conversationResponse = original
+        if hasCache { _ = try await model.conversation(sessionID: "s") }
+        let cached = model.cachedConversation(sessionID: "s")
+        let loaded = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "New snapshot")])
+        client.conversationResponse = loaded
+
+        #expect(try await model.conversationPreview(sessionID: "s") == loaded)
+        #expect(model.cachedConversation(sessionID: "s") == cached)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true], [false, true])
+    func latePreviewReadUsesLiveGrowthAndDeletions(hasCache: Bool, deletesTurns: Bool) async throws {
+        let client = DeferredSessionClient()
+        let model = try model(client: client)
+        let original = Conversation(sessionID: "s", turns: [ConversationTurn(id: "a", author: .agent, text: "Partial")])
+        let latest = Conversation(sessionID: "s", turns: deletesTurns ? [] : [
+            ConversationTurn(id: "a", author: .agent, text: "Partial output has grown"),
+            ConversationTurn(id: "b", author: .agent, text: "Another turn"),
+        ])
+        let (received, signal) = AsyncStream<Void>.makeStream()
+        var updates = received.makeAsyncIterator()
+        var subscriptions = client.observationsStarted.makeAsyncIterator()
+        let observing = Task { try await model.observeConversation(sessionID: "s") { _ in signal.yield(()) } }
+        defer { client.observation?.finish(); observing.cancel() }
+        #expect(await subscriptions.next() == "ws-a")
+        if hasCache {
+            client.observation?.yield(ConversationUpdate(conversation: original, activity: .running, syncState: .live))
+            _ = await updates.next()
+        }
+
+        client.defersConversation = true
+        var reads = client.conversationStarted.stream.makeAsyncIterator()
+        let preview = Task { try await model.conversationPreview(sessionID: "s") }
+        #expect(await reads.next() == "ws-a")
+        // Publish and consume a newer update before releasing the earlier one-shot result.
+        client.observation?.yield(ConversationUpdate(conversation: latest, activity: .running, syncState: .live))
+        _ = await updates.next()
+        client.finishConversation(original)
+
+        #expect(try await preview.value == latest)
+        #expect(model.cachedConversation(sessionID: "s") == latest)
+        client.observation?.finish()
+        try await observing.value
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: ["cancel", "workspace", "workspace-round-trip", "sign-out"])
+    func latePreviewReadsRejectCancelledOrObsoleteScopes(change: String) async throws {
+        let client = DeferredSessionClient()
+        let model = try model(client: client)
+        client.defersConversation = true
+        var reads = client.conversationStarted.stream.makeAsyncIterator()
+        let preview = Task { try await model.conversationPreview(sessionID: "s") }
+        #expect(await reads.next() == "ws-a")
+
+        switch change {
+        case "cancel": preview.cancel()
+        case "sign-out": model.signOut()
+        default:
+            var requests = client.started.makeAsyncIterator()
+            for workspaceID in change == "workspace-round-trip" ? ["ws-b", "ws-a"] : ["ws-b"] {
+                let switching = Task { await model.selectWorkspace(workspaceID) }
+                #expect(await requests.next() == workspaceID)
+                client.finish(workspaceID, with: [])
+                await switching.value
+            }
+        }
+        // This test client ignores cancellation, exposing the model's own late-result guard.
+        client.finishConversation(Conversation(sessionID: "s", turns: [
+            ConversationTurn(id: "a", author: .agent, text: "Obsolete"),
+        ]))
+        await #expect(throws: CancellationError.self) { try await preview.value }
+        #expect(model.cachedConversation(sessionID: "s") == nil)
     }
 }
 

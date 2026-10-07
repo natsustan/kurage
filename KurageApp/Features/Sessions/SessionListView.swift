@@ -888,7 +888,7 @@ struct SessionConversationPreview: View {
             conversation = model.cachedConversation(sessionID: sessionID)
             failedToLoad = false
             do {
-                let loaded = try await model.conversation(sessionID: sessionID)
+                let loaded = try await model.conversationPreview(sessionID: sessionID)
                 try Task.checkCancellation()
                 guard canLoad else { return }
                 conversation = loaded
