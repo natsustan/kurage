@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct NotificationSettingsView: View {
     let model: NotificationModel

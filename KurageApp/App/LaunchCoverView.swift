@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Matches the system launch storyboard during the initial launch interval.
 struct LaunchCoverView: View {

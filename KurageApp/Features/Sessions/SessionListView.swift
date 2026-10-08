@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct SessionNavigation {
     enum Route: Hashable {

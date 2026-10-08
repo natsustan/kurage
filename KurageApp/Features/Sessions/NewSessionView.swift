@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct NewSessionRoute: Hashable {
     let id = UUID()

@@ -3,6 +3,7 @@ import SwiftUI
 import Testing
 import UIKit
 @testable import Kurage
+@testable import KurageCore
 
 struct ComposerMentionsTests {
     @Test(arguments: ["$review", "@review", "还有一个 bug $REVIEW"])

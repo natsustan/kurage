@@ -3,6 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 import AVFoundation
 import ImageIO
+import KurageCore
 
 struct ComposerAttachments: View {
     @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black

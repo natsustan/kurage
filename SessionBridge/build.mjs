@@ -1,7 +1,7 @@
 import { build } from 'esbuild';
 import { readFile, writeFile } from 'node:fs/promises';
 
-const output = '../KurageApp/Resources/session-bridge.js';
+const output = '../Packages/KurageCore/Sources/KurageCore/Resources/session-bridge.js';
 await build({
   entryPoints: ['bridge.js'],
   outfile: output,

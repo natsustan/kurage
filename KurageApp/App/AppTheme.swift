@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 enum AppTheme: String, CaseIterable {
     case system

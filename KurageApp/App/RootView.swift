@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct RootView: View {
     let model: AppModel

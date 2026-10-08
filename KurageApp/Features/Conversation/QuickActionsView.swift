@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct QuickActionConfigurationState {
     var options: NewSessionOptions?

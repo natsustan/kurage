@@ -3,6 +3,7 @@ import Testing
 import SwiftUI
 import UIKit
 @testable import Kurage
+@testable import KurageCore
 
 struct SessionSearchTests {
     @Test func indexesEachTextPartOnceAndKeepsLegacyText() {

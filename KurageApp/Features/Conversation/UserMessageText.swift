@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 /// Starts with a bubble menu, then hands selection and its handles to UIKit.
 struct UserMessageText: UIViewRepresentable {

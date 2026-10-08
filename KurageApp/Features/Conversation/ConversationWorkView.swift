@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Disclosure state owned by the transcript, so reconfigured or reused cells
 /// restore what the reader opened.

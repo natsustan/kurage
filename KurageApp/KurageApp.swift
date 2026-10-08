@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 @main
 struct KurageApp: App {

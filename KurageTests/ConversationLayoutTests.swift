@@ -2,6 +2,7 @@ import SwiftUI
 import Testing
 import UIKit
 @testable import Kurage
+@testable import KurageCore
 
 @MainActor
 struct ConversationLayoutTests {

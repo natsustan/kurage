@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct ArchivedSessionsView: View {
     let model: AppModel

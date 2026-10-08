@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Read the branch of the shared project directory without changing it.
 struct ProjectBranchRow: View {

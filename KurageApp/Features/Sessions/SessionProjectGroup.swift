@@ -1,4 +1,5 @@
 import Foundation
+import KurageCore
 
 struct SessionProjectGroup: Identifiable, Equatable {
     static let unassignedID = "unassigned"

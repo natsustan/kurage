@@ -2,20 +2,23 @@
 
 ## Project Scope and Collaboration
 
-- Kurage is an independent third-party iOS client for Lody, not an official Lody project.
-- The backend is provided by the existing Lody project through its services, APIs, and synchronization protocols. This repository develops only the iOS client and does not build its own backend. Use Lody's implementation and protocols as the source of truth for backend behavior.
+- Kurage is an independent third-party iOS and native macOS client for Lody, not an official Lody project.
+- The backend is provided by the existing Lody project through its services, APIs, and synchronization protocols. This repository develops only the clients and does not build its own backend. Use Lody's implementation and protocols as the source of truth for backend behavior.
 - This project will not be submitted to Lody. Do not proactively plan upstream code submissions, pull requests, contribution workflows, or related preparation.
 - Focus on this client's functionality, user experience, and protocol compatibility. Consulting Lody's implementation is for understanding the protocol and does not imply contributing upstream.
 
 ## Project Structure
 
 - `KurageApp/`: SwiftUI app targeting iPhone, with a minimum deployment target of iOS 26 and Swift 6 strict concurrency checking.
-- `KurageApp/App/`: Root UI and the `@Observable`, `@MainActor` `AppModel`.
+- `KurageApp/App/`: iOS root UI and platform presentation.
 - `KurageApp/Features/`: Sign-in, session list, and conversation details.
-- `KurageApp/Client/`: The `LodyClient` protocol, live HTTP client, fixture client, authentication storage, and WebKit synchronization bridge.
+- `KurageApp/Client/`: iOS OneSignal notification integration.
+- `Packages/KurageCore/`: Shared `AppModel`, domain models, `LodyClient`, live/fixture clients, authentication storage, and WebKit synchronization bridge. Both apps depend on this local Swift package; do not duplicate business logic in platform UI.
+- `KurageMac/`: Native macOS 26+ single-window SwiftUI app (not Catalyst). Window navigation and drafts live in `MacWindowState`; Changes is a default-closed inspector. No terminal or local agent execution. macOS credentials, preferences and cache are independent of iOS. Shared `AppModel` still represents one selected workspace; multi-window workspace coordination is not implemented.
 - `SessionBridge/`: JavaScript bridge for Loro/Flock/Streams and its Node tests.
-- `KurageApp/Resources/session-bridge.js`: Generated bridge bundle. Rebuild after changing `SessionBridge/` sources; do not edit this artifact directly.
+- `Packages/KurageCore/Sources/KurageCore/Resources/session-bridge.js`: Generated bridge bundle. Rebuild after changing `SessionBridge/` sources; do not edit this artifact directly. Package resources load through `Bundle.module`.
 - `KurageTests/` uses Swift Testing. `KurageUITests/` uses XCTest and launches with `--fixture` for isolated test data.
+- `KurageMacTests/` and `KurageMacUITests/`: macOS integration and fixture UI tests. Run `./script/build_and_run.sh` for the live Mac app or `./script/build_and_run.sh run --fixture` for isolated demo data.
 - `project.yml` contains the XcodeGen project configuration. Update it for project structure or build configuration changes, then regenerate `Kurage.xcodeproj`.
 - `PLAN.md` tracks feature progress, protocol reference locations, and follow-up work. Keep it updated when these change.
 

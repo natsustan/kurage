@@ -1,5 +1,6 @@
 import SwiftUI
 import MarkdownView
+import KurageCore
 
 struct ConversationView: View {
     let sessionID: SessionSummary.ID
@@ -508,17 +509,19 @@ struct ConversationContent: View {
 
     private func cancelSession() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
-              isRunning else { return }
+              isRunning, let workspaceID = model.selectedWorkspaceID else { return }
         isCancelling = true
         banner = nil
         Task {
             guard isCurrentWorkspace else { return }
             defer { isCancelling = false }
             do {
-                try await model.cancelSession(sessionID: sessionID)
+                try await model.cancelSession(sessionID: sessionID, workspaceID: workspaceID,
+                                              workspaceGeneration: workspaceGeneration)
             } catch is CancellationError {
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
                 banner = "Could not stop the current reply. Try again."
             }
         }
@@ -1026,34 +1029,5 @@ private struct ConversationPreview: View {
             ConversationView(sessionID: sessionID, title: title, model: model)
         }
         .task { await model.adoptExistingAccount() }
-    }
-}
-
-/// Separates the synchronized configuration from a choice for the next new turn.
-struct ConversationRunConfigState {
-    private(set) var config: SessionRunConfig?
-    private(set) var choice: RunConfigChoice?
-
-    var displayed: SessionRunConfig? { config?.applying(choice) }
-
-    mutating func receive(_ config: SessionRunConfig?) {
-        self.config = config
-        // Drop a choice the agent no longer offers in the same place.
-        if let choice, config?.choosing(choice.value) != choice {
-            self.choice = nil
-        }
-    }
-
-    mutating func choose(_ value: String) {
-        guard let selected = config?.choosing(value) else { return }
-        // Even selecting the current baseline is explicit intent: an unconfirmed
-        // earlier turn can still change the configuration the next turn inherits.
-        choice = selected
-    }
-
-    mutating func didSend(_ sentChoice: RunConfigChoice?) {
-        config = config?.applying(sentChoice)
-        // A retry can send an older choice. Keep any unused selection for the next turn.
-        if choice == sentChoice { choice = nil }
     }
 }

@@ -7,3 +7,5 @@ xcuserdata/
 .agents
 SessionBridge/node_modules/
 .claude
+Packages/*/.build/
+Packages/*/.swiftpm/

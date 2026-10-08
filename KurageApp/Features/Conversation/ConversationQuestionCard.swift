@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Drafts belong to the request identity; streaming updates never replace them.
 struct ConversationQuestionCard: View {
@@ -149,7 +150,12 @@ struct ConversationQuestionCard: View {
 }
 
 private struct QuestionFields: View {
+    #if os(iOS)
     @AppStorage(AppAccent.storageKey) private var accent: AppAccent = .black
+    private var selectionColor: Color { accent.color }
+    #else
+    private var selectionColor: Color { .accentColor }
+    #endif
     let question: ConversationQuestion
     @Binding var draft: QuestionDraft
     var inputFocused: FocusState<Bool>.Binding
@@ -169,7 +175,7 @@ private struct QuestionFields: View {
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: draft.selected.contains(option.label) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(draft.selected.contains(option.label) ? accent.color : .secondary)
+                            .foregroundStyle(draft.selected.contains(option.label) ? selectionColor : .secondary)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(option.label).foregroundStyle(.primary)
                             if let description = option.description {

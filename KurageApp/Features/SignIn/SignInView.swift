@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct SignInView: View {
     let model: AppModel

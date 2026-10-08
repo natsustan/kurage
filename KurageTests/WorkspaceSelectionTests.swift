@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Kurage
+@testable import KurageCore
 
 @MainActor
 struct WorkspaceSelectionTests {
@@ -145,6 +146,53 @@ struct WorkspaceSelectionTests {
         #expect(!model.sessions.contains { $0.id == "session-ws-studio" })
     }
 
+    @Test(arguments: [false, true])
+    func staleStopDoesNotSendToAnotherWorkspaceOrReselectedWorkspace(returnToOriginal: Bool) async throws {
+        let client = DeferredWorkspaceClient()
+        let model = AppModel(client: client)
+        var requests = client.requests.makeAsyncIterator()
+        let initial = Task { await model.refreshWorkspaces() }
+        client.complete(try #require(await requests.next()), with: [demo, studio])
+        #expect(await initial.value)
+        let generation = model.workspaceGeneration
+        await model.selectWorkspace(studio.id)
+        if returnToOriginal { await model.selectWorkspace(demo.id) }
+
+        await #expect(throws: CancellationError.self) {
+            try await model.cancelSession(sessionID: "shared-session", workspaceID: demo.id,
+                                          workspaceGeneration: generation)
+        }
+        #expect(client.cancellationRequests.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func stopCompletionAfterWorkspaceChangeDoesNotRefreshSelection(returnToOriginal: Bool) async throws {
+        let client = DeferredWorkspaceClient()
+        let model = AppModel(client: client)
+        var requests = client.requests.makeAsyncIterator()
+        let initial = Task { await model.refreshWorkspaces() }
+        client.complete(try #require(await requests.next()), with: [demo, studio])
+        #expect(await initial.value)
+        let generation = model.workspaceGeneration
+        var cancellations = client.cancellationStarted.stream.makeAsyncIterator()
+        let stop = Task {
+            try await model.cancelSession(sessionID: "shared-session", workspaceID: demo.id,
+                                          workspaceGeneration: generation)
+        }
+        _ = try #require(await cancellations.next())
+        #expect(client.cancellationRequests.count == 1)
+        #expect(client.cancellationRequests.first?.sessionID == "shared-session")
+        #expect(client.cancellationRequests.first?.workspaceID == demo.id)
+        await model.selectWorkspace(studio.id)
+        if returnToOriginal { await model.selectWorkspace(demo.id) }
+        let sessionRequests = client.sessionRequests
+        client.finishCancellation()
+
+        await #expect(throws: CancellationError.self) { try await stop.value }
+        #expect(client.sessionRequests == sessionRequests)
+        #expect(model.selectedWorkspaceID == (returnToOriginal ? demo.id : studio.id))
+    }
+
     @Test func additionalFixtureWorkspacesCannotReadDemoSessions() async throws {
         let client = FixtureLodyClient(startsSignedIn: true, workspaceSummaries: [demo, studio])
         #expect(try await client.workspaces() == [demo, studio])
@@ -165,6 +213,14 @@ private final class DeferredWorkspaceClient: LodyClient {
     private var pending: [UUID: CheckedContinuation<[WorkspaceSummary], Error>] = [:]
     private(set) var sessionRequests: [String] = []
     var failingSessionWorkspaceID: String?
+    private(set) var cancellationRequests: [(sessionID: String, workspaceID: String)] = []
+    let cancellationStarted = AsyncStream<Void>.makeStream()
+    private var cancellationContinuation: CheckedContinuation<Void, Never>?
+
+    func finishCancellation() {
+        cancellationContinuation?.resume()
+        cancellationContinuation = nil
+    }
 
     init() { (requests, requestSignal) = AsyncStream.makeStream() }
 
@@ -198,7 +254,13 @@ private final class DeferredWorkspaceClient: LodyClient {
     func conversation(sessionID: String, workspaceID: String) async throws -> Conversation { throw LodyClientError.notConnected }
     func send(_ text: String, attachments: [ComposerAttachment], runConfig: RunConfigChoice?, turnID: String,
               sessionID: String, workspaceID: String) async throws -> RunConfigChoice? { throw LodyClientError.notConnected }
-    func cancelSession(sessionID: String, workspaceID: String) async throws { throw LodyClientError.notConnected }
+    func cancelSession(sessionID: String, workspaceID: String) async throws {
+        cancellationRequests.append((sessionID, workspaceID))
+        await withCheckedContinuation { continuation in
+            cancellationContinuation = continuation
+            cancellationStarted.continuation.yield(())
+        }
+    }
     func respond(_ decision: PermissionDecision, requestID: String, sessionID: String, workspaceID: String) async throws {
         throw LodyClientError.notConnected
     }

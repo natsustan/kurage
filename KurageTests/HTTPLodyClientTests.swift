@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import WebKit
 @testable import Kurage
+@testable import KurageCore
 
 @MainActor
 @Suite(.serialized)
@@ -1182,7 +1183,7 @@ struct StreamFetchHandlerTests {
         configuration.userContentController.addScriptMessageHandler(handler, contentWorld: .page, name: "streamFetch")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         handler.webView = webView
-        let page = try #require(Bundle.main.url(forResource: "session-bridge", withExtension: "html"))
+        let page = try #require(SessionSyncBridge.bundledPageURL)
         defer { webView.stopLoading(); webView.loadHTMLString("", baseURL: nil) }
         _ = try #require(webView.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent()))
         for _ in 0..<200 {

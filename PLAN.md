@@ -1,5 +1,28 @@
 # Kurage 会话功能
 
+## macOS 分支审查修复（2026-10-08）
+
+- 明确失败的消息提供 Edit，恢复正文和附件；已有新草稿时先确认替换。首条消息失败会返回创建界面，保留原 Agent、仍有效的模型／推理选择与附件。投递未确认时继续沿用原 session/turn ID 重试，不开放编辑。
+- 侧栏增加 Pending sessions，独立于搜索和活跃项目模板提供恢复入口；创建界面发现同项目待确认会话时提供 Resume，避免重复创建。
+- `ConversationRunConfigState` 从 iOS 视图迁入 `KurageCore`，两端共用选择校验与发送后消费逻辑。Mac 每会话草稿持有该状态，离开会话后的发送完成仍会清除已消费选择；账号／工作区切换后的完成不会回写旧窗口状态。
+- 两端差异预览共用 `RecordedFileDiff.previewInBackground`，通过取消处理器将视图任务取消传给 detached 比较；Mac 关闭预览、切换会话或休眠时停止无消费者的计算。
+- 本轮验证：Mac 原生 11 项通过，4 条受影响的 Mac fixture UI 测试分次通过；iOS 27 / iPhone 17 Simulator 的配置状态、发件箱与差异预览 48 项定向测试通过。覆盖失败恢复、草稿保护、待确认根会话重开及原 ID 重试、首条消息与模型选择恢复、配置生命周期和 detached 计算取消；已检查恢复界面及 Changes 截图，`git diff --check` 通过。初次运行的 fixture 错误类型断言、Touch Bar 同名按钮匹配和新增测试的非 Equatable 断言已修正并通过重跑。真实账号网络恢复、实际休眠／唤醒及 macOS 26 尚未验证。
+
+## Native macOS client and shared core (2026-10-08)
+
+- Added a native macOS 26+ SwiftUI app in this repository, not Catalyst. The initial app uses one window with a project/session sidebar, conversation tabs and a default-closed Changes inspector. It does not execute local agents or provide a terminal. Notifications, Quick Actions and additional settings remain deferred on Mac.
+- Sidebar controls: New Session is a left-aligned button at the top of the sidebar, with a search field directly below it. It opens the composer directly (also via Command-N), defaulting to the most recently active local root project's template, independently of pinning and search. The sheet contains a project menu, Agent, Model and Reasoning choices, a multiline editor and Create (Command-Return); Return inserts a newline. Switching projects preserves text and attachments, cancels the previous configuration load and disables creation until the new configuration is ready. New Tab shares the composer but keeps its parent's project fixed. The left-aligned workspace selector is pinned to the sidebar bottom beside Sign out; the account email is hidden. Existing automatic session-list refresh remains unchanged.
+- Mac attachment input: both first-message and conversation editors accept Command-V for clipboard PNG/TIFF images and Finder file URLs, preferring file URLs over Finder's image/text representations. Ordinary text uses the native text system. The plus button also accepts files, not only images. Imports run off the main actor, retain security-scoped access while reading, support cancellation, and keep draft data only in memory. Up to 8 attachments are allowed; files are limited to 16 MiB and image payloads to 5 MiB. TIFF/HEIC and oversized images are converted to JPEG with a maximum edge of 2048 pixels; valid supported images retain their original data. Previews and removable file chips use the existing shared attachment/outbox upload protocol.
+- Composer validation: the Mac build, all 6 native tests and all 5 fixture UI tests passed. Native coverage includes recent local-root selection independent of list order, file URL precedence, plain-text fallback, TIFF conversion, original PNG preservation, the 16 MiB file boundary, invalid inputs and cancellation. UI coverage includes multiline input, image/file paste, project switching with draft preservation, creation and existing-session attachments, plus existing tab/send/search/preview flows. After guarding repeated Agent selection, the dark creation test passed again with Agent round trips, repeated selection, Command-N and Command-Return. Final light/dark, empty, attached, New Tab and conversation-composer screenshots were inspected. The initial menu-to-button alignment regression was corrected and its existing assertion passed. No shared protocol or iOS source changed; real-account upload/dispatch, slow iCloud imports, macOS 26 and Intel remain unverified.
+- Sidebar footer validation: the sidebar search/creation and dark creation/sign-out fixture UI tests passed after moving the workspace selector. Assertions cover left alignment, the shared bottom row, hidden email, unchanged footer position with empty search results, workspace-menu availability, filtering and creation. Light and dark screenshots were inspected. The fixture has one workspace; switching between real workspaces and real-account synchronization were not revalidated in this UI-only iteration.
+- Sidebar visual cleanup: New Session suppresses its focus effect without disabling focus or menu interaction. Session rows show only a single-line title, retaining unread weight and native selection but removing chat/running icons and agent subtitles. Both sidebar search/creation and dark creation/sign-out fixture UI tests passed again; initial light/dark and selected-conversation screenshots were inspected. Real-account synchronization and macOS 26 were not revalidated.
+- Both apps now depend on the local `Packages/KurageCore` Swift package for `AppModel`, domain models, live/fixture clients, authentication, caches, outbox and WebKit synchronization. Bridge resources belong to that package and load through `Bundle.module`; running `pnpm build` in `SessionBridge/` writes the generated JavaScript there. Protocol/business fixes should be implemented once in this package or `SessionBridge`, with platform-specific UI kept in each app target.
+- Mac supports device authorization, account restoration/sign-out, workspace/project sessions, live reading, send/steer/stop, new root sessions and tabs, model/reasoning selection, image/file attachments, image preview and Branch/history file previews through the existing Lody services. No backend or protocol fork was added. Ordinary tool permission responses remain unavailable live. Mac uses separate Keychain and cache locations; window drafts and navigation remain local and are not synchronized across devices.
+- `MacWindowState` owns session/tab selection and per-session drafts. Shared `AppModel` still has one selected workspace, so multi-window workspace coordination is not implemented. Losing keyboard focus keeps subscriptions alive; sleep/background cancels view subscriptions and wake resumes them. Account/workspace transitions replace the window's scoped state.
+- Run `./script/build_and_run.sh` for the live app or `./script/build_and_run.sh run --fixture` for demo data. The `KurageMac` scheme has native and UI tests; the Run action is wired to the script. The app uses sandbox networking, user-selected read-only files and hardened runtime. Distribution signing/notarization is not configured or validated.
+- Current validation: frozen-lockfile bridge installation, 362 JavaScript tests and bundle rebuild passed. iPhone 17 / iOS 27 Simulator build, all 325 Swift tests in 32 suites, and the existing Changes drawer fixture UI regression passed after extraction. On Apple Silicon / macOS 27, all 3 native Mac tests and 3 fixture UI tests passed. Native tests cover window/draft isolation, the shared outbox/Branch data and the packaged WebKit runtime including gzip/Unicode. UI tests cover expanded Branch code, draft preservation, new tab/send, new root model/reasoning, sign-out and image expansion. Final light/dark conversation, inspector, creation, sign-in and image screenshots were inspected. Initial UI failures exposed test hit-target/AX-field mistakes and a non-working dark launch preference; the final fixture-only dark override was visually confirmed. The build/run script passed `--verify --fixture` and left the demo app running. Bridge source and both app bundle hashes match; `git diff --check` passed.
+- Not yet verified with a real account: Mac authorization/Keychain persistence, continuous remote output, actual image upload, weak-network recovery and sleep/wake. File importer interaction, macOS 26 runtime, Intel Mac, large text, multi-workspace UI transitions and distribution remain unverified. Fixture tests do not establish these live-service behaviors.
+
 ## 分支审查简化（2026-10-08）
 
 - Branch 文件列表改为独立的 `LazyVStack`，直接置于抽屉滚动区域中，按可见范围加载文件卡片，避免用普通 `VStack` 一次布局全部文件。
@@ -1110,3 +1133,53 @@
 - 归档出现 `DefaultModelsSettingsView.swift` Sendable 函数转换警告和 AppIntents 元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
 
 - 恢复账号访问后重试，Apple 校验指出通知服务扩展缺少 `CFBundleDisplayName`。在 `project.yml` 为扩展补充 `Kurage Notifications` 并重新生成工程、归档，确认扩展包内显示名称与 0.4.2（12）版本齐全。修正归档 `build/testflight/0.4.2-12/Kurage-fixed.xcarchive` 上传成功，日志确认 `Upload succeeded`；Apple 已开始处理，尚未确认 TestFlight 可安装状态。本轮未运行测试。
+
+## TestFlight 0.4.2 构建 13（2026-10-08）
+
+- 保持 iOS 应用版本 0.4.2，将主应用和通知扩展构建号同步更新为 13，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（13），尚未确认 TestFlight 可安装状态。主应用和通知扩展的包内版本及显示名称已确认。
+- 归档有 `ConversationView.swift` 和 `DefaultModelsSettingsView.swift` 的 Sendable 函数转换警告，以及 AppIntents 元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## iOS 加密出口声明（2026-10-08）
+
+- 在 XcodeGen 主应用 Info.plist 配置中声明 `ITSAppUsesNonExemptEncryption: false`，并重新生成工程。当前加密调用使用 Apple 系统提供的 URLSession、CryptoKit 和 WKWebView Web Crypto（差异内容 AES-GCM），未发现自有加密算法实现。
+- 已读取生成的 Info.plist 确认该键为 Boolean false。本轮未重新归档、上传或运行测试；该声明只会随之后的新构建生效，已上传构建仍需在 App Store Connect 完成问卷。
+
+## PR #48 审查修复（2026-10-08）
+
+- Mac 会话接入共享 `ConversationQuestionCard`，支持问题展示、自由输入、选项、多题翻页、私密字段、回答和跳过；请求身份保持草稿，提交沿用 `AppModel.respondToQuestion` 的工作区隔离和可取消协议路径。仅在当前工作区、前台、已连接且运行中的会话允许提交，停止或 outcome 到达后撤下问题。
+- XcodeGen 将现有问答卡片加入 Mac target，Mac 使用系统强调色，iOS 保留现有主题色，避免维护两份问答交互。
+- Mac 图片保留已加载缩略图及其尺寸，只有成功加载原图才放大，同时独立呈现原图加载进度及 `Retry full image`，原图失败不再被缩略图遮蔽。fixture 增加仅原图首次失败的注入开关，以覆盖缩略图成功、原图失败及重试恢复。
+- 新增 Mac fixture UI 回归：多题回答、返回上一题保留草稿、深色跳过，以及原图失败后重试。真实账号问答、跨端并发回答、断网/睡眠恢复及真实原图服务失败仍待实测。
+- 本轮验证：macOS 27 上 11 项 `KurageMacTests` 通过；两个新增 UI 用例分别通过（问答浅色提交/深色跳过，图片失败保留缩略图尺寸/重试成功放大），已检查三张截图。iOS Simulator 通用目标构建通过；`xcodegen generate` 和 `git diff --check` 通过。macOS 26、较大字号和最小窗口布局尚未验证。
+
+### PR #48 活动组标题补齐（2026-10-08）
+
+- Mac 活动组在 `steps` 非空时显示原生 `DisclosureGroup`，展开后按稳定步骤 ID 展示可选择复制的标题；空步骤组保留计数摘要，工具输出仍不展示。`Worked for …` 内的活动组使用同一组件。
+- 展开状态由活动组局部 `@State` 持有，沿用已有活动组稳定身份，父视图刷新不重置展开状态。新增 fixture UI 用例覆盖外层工作记录展开、步骤标题显示、Changes 面板往返及再次收起。
+- 本轮验证：macOS 27 上 Mac 构建及 `testActivityGroupRevealsToolTitles` 通过，已核对展开截图；`git diff --check` 通过。真实账号流式步骤增长、macOS 26、深色及大字号布局尚未实测。
+
+### PR #48 失效 Agent 恢复入口（2026-10-08）
+
+- Mac 新建会话在显式 Agent 配置加载失败时提供 `Use default agent`，清除选中的 Agent ID 并强制刷新模板默认配置；保留草稿和附件，放弃旧 Agent 的恢复配置。普通 Retry 仍保留原 Agent，不因网络错误自动切换。
+- fixture 可模拟已选非模板 Agent 在创建首条消息时被删除并拒绝创建，随后该 Agent 的 options 加载持续失败。新增 UI 回归覆盖 Edit 恢复、Retry 仍失败、主动回退、附件/草稿保留及再次创建；同时回归既有的模型选择恢复。
+- 本轮验证：macOS 27 上 11 项 Mac 集成测试及 2 项创建恢复 UI 用例通过，已检查失效 Agent 恢复界面截图；`git diff --check` 通过。真实账号删除 Agent、macOS 26 和深色/大字号布局尚未实测。
+
+### PR #48 异步布局底部跟随（2026-10-08）
+
+- Mac transcript 记录独立的底部跟随意图，并观察内容高度及视口尺寸。图片加载、折叠内容展开等局部布局变化不依赖 `turns` 更新；跟随开启时尺寸变化继续定位底部，用户滚动及惯性阶段按实际位置更新跟随意图。Latest 和主动发送恢复跟随。
+- 新增末尾图片延迟加载 fixture 和 UI 回归，自动验证图片加载后底部保持可见。滚动条/键盘等不进入手势阶段的位置变化也更新跟随意图。
+- 本轮验证：macOS 27 上图片延迟加载、活动标题展开和原图失败重试 3 项 UI 回归通过；通过系统无障碍滚动操作手动检查离开底部后阅读位置保持。真实账号和 macOS 26 尚未实测。
+
+### PR #48 停止操作工作区隔离（2026-10-08）
+
+- Mac Stop 在创建异步任务前捕获工作区 ID 和 generation；共享取消入口要求显式传入两者，在发送请求前及请求完成后校验工作区、账号和任务取消状态。iOS 同步使用该入口，过期操作不显示停止失败提示。
+- 新增回归覆盖请求执行前切换工作区、切走后切回，以及请求发出后切换工作区的迟到结果；过期上下文不会发送停止请求，迟到完成不会刷新当前工作区。
+- 本轮验证：iOS 27 模拟器上 11 项工作区选择测试及正常停止会话测试通过（其中新增两项参数化测试覆盖四种竞态场景）；Mac 构建及 `git diff --check` 通过。未实测真实账号的跨工作区停止操作。
+
+### PR #48 创建能力与已读回执恢复（2026-10-08）
+
+- Mac New tab 同时检查标签页能力和会话创建能力，阻止缺少创建能力的账号进入无法完成的创建流程。
+- Mac 已读回执与 iOS 一致，最多尝试三次、失败后间隔两秒重试；使用视图捕获的工作区 generation，保持底部、前台和视图任务的取消约束。侧栏通过无障碍值提供 Read/Unread 状态。
+- 新增无创建能力和前两次回执失败的 fixture，UI 回归覆盖禁用 New tab、无需重新进入会话即可恢复已读，以及原有创建标签页流程。
+- 本轮验证：macOS 27 上上述三项 UI 回归通过，`git diff --check` 通过。真实账号的缺少 user ID 和断网恢复场景尚未实测。

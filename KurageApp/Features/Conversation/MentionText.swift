@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 /// Presentation only: the underlying draft and the sent protocol text remain intact.
 enum MentionText {

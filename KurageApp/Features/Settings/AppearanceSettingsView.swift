@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct AppearanceSettingsView: View {
     @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
