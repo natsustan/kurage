@@ -1158,3 +1158,9 @@
 - Mac 活动组在 `steps` 非空时显示原生 `DisclosureGroup`，展开后按稳定步骤 ID 展示可选择复制的标题；空步骤组保留计数摘要，工具输出仍不展示。`Worked for …` 内的活动组使用同一组件。
 - 展开状态由活动组局部 `@State` 持有，沿用已有活动组稳定身份，父视图刷新不重置展开状态。新增 fixture UI 用例覆盖外层工作记录展开、步骤标题显示、Changes 面板往返及再次收起。
 - 本轮验证：macOS 27 上 Mac 构建及 `testActivityGroupRevealsToolTitles` 通过，已核对展开截图；`git diff --check` 通过。真实账号流式步骤增长、macOS 26、深色及大字号布局尚未实测。
+
+### PR #48 失效 Agent 恢复入口（2026-10-08）
+
+- Mac 新建会话在显式 Agent 配置加载失败时提供 `Use default agent`，清除选中的 Agent ID 并强制刷新模板默认配置；保留草稿和附件，放弃旧 Agent 的恢复配置。普通 Retry 仍保留原 Agent，不因网络错误自动切换。
+- fixture 可模拟已选非模板 Agent 在创建首条消息时被删除并拒绝创建，随后该 Agent 的 options 加载持续失败。新增 UI 回归覆盖 Edit 恢复、Retry 仍失败、主动回退、附件/草稿保留及再次创建；同时回归既有的模型选择恢复。
+- 本轮验证：macOS 27 上 11 项 Mac 集成测试及 2 项创建恢复 UI 用例通过，已检查失效 Agent 恢复界面截图；`git diff --check` 通过。真实账号删除 Agent、macOS 26 和深色/大字号布局尚未实测。

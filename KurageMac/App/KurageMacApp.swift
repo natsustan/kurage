@@ -16,6 +16,7 @@ struct KurageMacApp: App {
                 ? [SessionRecord.questionSample] + SessionRecord.samples : SessionRecord.samples,
                 failStartAndArchiveProjectOnce: arguments.contains("--fixture-start-unconfirmed"),
                 rejectStartOnce: arguments.contains("--fixture-start-rejected"),
+                removeSelectedAgentOnStartOnce: arguments.contains("--fixture-agent-removed"),
                 rejectMissingHistoryOnce: arguments.contains("--fixture-send-not-delivered"),
                 streamsConversationUpdates: true,
                 failOriginalImageOnce: arguments.contains("--fixture-image-failure")) : HTTPLodyClient(),

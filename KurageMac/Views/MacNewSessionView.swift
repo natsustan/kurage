@@ -118,6 +118,16 @@ struct MacNewSessionView: View {
                     HStack {
                         Text(error).foregroundStyle(.red)
                         Button("Retry") { refresh += 1 }
+                        if options == nil, providerID != nil {
+                            Button("Use default agent") {
+                                providerID = nil
+                                restoredConfiguration = true
+                                loading = true
+                                self.error = nil
+                                refresh += 1
+                            }
+                            .accessibilityIdentifier("use-default-agent")
+                        }
                     }
                 }
                 HStack(spacing: 12) {

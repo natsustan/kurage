@@ -316,6 +316,53 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["edit-failed-message"].exists)
     }
 
+    func testRemovedAgentCanRecoverWithDefaultAgent() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-agent-removed"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["new-session"].waitForExistence(timeout: 15))
+        app.buttons["new-session"].click()
+        let editor = app.textViews["new-message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.popUpButtons["new-agent"].waitForExistence(timeout: 10))
+        app.popUpButtons["new-agent"].click()
+        app.menuItems["Claude Code"].click()
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        paste("Recover removed agent", into: editor, app: app)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("recovery-\(UUID()).txt")
+        try Data("Keep this attachment".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        withPasteboard { pasteboard in
+            pasteboard.writeObjects([file as NSURL])
+            editor.typeKey("v", modifierFlags: .command)
+        }
+        let attachment = app.buttons["Remove \(file.lastPathComponent)"]
+        XCTAssertTrue(attachment.waitForExistence(timeout: 10))
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.buttons["edit-failed-message"].waitForExistence(timeout: 15))
+        app.buttons["edit-failed-message"].click()
+        let fallback = app.buttons["use-default-agent"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 10))
+        XCTAssertEqual(editor.value as? String, "Recover removed agent")
+        XCTAssertTrue(attachment.exists)
+        XCTAssertFalse(app.buttons["start-session"].isEnabled)
+        app.buttons["Retry"].click()
+        XCTAssertTrue(fallback.waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-removed-agent-recovery")
+        fallback.click()
+        XCTAssertTrue(app.popUpButtons["new-agent"].waitForExistence(timeout: 10))
+        XCTAssertTrue((app.popUpButtons["new-agent"].value as? String ?? "").contains("Codex"))
+        XCTAssertEqual(editor.value as? String, "Recover removed agent")
+        XCTAssertTrue(attachment.exists)
+        XCTAssertTrue(app.buttons["start-session"].isEnabled)
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[file.lastPathComponent].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["edit-failed-message"].exists)
+    }
+
     func testActivityGroupRevealsToolTitles() async throws {
         continueAfterFailure = false
         let app = XCUIApplication()

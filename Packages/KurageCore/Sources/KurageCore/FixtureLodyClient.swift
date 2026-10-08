@@ -25,6 +25,8 @@ public final class FixtureLodyClient: LodyClient {
     ]
     private var nextTurnNumber = 0
     private var failStartAndArchiveProjectOnce: Bool
+    private var removeSelectedAgentOnStartOnce: Bool
+    private var removedAgentIDs: Set<String> = []
     private var rejectStartOnce: Bool
     private var pendingStarts: [String: (pending: PendingSessionStart, record: SessionRecord)] = [:]
     private var failingConversationIDsOnce: Set<String>
@@ -119,6 +121,7 @@ public final class FixtureLodyClient: LodyClient {
         conversationDelay: Duration? = nil,
         failStartAndArchiveProjectOnce: Bool = false,
         rejectStartOnce: Bool = false,
+        removeSelectedAgentOnStartOnce: Bool = false,
         sendDelay: Duration? = nil,
         startDelay: Duration? = nil,
         failSendOnce: Bool = false,
@@ -159,6 +162,7 @@ public final class FixtureLodyClient: LodyClient {
         self.authorizationDelay = authorizationDelay
         self.records = records
         self.failStartAndArchiveProjectOnce = failStartAndArchiveProjectOnce
+        self.removeSelectedAgentOnStartOnce = removeSelectedAgentOnStartOnce
         self.rejectStartOnce = rejectStartOnce
         self.failingConversationIDsOnce = failingConversationIDsOnce
         self.conversationDelay = conversationDelay
@@ -553,12 +557,13 @@ public final class FixtureLodyClient: LodyClient {
             SessionRunConfig.Value(value: "claude", label: "Claude Code", icon: "claude"),
             SessionRunConfig.Value(value: "codex", label: "Codex", icon: "codex"),
         ]
+        let availableProviders = providers.filter { !removedAgentIDs.contains($0.value) || $0.value == template.summary.agentName }
         let chosen = agentConfigID ?? template.summary.agentName
-        guard providers.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
+        guard availableProviders.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
         var runConfig: NewSessionRunConfig = chosen == "codex" ? .fixture : .fixtureModelOnly
         if !hasModelHistory { runConfig.model?.value = "" }
         return NewSessionOptions(machineName: isTab ? template.summary.machineName ?? "Machine" : "spike@mac",
-                                 agentConfigID: chosen, providers: providers,
+                                 agentConfigID: chosen, providers: availableProviders,
                                  runConfig: runConfig)
     }
 
@@ -661,6 +666,12 @@ public final class FixtureLodyClient: LodyClient {
         try Task.checkCancellation()
         try requireAccount()
         try requireWorkspace(workspaceID)
+        if removeSelectedAgentOnStartOnce, let agentConfigID,
+           agentConfigID != (try record(templateSessionID)).summary.agentName {
+            removeSelectedAgentOnStartOnce = false
+            removedAgentIDs.insert(agentConfigID)
+            throw LodyClientError.sessionCreationRejected
+        }
         if rejectStartOnce {
             rejectStartOnce = false
             throw LodyClientError.sessionCreationRejected
