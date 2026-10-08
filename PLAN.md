@@ -1,11 +1,30 @@
 # Kurage 会话功能
 
+## Mac 设置（2026-10-08）
+
+- 侧栏底部的退出图标改为 `gearshape`。点击或 Command-, 打开独立的设置窗口，不随主窗口启动。
+- 设置侧栏有 General 和 Account。General 的 Appearance 可在 Light、Dark、System 之间切换，并立刻作用于主窗口和设置窗口。Account 显示账号名称和邮箱，Sign out 沿用原来的确认后再调用 `model.signOut()`，并关闭设置窗口。工作区切换仍留在侧栏底部。
+- 主题存在 Mac 自己的 `appTheme`。`--fixture` 使用独立的 UserDefaults suite，避免测试改到日常偏好；`--fixture-dark` 仍强制深色，保证已有截图用例。
+- 本轮验证：macOS 27 fixture UI 中，`testSettingsAppearanceAndAccount` 通过。设置窗口不随启动打开；Light、Dark、System 可切换，重启后仍保持 Dark，再恢复为 System；Account 显示 `demo@kurage.app`，主窗口不显示邮箱。`testDarkNewRootSessionAndSignOut` 从 Account 确认退出后回到登录页，并关闭设置窗口。`testSidebarSearchAndNewSession` 通过，齿轮入口还在，启动时没有设置窗口。已查看浅色与深色的 General、Account，以及深色主窗口。Command-, 这次没有在 UI 测试里操作。真实账号与 macOS 26 尚未验证。
+
+## Mac 新建会话关闭方式（2026-10-08）
+
+- 新建会话和新建标签页弹窗去掉右上角关闭按钮。点击窗口中变暗的遮罩会关闭弹窗；Esc 仍然关闭。弹窗内的项目、Agent、模型和输入区点击不会关闭。
+- 本轮验证：macOS 27 fixture UI 中，`testProjectHeadersCollapseAndOpenNewSession` 确认没有 Cancel 按钮，点击遮罩后弹窗关闭；`testDarkNewRootSessionAndSignOut` 在弹窗内切换项目、Agent 和模型并创建会话。真实账号与 macOS 26 尚未验证。
+
+## Mac 会话搜索面板（2026-10-08）
+
+- 侧栏「Search sessions」改为与 New Session 同排版的按钮，放大镜仍用 16pt 槽，左缘与 New Session、文件夹对齐。Command-F 或点击按钮打开搜索，再按一次或按 Esc、点击面板外关闭。
+- 面板停在窗口上方：顶部是搜索框，其下按 Sessions 列出当前工作区会话。空查询列出全部会话。输入后立即匹配标题、预览和项目名；消息正文沿用 `SessionSearch`，标题未命中时在标题下显示一行摘要。方向键移动高亮，Return 或点击打开该会话。
+- 打开结果会先展开它所在的项目，侧栏选中行仍然存在。侧栏折叠不再因为输入关键字而临时展开。
+- 本轮验证：macOS 27 fixture UI 中，`testSidebarSearchAndNewSession` 与 `testProjectHeadersCollapseAndOpenNewSession` 通过。覆盖按钮与 New Session 左缘对齐、正文「Question 7」命中 long conversation、项目名「PrIsM」只留下 review the PR、点击结果打开该会话、无命中时空状态、Esc 关闭后面板不挡工作区菜单，以及折叠中的 prism 在打开搜索结果后展开。已查看侧栏初始与搜索面板截图。真实账号、深色模式、方向键移动高亮和 macOS 26 尚未验证。
+
 ## Mac 项目分组图标与折叠（2026-10-08）
 
-- Mac 侧栏项目名使用与 iOS 相同的文件夹图标：展开为 `folder-open`，折叠为 `folder-closed`；没有项目的会话使用气泡图标。点击项目名折叠或展开该组会话。搜索时保持展开，清空搜索后恢复折叠。
+- Mac 侧栏项目名使用与 iOS 相同的文件夹图标：展开为 `folder-open`，折叠为 `folder-closed`；没有项目的会话使用气泡图标。点击项目名折叠或展开该组会话。搜索改到独立面板后，折叠不再随关键字临时展开；从搜索打开会话时会展开它所在的项目。
 - 可新建会话的本地项目在名称右侧显示 `pencil-square`，打开该项目的新建会话。不能新建时不显示按钮，点击名称仍可折叠。
-- 会话标题与项目名共用左缘：文件夹 16pt，间距 6pt，会话行从这之后起排。文件夹图标与顶部 New Session 图标共用左缘。
-- 本轮验证：macOS 27 fixture UI 中，项目头折叠后再展开、搜索期间临时展开并在清空后恢复、右侧按钮打开 prism 新建会话，以及关闭新建能力后的折叠，均已通过。展开截图里 New Session 图标与文件夹左缘对齐，「kurage」与其下会话标题左缘重合。侧栏搜索与新建回归同时通过。真实账号与 macOS 26 尚未验证。
+- 会话标题与项目名共用左缘：文件夹 16pt，间距 6pt，会话行从这之后起排。New Session 与搜索图标使用同一个 16pt 槽和 6pt 间距，左缘在侧栏 20pt 处，与文件夹字形、底部工作区菜单对齐。
+- 本轮验证：macOS 27 fixture UI 中，项目头折叠后再展开、搜索期间临时展开并在清空后恢复、右侧按钮打开 prism 新建会话，以及关闭新建能力后的折叠，均已通过。2026-10-08 复查截图像素：New Session、搜索、文件夹图标左缘同在 20pt，「New Session」「Search sessions」与「kurage」及会话标题左缘相差不超过 1.5pt。侧栏搜索与新建两项回归通过。真实账号与 macOS 26 尚未验证。
 
 ## macOS 分支审查修复（2026-10-08）
 

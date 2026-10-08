@@ -106,7 +106,6 @@ private struct MacTurnView: View {
 
     var body: some View {
         VStack(alignment: turn.author == .user ? .trailing : .leading, spacing: 10) {
-            Text(turn.author == .user ? "You" : "Agent").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             if let work = turn.displayedWork {
                 let insertion = min(max(work.insertionIndex, 0), turn.content.count)
                 MacMessageParts(model: model, sessionID: sessionID, parts: Array(turn.content.prefix(insertion)),

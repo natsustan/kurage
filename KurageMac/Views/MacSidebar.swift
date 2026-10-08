@@ -6,9 +6,7 @@ struct MacSidebar: View {
     @Bindable var window: MacWindowState
     @State private var recoveryError: String?
     @State private var groups: [ProjectGroup] = []
-    @State private var visibleGroups: [ProjectGroup] = []
     @State private var projectTemplates: [SessionSummary] = []
-    @State private var collapsedProjectIDs: Set<String> = []
 
     private struct ProjectGroup: Identifiable {
         let id: String
@@ -18,8 +16,8 @@ struct MacSidebar: View {
         var unassigned: Bool { id == "unassigned" }
     }
 
-    private var trimmedSearch: String {
-        window.search.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var canStartSession: Bool {
+        model.supportsSessionCreation && !projectTemplates.isEmpty
     }
 
     var body: some View {
@@ -29,35 +27,39 @@ struct MacSidebar: View {
                     window.newSession = NewSessionDestination(template: template, isTab: false)
                 }
             } label: {
-                Label("New Session", systemImage: "square.and.pencil")
+                // 16pt symbol slot and 6pt gap, matching the project header.
+                HStack(spacing: MacSidebarMetrics.iconSpacing) {
+                    MacSidebarSymbol(systemName: "square.and.pencil")
+                    Text("New Session")
+                        .lineLimit(1)
+                }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(MacSidebarButtonStyle())
             .keyboardShortcut("n", modifiers: .command)
             .focusEffectDisabled()
-            .disabled(!model.supportsSessionCreation || projectTemplates.isEmpty)
+            .disabled(!canStartSession)
+            .opacity(canStartSession ? 1 : 0.4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
             .padding(.horizontal, MacSidebarMetrics.controlInset)
             .accessibilityIdentifier("new-session")
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                TextField("Search sessions", text: $window.search)
-                    .textFieldStyle(.plain)
-                    .accessibilityIdentifier("session-search")
-                if !window.search.isEmpty {
-                    Button("Clear search", systemImage: "xmark.circle.fill") { window.search = "" }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("clear-session-search")
+            Button {
+                window.showsSessionSearch.toggle()
+            } label: {
+                HStack(spacing: MacSidebarMetrics.iconSpacing) {
+                    MacSidebarSymbol(systemName: "magnifyingglass")
+                        .accessibilityHidden(true)
+                    Text("Search sessions")
+                        .lineLimit(1)
                 }
             }
-            .padding(8)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-            .padding(.horizontal, 12)
+            .buttonStyle(MacSidebarButtonStyle())
+            .keyboardShortcut("f", modifiers: .command)
+            .focusEffectDisabled()
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
+            .padding(.horizontal, MacSidebarMetrics.controlInset)
+            .accessibilityIdentifier("session-search")
             if !model.pendingSessionStarts.isEmpty {
                 Menu("Pending sessions", systemImage: "arrow.clockwise.circle") {
                     ForEach(model.pendingSessionStarts) { pending in
@@ -76,8 +78,8 @@ struct MacSidebar: View {
             }
             if let recoveryError { Text(recoveryError).font(.caption).foregroundStyle(.red).padding(12) }
             List(selection: $window.selectedRootID) {
-                ForEach(visibleGroups) { group in
-                    let collapsed = trimmedSearch.isEmpty && collapsedProjectIDs.contains(group.id)
+                ForEach(groups) { group in
+                    let collapsed = window.collapsedProjectIDs.contains(group.id)
                     let template = projectTemplates.first { $0.projectID == group.id }
                     // A section header flattens its buttons into one accessibility element,
                     // so the collapse target and the new-session button would share a hit target.
@@ -85,7 +87,7 @@ struct MacSidebar: View {
                         name: group.name,
                         projectID: group.id,
                         collapsed: collapsed,
-                        canToggle: trimmedSearch.isEmpty,
+                        canToggle: true,
                         canCreate: model.supportsSessionCreation && template != nil,
                         unassigned: group.unassigned,
                         onToggle: { toggleProject(group.id) },
@@ -129,7 +131,6 @@ struct MacSidebar: View {
         }
         .navigationTitle("Kurage")
         .onChange(of: model.sessions, initial: true) { _, _ in updateGroups() }
-        .onChange(of: window.search) { _, _ in filterGroups() }
     }
 
     private func updateGroups() {
@@ -145,29 +146,17 @@ struct MacSidebar: View {
             let values = grouped[key] ?? []
             return ProjectGroup(id: key, name: values.first?.projectName ?? "Sessions", sessions: values)
         }
-        filterGroups()
     }
 
     private func toggleProject(_ id: String) {
-        guard trimmedSearch.isEmpty else { return }
         withAnimation(.snappy) {
-            if collapsedProjectIDs.contains(id) {
-                collapsedProjectIDs.remove(id)
+            var collapsed = window.collapsedProjectIDs
+            if collapsed.contains(id) {
+                collapsed.remove(id)
             } else {
-                collapsedProjectIDs.insert(id)
+                collapsed.insert(id)
             }
-        }
-    }
-
-    private func filterGroups() {
-        let query = window.search.trimmingCharacters(in: .whitespacesAndNewlines)
-        visibleGroups = groups.compactMap { group in
-            let sessions = group.sessions.filter {
-                query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)
-                    || $0.preview.localizedCaseInsensitiveContains(query)
-                    || ($0.projectName?.localizedCaseInsensitiveContains(query) == true)
-            }
-            return sessions.isEmpty ? nil : ProjectGroup(id: group.id, name: group.name, sessions: sessions)
+            window.collapsedProjectIDs = collapsed
         }
     }
 }
@@ -175,14 +164,26 @@ struct MacSidebar: View {
 private enum MacSidebarMetrics {
     static let iconWidth: CGFloat = 16
     static let iconSpacing: CGFloat = 6
-    /// New Session's inset from the sidebar edge.
-    static let controlInset: CGFloat = 16
+    /// Shared left edge of the New Session icon, the search icon, and folder glyphs.
+    /// Matches the workspace menu's 20pt sidebar inset.
+    static let controlInset: CGFloat = 20
     /// The sidebar list keeps a leading margin that `contentMargins` does not
-    /// remove. This inset puts the folder icon on the New Session icon.
+    /// remove. This inset puts the folder icon on `controlInset`.
     static let rowLeading: CGFloat = 2.5
     static let rowTrailing: CGFloat = 10
     /// Session titles share the project name's left edge, past the folder icon.
     static var titleInset: CGFloat { iconWidth + iconSpacing }
+}
+
+private struct MacSidebarSymbol: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .resizable()
+            .scaledToFit()
+            .frame(width: MacSidebarMetrics.iconWidth, height: MacSidebarMetrics.iconWidth)
+    }
 }
 
 private struct MacSidebarButtonStyle: ButtonStyle {
@@ -209,6 +210,7 @@ private struct MacProjectHeader: View {
                     projectIcon
                         .accessibilityHidden(true)
                     Text(name)
+                        .font(.body.weight(.medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -243,7 +245,6 @@ private struct MacProjectHeader: View {
                 .accessibilityIdentifier("new-session-\(projectID)")
             }
         }
-        .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
         .textCase(nil)
         .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)

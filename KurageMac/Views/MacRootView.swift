@@ -70,7 +70,7 @@ private struct MacWorkspaceView: View {
     let model: AppModel
     let isAwake: Bool
     @State private var window = MacWindowState()
-    @State private var confirmSignOut = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         @Bindable var window = window
@@ -90,8 +90,10 @@ private struct MacWorkspaceView: View {
                         .menuStyle(.borderlessButton)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("workspace-menu")
-                        Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") { confirmSignOut = true }
-                            .labelStyle(.iconOnly).help("Sign out")
+                        Button("Settings", systemImage: "gearshape") { openWindow(id: MacSettingsWindow.id) }
+                            .labelStyle(.iconOnly)
+                            .help("Settings")
+                            .accessibilityIdentifier("open-settings")
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
@@ -105,14 +107,16 @@ private struct MacWorkspaceView: View {
                     description: Text("Choose a session from the sidebar, or start one in a project."))
             }
         }
+        .overlay {
+            if window.showsSessionSearch {
+                MacSessionSearchOverlay(model: model, window: window)
+            }
+        }
         .sheet(item: $window.newSession) { destination in
             MacNewSessionView(model: model, destination: destination, isAwake: isAwake) { id in
                 window.open(id, rootID: destination.isTab ? destination.template.id : nil)
             }
         }
-        .confirmationDialog("Sign out of Lody?", isPresented: $confirmSignOut) {
-            Button("Sign out", role: .destructive) { model.signOut() }
-        } message: { Text("Local drafts and cached conversations will be cleared.") }
         .task(id: isAwake) {
             guard isAwake else { return }
             while !Task.isCancelled {

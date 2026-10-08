@@ -16,7 +16,10 @@ final class MacWindowState {
     }
 
     var selectedRootID: String?
-    var search = ""
+    var showsSessionSearch = false
+    /// In-memory project collapse. Search opens a session by revealing its group first,
+    /// so the sidebar selection still has a row to bind to.
+    var collapsedProjectIDs: Set<String> = []
     var showsChanges = false
     var newSession: NewSessionDestination?
     private var tabs: [String: String] = [:]
@@ -67,6 +70,18 @@ final class MacWindowState {
     func open(_ id: String, rootID: String? = nil) {
         selectedRootID = rootID ?? id
         tabs[rootID ?? id] = id
+    }
+
+    /// Expands the session's project, selects it, and closes search.
+    func revealSession(_ session: SessionSummary) {
+        let key = session.projectID ?? "unassigned"
+        if collapsedProjectIDs.contains(key) {
+            var collapsed = collapsedProjectIDs
+            collapsed.remove(key)
+            collapsedProjectIDs = collapsed
+        }
+        open(session.id)
+        showsSessionSearch = false
     }
 }
 

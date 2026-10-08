@@ -11,24 +11,15 @@ struct MacSessionView: View {
         let tabs = model.sessionTabs(rootID: root.id).filter { $0.isTabClosed != true }
         let sessionID = window.selectedTab(rootID: root.id)
         VStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(tabs) { tab in
-                        Button(tab.id == root.id ? "Main" : tab.title) { window.selectTab(tab.id, rootID: root.id) }
-                            .buttonStyle(.bordered)
-                            .tint(tab.id == sessionID ? .accentColor : .secondary)
-                            .accessibilityIdentifier("tab-\(tab.id)")
-                    }
-                    Button("New tab", systemImage: "plus") {
-                        window.newSession = NewSessionDestination(template: root, isTab: true)
-                    }
-                    .labelStyle(.iconOnly)
-                    .disabled(!model.supportsSessionTabs || !model.supportsSessionCreation
-                              || model.pendingSessionTab(rootID: root.id) != nil)
-                    .accessibilityIdentifier("new-tab")
-                }.padding(12)
-            }
-            Divider()
+            MacSessionTabBar(
+                tabs: tabs,
+                rootID: root.id,
+                selectedID: sessionID,
+                canCreate: model.supportsSessionTabs && model.supportsSessionCreation
+                    && model.pendingSessionTab(rootID: root.id) == nil,
+                select: { window.selectTab($0, rootID: root.id) },
+                newTab: { window.newSession = NewSessionDestination(template: root, isTab: true) }
+            )
             MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake)
                 .id(sessionID)
         }
@@ -43,6 +34,96 @@ struct MacSessionView: View {
         }
         .onChange(of: tabs.map(\.id)) { _, ids in
             if !ids.isEmpty, !ids.contains(sessionID) { window.selectTab(root.id, rootID: root.id) }
+        }
+    }
+}
+
+/// Session tabs sit on a neutral track. The selected tab is a raised chip.
+private struct MacSessionTabBar: View {
+    let tabs: [SessionSummary]
+    let rootID: String
+    let selectedID: String
+    let canCreate: Bool
+    let select: (String) -> Void
+    let newTab: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 4) {
+                    ForEach(tabs) { tab in
+                        MacSessionTabButton(
+                            title: tab.id == rootID ? "Main" : tab.title,
+                            selected: tab.id == selectedID
+                        ) { select(tab.id) }
+                        .accessibilityIdentifier("tab-\(tab.id)")
+                        .id(tab.id)
+                    }
+                    MacSessionTabButton(title: "New tab", systemImage: "plus", selected: false, iconOnly: true, action: newTab)
+                        .disabled(!canCreate)
+                        .accessibilityIdentifier("new-tab")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .scrollIndicators(.hidden)
+            .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
+            .onChange(of: selectedID) { _, id in proxy.scrollTo(id, anchor: .center) }
+        }
+        .background(colorScheme == .dark ? Color.white.opacity(0.04) : Color.black.opacity(0.045))
+        .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
+private struct MacSessionTabButton: View {
+    let title: String
+    var systemImage: String? = nil
+    let selected: Bool
+    var iconOnly = false
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 13, weight: .medium))
+                }
+                if !iconOnly {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .foregroundStyle(selected ? Color.primary : Color.secondary)
+            .padding(.horizontal, iconOnly ? 8 : 12)
+            .frame(maxWidth: iconOnly ? nil : 220)
+            .frame(height: 30)
+            .background { chrome }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .opacity(isEnabled ? 1 : 0.35)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .help(title)
+    }
+
+    @ViewBuilder private var chrome: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        if selected {
+            shape
+                .fill(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white)
+                .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.06), radius: 1.5, y: 0.5)
+                .overlay(shape.strokeBorder(colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08), lineWidth: 1))
+        } else if hovering, isEnabled {
+            shape.fill(Color.primary.opacity(0.06))
         }
     }
 }
@@ -119,7 +200,6 @@ private struct MacConversationView: View {
                 }.font(.caption).padding(8)
             }
             if let error { Text(error).foregroundStyle(.red).font(.caption).padding(8) }
-            Divider()
             MacComposer(draft: $window[draft: sessionID], runConfig: config,
                         canSend: isAwake && model.supportsTextSending && outgoing == nil
                             && (!isRunning || model.supportsTextSendingWhileRunning),
@@ -127,6 +207,11 @@ private struct MacConversationView: View {
                         onSend: send, onStop: stop) { value in
                 window[draft: sessionID].runConfig.choose(value)
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
+            .frame(maxWidth: 800)
+            .frame(maxWidth: .infinity)
         }
         .confirmationDialog("Replace the current draft?", isPresented: $confirmReplaceDraft) {
             Button("Replace draft", role: .destructive) { editFailedMessage(replacingDraft: true) }
