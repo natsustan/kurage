@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct QuickActionsSettingsView: View {
     let model: AppModel

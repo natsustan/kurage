@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 typealias FilePreviewLoader = @MainActor (ConversationFileChangeGroup, ConversationFileChange) async throws -> ConversationFilePreview
 

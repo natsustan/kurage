@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import UIKit
 @testable import Kurage
+@testable import KurageCore
 
 @MainActor
 @Suite(.serialized)

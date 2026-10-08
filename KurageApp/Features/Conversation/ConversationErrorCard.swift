@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 struct ConversationErrorCard: View {
     let turnID: String

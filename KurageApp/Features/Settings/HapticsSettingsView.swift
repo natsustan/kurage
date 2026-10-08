@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct HapticsSettingsView: View {
     @AppStorage(AppHaptics.storageKey) private var hapticsEnabled = true

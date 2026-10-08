@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 enum ConversationBlock: Equatable, Identifiable {
     case text(id: String, text: String)

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Kurage
+@testable import KurageCore
 
 // Exercise the same staging and delivery entry points as the feature views.
 @MainActor

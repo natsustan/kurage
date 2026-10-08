@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 enum SessionAction {
     case pin, rename, copyURL, archive

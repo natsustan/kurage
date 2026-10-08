@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct ConversationSubtasksButton: View {
     let subtasks: [ConversationSubtask]

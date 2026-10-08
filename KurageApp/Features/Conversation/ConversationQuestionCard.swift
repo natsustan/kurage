@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Drafts belong to the request identity; streaming updates never replace them.
 struct ConversationQuestionCard: View {

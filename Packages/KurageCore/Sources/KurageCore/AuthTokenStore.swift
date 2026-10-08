@@ -1,0 +1,65 @@
+import Foundation
+import Security
+
+@MainActor
+public protocol AuthTokenStore: AnyObject {
+    func read() -> String?
+    func write(_ token: String) -> Bool
+    func delete()
+}
+
+@MainActor
+public final class KeychainAuthTokenStore: AuthTokenStore {
+    #if os(macOS)
+    private let service = "com.spike.kurage.macos.auth"
+    #else
+    private let service = "com.spike.kurage.auth"
+    #endif
+    private let account = "lody-session"
+
+    public init() {}
+
+    public func read() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public func write(_ token: String) -> Bool {
+        let identity: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        let update = SecItemUpdate(identity as CFDictionary, [
+            kSecValueData as String: Data(token.utf8),
+        ] as CFDictionary)
+        if update == errSecSuccess { return true }
+        guard update == errSecItemNotFound else { return false }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecValueData as String: Data(token.utf8),
+        ]
+        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    public func delete() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Kurage
+@testable import KurageCore
 
 @MainActor
 struct SignInTests {

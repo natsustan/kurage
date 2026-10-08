@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 import Synchronization
 @testable import Kurage
+@testable import KurageCore
 
 struct ConversationChangesTests {
     @MainActor @Test(.timeLimit(.minutes(1)))

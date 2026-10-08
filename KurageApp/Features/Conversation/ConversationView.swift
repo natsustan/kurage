@@ -1,5 +1,6 @@
 import SwiftUI
 import MarkdownView
+import KurageCore
 
 struct ConversationView: View {
     let sessionID: SessionSummary.ID

@@ -17,6 +17,9 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 packages:
+  KurageCore:
+    path: Packages/KurageCore
+
   MarkdownView:
     url: https://github.com/natsustan/MarkdownView.git
     revision: 39166ee72f79d61c00065544bf3b4938f084cef6
@@ -40,6 +43,7 @@ targets:
     sources:
       - path: KurageApp
     dependencies:
+      - package: KurageCore
       - package: MarkdownView
       - package: OneSignal
         product: OneSignalFramework
@@ -113,6 +117,7 @@ targets:
       - path: KurageTests
     dependencies:
       - target: Kurage
+      - package: KurageCore
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
@@ -129,3 +134,63 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage.uitests
+
+  KurageMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: KurageMac
+    dependencies:
+      - package: KurageCore
+      - package: MarkdownView
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage.macos
+        PRODUCT_NAME: KurageMac
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Kurage
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: V6GTS74AND
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: KurageMac/KurageMac.entitlements
+        ENABLE_PREVIEWS: YES
+    scheme:
+      testTargets:
+        - KurageMacTests
+        - KurageMacUITests
+
+  KurageMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    hostApplication: KurageMac
+    sources:
+      - path: KurageMacTests
+    dependencies:
+      - target: KurageMac
+      - package: KurageCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage.macos.tests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: V6GTS74AND
+
+  KurageMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: KurageMacUITests
+    dependencies:
+      - target: KurageMac
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.spike.kurage.macos.uitests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: V6GTS74AND

@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 /// Keep the project choice anchored to the row; only browsing folders opens a sheet.
 struct SessionProjectMenu: View {

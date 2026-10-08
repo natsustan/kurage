@@ -1,4 +1,5 @@
 import SwiftUI
+import KurageCore
 
 struct AccountAvatar: View {
     let account: Account?

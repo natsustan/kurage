@@ -3,6 +3,7 @@ import OneSignalFramework
 import Synchronization
 import UIKit
 import UserNotifications
+import KurageCore
 
 /// SDK callbacks may arrive off the main actor. Only value snapshots cross that boundary.
 @MainActor

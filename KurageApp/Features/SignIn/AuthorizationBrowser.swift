@@ -1,5 +1,6 @@
 import SafariServices
 import SwiftUI
+import KurageCore
 
 /// Lody owns the web sign-in UI; the native device flow confirms authorization.
 struct AuthorizationBrowser: UIViewControllerRepresentable {

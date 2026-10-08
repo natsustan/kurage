@@ -1,5 +1,6 @@
 import Testing
 @testable import Kurage
+@testable import KurageCore
 
 struct SessionProjectGroupTests {
     @Test func groupsByProjectIdentityAndKeepsTimeOrderWithinEachProject() {

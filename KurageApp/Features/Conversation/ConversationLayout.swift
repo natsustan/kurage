@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import KurageCore
 
 enum ConversationMetrics {
     static let maximumContentWidth: CGFloat = 800
