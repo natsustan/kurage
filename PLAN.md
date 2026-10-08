@@ -1,5 +1,12 @@
 # Kurage 会话功能
 
+## Mac 项目分组图标与折叠（2026-10-08）
+
+- Mac 侧栏项目名使用与 iOS 相同的文件夹图标：展开为 `folder-open`，折叠为 `folder-closed`；没有项目的会话使用气泡图标。点击项目名折叠或展开该组会话。搜索时保持展开，清空搜索后恢复折叠。
+- 可新建会话的本地项目在名称右侧显示 `pencil-square`，打开该项目的新建会话。不能新建时不显示按钮，点击名称仍可折叠。
+- 会话标题与项目名共用左缘：文件夹 16pt，间距 6pt，会话行从这之后起排。文件夹图标与顶部 New Session 图标共用左缘。
+- 本轮验证：macOS 27 fixture UI 中，项目头折叠后再展开、搜索期间临时展开并在清空后恢复、右侧按钮打开 prism 新建会话，以及关闭新建能力后的折叠，均已通过。展开截图里 New Session 图标与文件夹左缘对齐，「kurage」与其下会话标题左缘重合。侧栏搜索与新建回归同时通过。真实账号与 macOS 26 尚未验证。
+
 ## macOS 分支审查修复（2026-10-08）
 
 - 明确失败的消息提供 Edit，恢复正文和附件；已有新草稿时先确认替换。首条消息失败会返回创建界面，保留原 Agent、仍有效的模型／推理选择与附件。投递未确认时继续沿用原 session/turn ID 重试，不开放编辑。
@@ -11,6 +18,7 @@
 ## Native macOS client and shared core (2026-10-08)
 
 - Added a native macOS 26+ SwiftUI app in this repository, not Catalyst. The initial app uses one window with a project/session sidebar, conversation tabs and a default-closed Changes inspector. It does not execute local agents or provide a terminal. Notifications, Quick Actions and additional settings remain deferred on Mac.
+- The Mac app icon reuses the iOS `AppIcon.png`. The 1024 image is copied as the 512pt @2x slot, and the smaller Mac slots are scaled from that same image until a Mac-specific icon exists. macOS applies its own rounded mask.
 - Sidebar controls: New Session is a left-aligned button at the top of the sidebar, with a search field directly below it. It opens the composer directly (also via Command-N), defaulting to the most recently active local root project's template, independently of pinning and search. The sheet contains a project menu, Agent, Model and Reasoning choices, a multiline editor and Create (Command-Return); Return inserts a newline. Switching projects preserves text and attachments, cancels the previous configuration load and disables creation until the new configuration is ready. New Tab shares the composer but keeps its parent's project fixed. The left-aligned workspace selector is pinned to the sidebar bottom beside Sign out; the account email is hidden. Existing automatic session-list refresh remains unchanged.
 - Mac attachment input: both first-message and conversation editors accept Command-V for clipboard PNG/TIFF images and Finder file URLs, preferring file URLs over Finder's image/text representations. Ordinary text uses the native text system. The plus button also accepts files, not only images. Imports run off the main actor, retain security-scoped access while reading, support cancellation, and keep draft data only in memory. Up to 8 attachments are allowed; files are limited to 16 MiB and image payloads to 5 MiB. TIFF/HEIC and oversized images are converted to JPEG with a maximum edge of 2048 pixels; valid supported images retain their original data. Previews and removable file chips use the existing shared attachment/outbox upload protocol.
 - Composer validation: the Mac build, all 6 native tests and all 5 fixture UI tests passed. Native coverage includes recent local-root selection independent of list order, file URL precedence, plain-text fallback, TIFF conversion, original PNG preservation, the 16 MiB file boundary, invalid inputs and cancellation. UI coverage includes multiline input, image/file paste, project switching with draft preservation, creation and existing-session attachments, plus existing tab/send/search/preview flows. After guarding repeated Agent selection, the dark creation test passed again with Agent round trips, repeated selection, Command-N and Command-Return. Final light/dark, empty, attached, New Tab and conversation-composer screenshots were inspected. The initial menu-to-button alignment regression was corrected and its existing assertion passed. No shared protocol or iOS source changed; real-account upload/dispatch, slow iCloud imports, macOS 26 and Intel remain unverified.

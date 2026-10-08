@@ -78,11 +78,83 @@ final class MacFlowTests: XCTestCase {
         app.activate()
         let session = app.staticTexts["session-session-long"].firstMatch
         XCTAssertTrue(session.waitForExistence(timeout: 15))
+        let header = app.buttons["project-header-local:machine-1:kurage"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["new-session-local:machine-1:kurage"].exists)
+        header.click()
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(header.value as? String, "Collapsed")
+        header.click()
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
         session.click()
         let newTab = app.buttons["new-tab"]
         XCTAssertTrue(newTab.waitForExistence(timeout: 10))
         XCTAssertFalse(newTab.isEnabled)
         XCTAssertFalse(app.textViews["new-message"].exists)
+    }
+
+    func testProjectHeadersCollapseAndOpenNewSession() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        app.activate()
+        let kurage = app.buttons["project-header-local:machine-1:kurage"]
+        let prism = app.buttons["project-header-local:machine-1:prism"]
+        let longSession = app.staticTexts["session-session-long"].firstMatch
+        let reviewSession = app.staticTexts["session-session-pr"].firstMatch
+        XCTAssertTrue(kurage.waitForExistence(timeout: 15))
+        XCTAssertTrue(prism.waitForExistence(timeout: 5))
+        XCTAssertEqual(kurage.value as? String, "Expanded")
+        XCTAssertTrue(longSession.waitForExistence(timeout: 5))
+        let newSession = app.buttons["new-session"]
+        // Folder icons share the New Session icon's left edge.
+        XCTAssertEqual(kurage.frame.minX, newSession.frame.minX, accuracy: 2)
+        // Session titles line up with the project name, after the 16pt icon and 6pt gap.
+        XCTAssertEqual(longSession.frame.minX - kurage.frame.minX, 22, accuracy: 2)
+        let newKurage = app.buttons["new-session-local:machine-1:kurage"]
+        let newPrism = app.buttons["new-session-local:machine-1:prism"]
+        XCTAssertTrue(newKurage.exists)
+        XCTAssertTrue(newPrism.exists)
+        XCTAssertGreaterThan(newKurage.frame.minX, kurage.frame.maxX - 8)
+        XCTAssertEqual(newKurage.frame.midY, kurage.frame.midY, accuracy: 4)
+        XCTAssertEqual(newPrism.frame.midY, prism.frame.midY, accuracy: 4)
+        let sidebar = app.outlines.firstMatch.exists ? app.outlines.firstMatch : app.tables.firstMatch
+        XCTAssertTrue(sidebar.exists)
+        XCTAssertGreaterThan(newKurage.frame.midX, sidebar.frame.midX)
+        XCTAssertGreaterThan(newPrism.frame.midX, sidebar.frame.midX)
+        XCTAssertEqual(newKurage.frame.maxX, newPrism.frame.maxX, accuracy: 2)
+        XCTAssertLessThan(sidebar.frame.maxX - newKurage.frame.maxX, 40)
+        try await capture(app, name: "mac-project-headers")
+
+        kurage.click()
+        XCTAssertEqual(kurage.value as? String, "Collapsed")
+        XCTAssertTrue(longSession.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(reviewSession.exists)
+        try await capture(app, name: "mac-project-collapsed")
+        kurage.click()
+        XCTAssertEqual(kurage.value as? String, "Expanded")
+        XCTAssertTrue(longSession.waitForExistence(timeout: 5))
+
+        prism.click()
+        XCTAssertTrue(reviewSession.waitForNonExistence(timeout: 5))
+        let search = app.textFields["session-search"]
+        paste("PrIsM", into: search, app: app)
+        XCTAssertTrue(reviewSession.waitForExistence(timeout: 5))
+        XCTAssertEqual(prism.value as? String, "Expanded")
+        app.buttons["clear-session-search"].click()
+        XCTAssertTrue(reviewSession.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(prism.value as? String, "Collapsed")
+        prism.click()
+        XCTAssertTrue(reviewSession.waitForExistence(timeout: 5))
+
+        newPrism.click()
+        XCTAssertTrue(app.textViews["new-message"].waitForExistence(timeout: 10))
+        let project = app.menuButtons["new-project"]
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        XCTAssertEqual(project.title, "prism")
+        try await capture(app, name: "mac-project-new-session")
+        app.buttons["Cancel"].click()
     }
 
     func testReadReceiptRetriesTransientFailures() throws {

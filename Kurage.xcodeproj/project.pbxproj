@@ -37,6 +37,7 @@
 		4B475F121BD9B075FDD05AC0 /* NewSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD05638D968AB68EF4E23886 /* NewSessionView.swift */; };
 		4BC6A977B0394B2E7A1B4433 /* ConversationErrorCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BD63464989FBE512F8C31CA /* ConversationErrorCard.swift */; };
 		4BC901017C96539CB677175A /* UserMessageSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39F52F4447A649EB64999DF6 /* UserMessageSelectionTests.swift */; };
+		552EC82BA131B7D407272AFA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A82279DB0BB966FC60604D4C /* Assets.xcassets */; };
 		5F1BBE8C4F61E306AB58A0AA /* ComposerAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3182FD9B993292936C8C71D4 /* ComposerAttachments.swift */; };
 		617C98A6547E19F77D7D0F2B /* SessionMetadataTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */; };
 		627728FFA2DE4AFE8EDA3C57 /* QuickActionsFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B09603AA87686803FEDC7688 /* QuickActionsFlowTests.swift */; };
@@ -222,6 +223,7 @@
 		A2B882E38674648C331B5848 /* ComposerMentions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerMentions.swift; sourceTree = "<group>"; };
 		A2CE92C0D2844B7F50BA0BD3 /* SessionProjectGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroupTests.swift; sourceTree = "<group>"; };
 		A318FB6C86AA0B5E9D6FBD42 /* ConversationQuestionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationQuestionCard.swift; sourceTree = "<group>"; };
+		A82279DB0BB966FC60604D4C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA8FB485AA58430E56FA930B /* QuickActionsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsSettingsView.swift; sourceTree = "<group>"; };
 		B08F3E58B422A9F582E91893 /* KurageNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = KurageNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		B09603AA87686803FEDC7688 /* QuickActionsFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsFlowTests.swift; sourceTree = "<group>"; };
@@ -477,6 +479,14 @@
 			path = KurageMacTests;
 			sourceTree = "<group>";
 		};
+		AF4EDD4A480FFABDCA1AD515 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A82279DB0BB966FC60604D4C /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		B749D250F7F3622E43370F96 /* KurageTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -549,6 +559,7 @@
 			children = (
 				89EEBBA749C620395F586DAC /* App */,
 				B8E4FBA8761FF024950429FA /* Models */,
+				AF4EDD4A480FFABDCA1AD515 /* Resources */,
 				DFA85ACD49A826BCA34621FF /* Views */,
 				13163448B260A5400F15E8E6 /* KurageMac.entitlements */,
 			);
@@ -592,6 +603,7 @@
 			buildConfigurationList = 5CEB8868C938886184D840D8 /* Build configuration list for PBXNativeTarget "KurageMac" */;
 			buildPhases = (
 				2205C4218C9386195D01F032 /* Sources */,
+				416D82B83B45A4BB388FCC16 /* Resources */,
 				FE1F8B4F3DD65B2B6FE89846 /* Frameworks */,
 			);
 			buildRules = (
@@ -774,6 +786,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		416D82B83B45A4BB388FCC16 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				552EC82BA131B7D407272AFA /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		856B192AFEAB3C46B2A993E2 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
