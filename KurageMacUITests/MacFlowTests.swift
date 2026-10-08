@@ -316,6 +316,24 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["edit-failed-message"].exists)
     }
 
+    func testDelayedImageFollowsBottom() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-slow-images"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let end = app.staticTexts["After delayed image"].firstMatch
+        XCTAssertTrue(end.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["delayed.png"].firstMatch.waitForExistence(timeout: 15))
+        try await capture(app, name: "mac-delayed-image-follow")
+        XCTAssertLessThanOrEqual(end.frame.maxY, app.scrollViews["transcript"].frame.maxY)
+        XCTAssertGreaterThanOrEqual(end.frame.minY, app.scrollViews["transcript"].frame.minY)
+        XCTAssertFalse(app.buttons["scroll-latest"].exists)
+    }
+
     func testRemovedAgentCanRecoverWithDefaultAgent() async throws {
         continueAfterFailure = false
         let app = XCUIApplication()

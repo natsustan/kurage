@@ -10,6 +10,24 @@ struct MacTranscript: View {
     let scrollRequest: Int
     let isAwake: Bool
     @State private var hasOpened = false
+    @State private var followsBottom = true
+    @State private var userScrolling = false
+
+    private struct Layout: Equatable {
+        let height: CGFloat
+        let viewport: CGFloat
+        let offset: CGFloat
+        let bottomInset: CGFloat
+
+        init(_ geometry: ScrollGeometry) {
+            height = geometry.contentSize.height
+            viewport = geometry.containerSize.height
+            offset = geometry.contentOffset.y
+            bottomInset = geometry.contentInsets.bottom
+        }
+
+        var isAtBottom: Bool { offset + viewport >= height + bottomInset - 48 }
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -28,23 +46,47 @@ struct MacTranscript: View {
             .accessibilityIdentifier("transcript")
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
-            } action: { _, bottom in atBottom = bottom }
+            .onScrollGeometryChange(for: Layout.self) { Layout($0) } action: { old, new in
+                if userScrolling || new.offset < old.offset - 1 {
+                    followsBottom = new.isAtBottom
+                    atBottom = new.isAtBottom
+                } else if followsBottom && (old.height != new.height || old.viewport != new.viewport) {
+                    // A child's image or disclosure can grow without changing turns.
+                    // Preserve the follow intent from before layout moved the bottom.
+                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                    atBottom = true
+                } else {
+                    atBottom = new.isAtBottom
+                    // Scrollbar and keyboard scrolling may not enter an interaction phase.
+                    if old.height == new.height, old.viewport == new.viewport, old.offset != new.offset {
+                        followsBottom = new.isAtBottom
+                    }
+                }
+            }
+            .onScrollPhaseChange { _, phase, context in
+                let wasUserScrolling = userScrolling
+                userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                if userScrolling || wasUserScrolling {
+                    followsBottom = Layout(context.geometry).isAtBottom
+                    atBottom = followsBottom
+                }
+            }
             .onChange(of: turns) { old, new in
                 guard !new.isEmpty else { return }
-                if !hasOpened || old.isEmpty || atBottom {
+                if !hasOpened || old.isEmpty || (followsBottom && !userScrolling) {
                     proxy.scrollTo("transcript-bottom", anchor: .bottom)
                 }
                 hasOpened = true
             }
             .onChange(of: scrollRequest) { _, _ in
+                followsBottom = true
                 atBottom = true
                 proxy.scrollTo("transcript-bottom", anchor: .bottom)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !atBottom {
                     Button("Latest", systemImage: "arrow.down") {
+                        followsBottom = true
                         atBottom = true
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
                     }

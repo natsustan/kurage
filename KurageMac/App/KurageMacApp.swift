@@ -11,15 +11,18 @@ struct KurageMacApp: App {
         let fixture = arguments.contains("--fixture")
         fixtureAppearance = fixture && arguments.contains("--fixture-dark") ? .dark : nil
         let defaults = fixture ? UserDefaults(suiteName: "com.spike.kurage.macos.fixture")! : .standard
+        let records = arguments.contains("--fixture-questions")
+            ? [SessionRecord.questionSample] + SessionRecord.samples
+            : arguments.contains("--fixture-slow-images") ? SessionRecord.samplesWithTrailingImage : SessionRecord.samples
         _model = State(initialValue: AppModel(
-            client: fixture ? FixtureLodyClient(startsSignedIn: true, records: arguments.contains("--fixture-questions")
-                ? [SessionRecord.questionSample] + SessionRecord.samples : SessionRecord.samples,
+            client: fixture ? FixtureLodyClient(startsSignedIn: true, records: records,
                 failStartAndArchiveProjectOnce: arguments.contains("--fixture-start-unconfirmed"),
                 rejectStartOnce: arguments.contains("--fixture-start-rejected"),
                 removeSelectedAgentOnStartOnce: arguments.contains("--fixture-agent-removed"),
                 rejectMissingHistoryOnce: arguments.contains("--fixture-send-not-delivered"),
                 streamsConversationUpdates: true,
-                failOriginalImageOnce: arguments.contains("--fixture-image-failure")) : HTTPLodyClient(),
+                failOriginalImageOnce: arguments.contains("--fixture-image-failure"),
+                imageLoadDelay: arguments.contains("--fixture-slow-images") ? .seconds(8) : nil) : HTTPLodyClient(),
             quickActionDefaults: defaults
         ))
     }

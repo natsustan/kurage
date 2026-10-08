@@ -112,6 +112,7 @@ public final class FixtureLodyClient: LodyClient {
     }
 
     private var failOriginalImageOnce = false
+    private let imageLoadDelay: Duration?
 
     public init(
         startsSignedIn: Bool = false,
@@ -135,6 +136,7 @@ public final class FixtureLodyClient: LodyClient {
         streamsConversationUpdates: Bool = false,
         failFilePreviewOnce: Bool = false,
         failOriginalImageOnce: Bool = false,
+        imageLoadDelay: Duration? = nil,
         filePreviewUnavailableReason: String? = nil,
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
@@ -153,6 +155,7 @@ public final class FixtureLodyClient: LodyClient {
         self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
         self.projectGitFailureOnce = projectGitFailureOnce
         self.projectGitStates = projectGitStates
+        self.imageLoadDelay = imageLoadDelay
         self.failOriginalImageOnce = failOriginalImageOnce
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
@@ -772,6 +775,7 @@ public final class FixtureLodyClient: LodyClient {
             }
         }
         guard known else { throw LodyClientError.sessionMissing }
+        if let imageLoadDelay { try await Task.sleep(for: imageLoadDelay) }
         try Task.checkCancellation()
         if variant == .original, failOriginalImageOnce {
             failOriginalImageOnce = false
@@ -1283,6 +1287,18 @@ extension SessionRecord {
                 ConversationSubtask(id: "review-clarity", title: "Review clarity", agentName: "Codex agent",
                                     status: .failed, error: "The review was interrupted."),
             ])
+        }
+        return records
+    }
+}
+extension SessionRecord {
+    public static var samplesWithTrailingImage: [SessionRecord] {
+        var records = samples
+        if let index = records.firstIndex(where: { $0.summary.id == "session-long" }) {
+            records[index].turns.append(ConversationTurn(id: "delayed-image", author: .agent, text: "", parts: [
+                .image(ConversationImage(imageID: "delayed-image", mimeType: "image/png", fileName: "delayed.png")),
+                .text("After delayed image"),
+            ]))
         }
         return records
     }
