@@ -23,7 +23,8 @@ struct MacSessionView: View {
                         window.newSession = NewSessionDestination(template: root, isTab: true)
                     }
                     .labelStyle(.iconOnly)
-                    .disabled(!model.supportsSessionTabs || model.pendingSessionTab(rootID: root.id) != nil)
+                    .disabled(!model.supportsSessionTabs || !model.supportsSessionCreation
+                              || model.pendingSessionTab(rootID: root.id) != nil)
                     .accessibilityIdentifier("new-tab")
                 }.padding(12)
             }
@@ -168,8 +169,19 @@ private struct MacConversationView: View {
         }
         .task(id: atBottom && scenePhase == .active && isAwake ? latestMessageAt : nil) {
             guard atBottom, scenePhase == .active, isAwake, let latestMessageAt else { return }
-            try? await model.markSessionRead(sessionID: sessionID, lastMessageAt: latestMessageAt,
-                                            workspaceGeneration: model.workspaceGeneration)
+            for attempt in 0..<3 {
+                do {
+                    try Task.checkCancellation()
+                    try await model.markSessionRead(sessionID: sessionID, lastMessageAt: latestMessageAt,
+                                                    workspaceGeneration: generation)
+                    return
+                } catch is CancellationError { return }
+                catch {
+                    if attempt < 2 {
+                        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    }
+                }
+            }
         }
     }
 

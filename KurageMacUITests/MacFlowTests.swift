@@ -71,6 +71,34 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(reviewSession.exists)
     }
 
+    func testNewTabRequiresSessionCreationCapability() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-no-session-creation"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let newTab = app.buttons["new-tab"]
+        XCTAssertTrue(newTab.waitForExistence(timeout: 10))
+        XCTAssertFalse(newTab.isEnabled)
+        XCTAssertFalse(app.textViews["new-message"].exists)
+    }
+
+    func testReadReceiptRetriesTransientFailures() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-read-retry"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        XCTAssertEqual(session.value as? String, "Unread")
+        session.click()
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+        let read = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Read"), object: session)
+        XCTAssertEqual(XCTWaiter.wait(for: [read], timeout: 10), .completed)
+    }
+
     func testConversationChangesAndNewTab() async throws {
         continueAfterFailure = false
         let app = XCUIApplication()

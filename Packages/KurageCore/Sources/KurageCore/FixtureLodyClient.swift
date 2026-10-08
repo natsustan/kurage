@@ -13,7 +13,7 @@ public final class FixtureLodyClient: LodyClient {
     public let supportsSessionCancellation = true
     public let supportsSessionArchiving = true
     public let supportsPermissionResponses = true
-    public let supportsSessionCreation = true
+    public let supportsSessionCreation: Bool
 
     private var records: [SessionRecord]
     private let fixtureAccountID: String?
@@ -111,11 +111,14 @@ public final class FixtureLodyClient: LodyClient {
             id: "\(turnID):\(path)", oldText: prefix + edit.oldText, newText: prefix + edit.newText))
     }
 
+    private var readReceiptFailuresRemaining: Int
     private var failOriginalImageOnce = false
     private let imageLoadDelay: Duration?
 
     public init(
         startsSignedIn: Bool = false,
+        supportsSessionCreation: Bool = true,
+        readReceiptFailures: Int = 0,
         records: [SessionRecord] = SessionRecord.samples,
         archivedIDs: Set<SessionSummary.ID>? = nil,
         failingConversationIDsOnce: Set<String> = [],
@@ -148,6 +151,8 @@ public final class FixtureLodyClient: LodyClient {
         hasModelHistory: Bool = true,
         accountID: String? = nil
     ) {
+        self.supportsSessionCreation = supportsSessionCreation
+        self.readReceiptFailuresRemaining = readReceiptFailures
         self.fixtureAccountID = accountID
         self.hasModelHistory = hasModelHistory
         self.workspaceSummaries = workspaceSummaries
@@ -809,6 +814,10 @@ public final class FixtureLodyClient: LodyClient {
         case .pin(let value): records[index].summary.isPinned = value
         case .rename(let title): records[index].summary.title = title
         case .read(let timestamp):
+            if readReceiptFailuresRemaining > 0 {
+                readReceiptFailuresRemaining -= 1
+                throw LodyClientError.unreachable
+            }
             records[index].summary.lastReadAt = max(records[index].summary.lastReadAt ?? timestamp, timestamp)
         }
     }

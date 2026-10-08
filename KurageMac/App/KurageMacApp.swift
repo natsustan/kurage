@@ -15,7 +15,10 @@ struct KurageMacApp: App {
             ? [SessionRecord.questionSample] + SessionRecord.samples
             : arguments.contains("--fixture-slow-images") ? SessionRecord.samplesWithTrailingImage : SessionRecord.samples
         _model = State(initialValue: AppModel(
-            client: fixture ? FixtureLodyClient(startsSignedIn: true, records: records,
+            client: fixture ? FixtureLodyClient(startsSignedIn: true,
+                supportsSessionCreation: !arguments.contains("--fixture-no-session-creation"),
+                readReceiptFailures: arguments.contains("--fixture-read-retry") ? 2 : 0,
+                records: records,
                 failStartAndArchiveProjectOnce: arguments.contains("--fixture-start-unconfirmed"),
                 rejectStartOnce: arguments.contains("--fixture-start-rejected"),
                 removeSelectedAgentOnStartOnce: arguments.contains("--fixture-agent-removed"),

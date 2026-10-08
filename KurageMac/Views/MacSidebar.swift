@@ -134,6 +134,7 @@ private struct MacSessionRow: View {
         Text(session.title)
             .lineLimit(1)
             .fontWeight(session.isUnread ? .semibold : .regular)
+            .accessibilityValue(session.isUnread ? "Unread" : "Read")
             .padding(.vertical, 3)
     }
 }
