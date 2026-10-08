@@ -3,6 +3,70 @@ import AppKit
 
 @MainActor
 final class MacFlowTests: XCTestCase {
+    func testSidebarSearchAndNewSession() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        app.activate()
+        let newSession = app.menuButtons["new-session"]
+        let search = app.textFields["session-search"]
+        let longSession = app.staticTexts["session-session-long"].firstMatch
+        let reviewSession = app.staticTexts["session-session-pr"].firstMatch
+        XCTAssertTrue(longSession.waitForExistence(timeout: 15))
+        XCTAssertTrue(newSession.exists)
+        XCTAssertTrue(search.exists)
+        XCTAssertFalse(app.staticTexts["codex"].exists)
+        XCTAssertFalse(app.staticTexts["claude"].exists)
+        try await capture(app, name: "mac-sidebar-initial")
+        XCTAssertGreaterThan(search.frame.minY, newSession.frame.maxY)
+        XCTAssertLessThan(newSession.frame.minX, search.frame.minX)
+        XCTAssertFalse(app.toolbars.descendants(matching: .any)["new-session"].exists)
+        XCTAssertFalse(app.toolbars.descendants(matching: .any)["session-search"].exists)
+        XCTAssertFalse(app.buttons["Refresh"].exists)
+        let workspace = app.menuButtons["workspace-menu"]
+        let signOut = app.buttons["Sign out"]
+        XCTAssertTrue(workspace.exists)
+        XCTAssertTrue(signOut.exists)
+        XCTAssertEqual(workspace.frame.minX, newSession.frame.minX, accuracy: 2)
+        XCTAssertEqual(workspace.frame.midY, signOut.frame.midY, accuracy: 2)
+        XCTAssertLessThan(workspace.frame.maxX, signOut.frame.minX)
+        XCTAssertLessThan(app.windows.firstMatch.frame.maxY - workspace.frame.maxY, 30)
+        XCTAssertFalse(app.staticTexts["demo@kurage.app"].exists)
+        let workspaceY = workspace.frame.minY
+        app.activate()
+        longSession.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-sidebar-controls")
+
+        paste("PrIsM", into: search, app: app)
+        XCTAssertTrue(reviewSession.waitForExistence(timeout: 5))
+        XCTAssertTrue(longSession.waitForNonExistence(timeout: 5))
+        try await capture(app, name: "mac-sidebar-search")
+        app.buttons["clear-session-search"].click()
+        paste("no-matching-session-xyz", into: search, app: app)
+        XCTAssertTrue(reviewSession.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(workspace.frame.minY, workspaceY, accuracy: 2)
+        workspace.click()
+        XCTAssertTrue(app.menuItems["Demo"].waitForExistence(timeout: 5))
+        let menuAttachment = XCTAttachment(screenshot: app.menuItems["Demo"].screenshot())
+        menuAttachment.name = "mac-sidebar-workspace-menu"
+        menuAttachment.lifetime = .keepAlways
+        add(menuAttachment)
+        app.typeKey(.escape, modifierFlags: [])
+        newSession.click()
+        XCTAssertTrue(app.menuItems["kurage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["prism"].exists)
+        try await capture(app, name: "mac-sidebar-new-menu")
+        app.menuItems["kurage"].click()
+        XCTAssertTrue(app.textViews["new-message"].waitForExistence(timeout: 10))
+        app.buttons["Cancel"].click()
+        app.buttons["clear-session-search"].click()
+        XCTAssertEqual(search.value as? String, "")
+        XCTAssertTrue(longSession.waitForExistence(timeout: 5))
+        XCTAssertTrue(reviewSession.exists)
+    }
+
     func testConversationChangesAndNewTab() async throws {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -50,6 +114,7 @@ final class MacFlowTests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(app.menuButtons["new-session"].waitForExistence(timeout: 15))
+        try await capture(app, name: "mac-sidebar-initial-dark")
         app.menuButtons["new-session"].click()
         app.menuItems["kurage"].click()
         let editor = app.textViews["new-message"]

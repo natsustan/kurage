@@ -79,11 +79,22 @@ private struct MacWorkspaceView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
                 .safeAreaInset(edge: .bottom) {
                     HStack {
-                        Text(model.account?.email ?? "").lineLimit(1).font(.caption).foregroundStyle(.secondary)
-                        Spacer()
+                        Menu {
+                            ForEach(model.workspaces) { workspace in
+                                Button(workspace.name) { Task { await model.selectWorkspace(workspace.id) } }
+                            }
+                        } label: {
+                            Label(model.workspaceLabel, systemImage: "square.grid.2x2")
+                                .lineLimit(1)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("workspace-menu")
                         Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") { confirmSignOut = true }
                             .labelStyle(.iconOnly).help("Sign out")
-                    }.padding(12)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
                 }
         } detail: {
             if let rootID = window.selectedRootID, let root = model.sessionSummary(rootID) {

@@ -18,6 +18,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>KurageOneSignalAppID</key>
 	<string>$(KURAGE_ONESIGNAL_APP_ID)</string>
 	<key>OneSignal_suppress_launch_urls</key>

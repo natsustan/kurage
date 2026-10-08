@@ -3,6 +3,9 @@
 ## Native macOS client and shared core (2026-10-08)
 
 - Added a native macOS 26+ SwiftUI app in this repository, not Catalyst. The initial app uses one window with a project/session sidebar, conversation tabs and a default-closed Changes inspector. It does not execute local agents or provide a terminal. Notifications, Quick Actions and additional settings remain deferred on Mac.
+- Sidebar controls: New Session is a left-aligned menu at the top of the sidebar, with a search field directly below it. The left-aligned workspace selector is pinned to the sidebar bottom beside Sign out; the account email is hidden. The toolbar no longer contains creation, search or manual refresh controls; existing automatic session-list refresh remains unchanged. Search filters the session list without filtering the projects available for creation.
+- Sidebar footer validation: the sidebar search/creation and dark creation/sign-out fixture UI tests passed after moving the workspace selector. Assertions cover left alignment, the shared bottom row, hidden email, unchanged footer position with empty search results, workspace-menu availability, filtering and creation. Light and dark screenshots were inspected. The fixture has one workspace; switching between real workspaces and real-account synchronization were not revalidated in this UI-only iteration.
+- Sidebar visual cleanup: New Session suppresses its focus effect without disabling focus or menu interaction. Session rows show only a single-line title, retaining unread weight and native selection but removing chat/running icons and agent subtitles. Both sidebar search/creation and dark creation/sign-out fixture UI tests passed again; initial light/dark and selected-conversation screenshots were inspected. Real-account synchronization and macOS 26 were not revalidated.
 - Both apps now depend on the local `Packages/KurageCore` Swift package for `AppModel`, domain models, live/fixture clients, authentication, caches, outbox and WebKit synchronization. Bridge resources belong to that package and load through `Bundle.module`; running `pnpm build` in `SessionBridge/` writes the generated JavaScript there. Protocol/business fixes should be implemented once in this package or `SessionBridge`, with platform-specific UI kept in each app target.
 - Mac supports device authorization, account restoration/sign-out, workspace/project sessions, live reading, send/steer/stop, new root sessions and tabs, model/reasoning selection, image attachment/preview and Branch/history file previews through the existing Lody services. No backend or protocol fork was added. Ordinary tool permission responses remain unavailable live. Mac uses separate Keychain and cache locations; window drafts and navigation remain local and are not synchronized across devices.
 - `MacWindowState` owns session/tab selection and per-session drafts. Shared `AppModel` still has one selected workspace, so multi-window workspace coordination is not implemented. Losing keyboard focus keeps subscriptions alive; sleep/background cancels view subscriptions and wake resumes them. Account/workspace transitions replace the window's scoped state.
@@ -1120,3 +1123,14 @@
 - 归档出现 `DefaultModelsSettingsView.swift` Sendable 函数转换警告和 AppIntents 元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
 
 - 恢复账号访问后重试，Apple 校验指出通知服务扩展缺少 `CFBundleDisplayName`。在 `project.yml` 为扩展补充 `Kurage Notifications` 并重新生成工程、归档，确认扩展包内显示名称与 0.4.2（12）版本齐全。修正归档 `build/testflight/0.4.2-12/Kurage-fixed.xcarchive` 上传成功，日志确认 `Upload succeeded`；Apple 已开始处理，尚未确认 TestFlight 可安装状态。本轮未运行测试。
+
+## TestFlight 0.4.2 构建 13（2026-10-08）
+
+- 保持 iOS 应用版本 0.4.2，将主应用和通知扩展构建号同步更新为 13，并通过 XcodeGen 重新生成工程。
+- 本轮 Release 归档及 App Store Connect 上传成功，日志确认 `Upload succeeded`；Apple 已开始处理 0.4.2（13），尚未确认 TestFlight 可安装状态。主应用和通知扩展的包内版本及显示名称已确认。
+- 归档有 `ConversationView.swift` 和 `DefaultModelsSettingsView.swift` 的 Sendable 函数转换警告，以及 AppIntents 元数据提取跳过提示。本轮未运行单元／UI 测试或真实账号回归。
+
+## iOS 加密出口声明（2026-10-08）
+
+- 在 XcodeGen 主应用 Info.plist 配置中声明 `ITSAppUsesNonExemptEncryption: false`，并重新生成工程。当前加密调用使用 Apple 系统提供的 URLSession、CryptoKit 和 WKWebView Web Crypto（差异内容 AES-GCM），未发现自有加密算法实现。
+- 已读取生成的 Info.plist 确认该键为 Boolean false。本轮未重新归档、上传或运行测试；该声明只会随之后的新构建生效，已上传构建仍需在 App Store Connect 完成问卷。
