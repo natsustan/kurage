@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Synchronization
 import WebKit
 @testable import KurageCore
 @testable import KurageMac
@@ -21,6 +22,143 @@ struct MacClientTests {
         #expect(second[draft: "task-a"].text.isEmpty)
         #expect(second.selectedTab(rootID: "root-a") == "root-a")
         #expect(!second.showsChanges)
+    }
+
+    @Test func rejectedMessageCanBeEditedWithoutOverwritingANewerDraft() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true, rejectMissingHistoryOnce: true))
+        await model.adoptExistingAccount()
+        let window = MacWindowState()
+        let attachment = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                                data: Data("Notes".utf8), isImage: false)
+        try model.stageOutgoingMessage("Rejected", composerText: "Rejected", mentions: .init(),
+            attachments: [attachment], runConfig: nil, sessionID: "session-long")
+        await #expect(throws: LodyClientError.sendNotDelivered) {
+            try await model.deliverOutgoingMessage(sessionID: "session-long")
+        }
+        #expect(model.outgoingMessage(sessionID: "session-long")?.canRetry == false)
+        window[draft: "session-long"].text = "Newer draft"
+        #expect(!window.editFailedMessage(sessionID: "session-long", model: model))
+        #expect(window[draft: "session-long"].text == "Newer draft")
+        #expect(model.outgoingMessage(sessionID: "session-long") != nil)
+        #expect(window.editFailedMessage(sessionID: "session-long", model: model, replacingDraft: true))
+        #expect(window[draft: "session-long"].text == "Rejected")
+        #expect(window[draft: "session-long"].attachments == [attachment])
+        #expect(model.outgoingMessage(sessionID: "session-long") == nil)
+        try model.stageOutgoingMessage("Revised", composerText: "Revised", mentions: .init(),
+            attachments: [], runConfig: nil, sessionID: "session-long")
+        try await model.deliverOutgoingMessage(sessionID: "session-long")
+    }
+
+    @Test func unconfirmedRootCanReopenAfterLeavingEvenWithoutItsTemplate() async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true, failStartAndArchiveProjectOnce: true))
+        await model.adoptExistingAccount()
+        let window = MacWindowState()
+        let id = try model.stageSessionStart("Pending root", composerText: "Pending root", mentions: .init(),
+            attachments: [], agentConfigID: nil, selections: [], projectID: "local:machine-1:kurage",
+            projectName: "Kurage", templateSessionID: "session-long")
+        let turnID = try #require(model.outgoingMessage(sessionID: id)?.id)
+        window.open(id)
+        await #expect(throws: LodyClientError.deliveryUnconfirmed) {
+            try await model.deliverOutgoingMessage(sessionID: id)
+        }
+        await model.refreshSessions()
+        #expect(!model.sessions.contains { $0.id == id })
+        #expect(!window.editFailedMessage(sessionID: id, model: model))
+        window.open("session-pr")
+        let pending = try #require(model.pendingSessionStarts.first { $0.id == id })
+        try window.openPendingStart(pending, model: model)
+        #expect(window.selectedRootID == id)
+        #expect(model.outgoingMessage(sessionID: id)?.id == turnID)
+        #expect(model.retryOutgoingMessage(sessionID: id))
+        try await model.deliverOutgoingMessage(sessionID: id)
+        let conversation = try await model.conversation(sessionID: id)
+        #expect(conversation.turns.map(\.id) == [turnID])
+        #expect(model.pendingSessionStarts.isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func rejectedFirstTurnReturnsToCreationWithItsDraftAndConfiguration(isTab: Bool) async throws {
+        let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
+        await model.adoptExistingAccount()
+        let window = MacWindowState()
+        let choices = [RunConfigChoice(configOptionID: "invalid", value: "invalid")]
+        let attachment = try ComposerAttachment(fileName: "notes.txt", mimeType: "text/plain",
+                                                data: Data("Notes".utf8), isImage: false)
+        let id = try model.stageSessionStart("First", composerText: "First", mentions: .init(),
+            attachments: [attachment], agentConfigID: "codex", selections: choices,
+            projectID: "local:machine-1:kurage", projectName: "Kurage", templateSessionID: "session-long",
+            parentSessionID: isTab ? "session-long" : nil)
+        window.open(id, rootID: isTab ? "session-long" : nil)
+        await #expect(throws: isTab ? LodyClientError.sessionCreationRejected : .notConnected) {
+            try await model.deliverOutgoingMessage(sessionID: id)
+        }
+        #expect(window.editFailedMessage(sessionID: id, model: model))
+        #expect(window.newSession?.restoredMessage?.composerText == "First")
+        #expect(window.newSession?.restoredMessage?.attachments == [attachment])
+        #expect(window.newSession?.restoredStart?.request.selections == choices)
+        #expect(window.newSession?.isTab == isTab)
+        #expect(window.selectedRootID == "session-long")
+        #expect(model.pendingSessionStarts.isEmpty)
+        #expect(model.pendingSessionTab(rootID: "session-long") == nil)
+        #expect(model.sessionSummary(id) == nil)
+    }
+
+    @Test func draftConfigurationConsumesOnlySentChoicesAndDropsUnsupportedChoices() {
+        let window = MacWindowState()
+        let config = SessionRunConfig(model: .init(value: "model", label: "Model"),
+            reasoning: .init(value: "medium", label: "Medium"),
+            editable: .init(kind: .reasoning, configOptionID: "effort", options: [
+                .init(value: "low", label: "Low"), .init(value: "high", label: "High")]))
+        window[draft: "session"].runConfig.receive(config)
+        window[draft: "session"].runConfig.choose("low")
+        let sent = window[draft: "session"].runConfig.choice
+        window.open("another-session")
+        window[draft: "session"].runConfig.didSend(sent)
+        #expect(window[draft: "session"].runConfig.choice == nil)
+        let remote = config.applying(.init(configOptionID: "effort", value: "high"))
+        window[draft: "session"].runConfig.receive(remote)
+        #expect(window[draft: "session"].runConfig.displayed?.reasoning?.value == "high")
+        window[draft: "session"].runConfig.choose("high")
+        window[draft: "session"].runConfig.didSend(sent)
+        #expect(window[draft: "session"].runConfig.choice?.value == "high")
+        var readOnly = remote
+        readOnly.editable = nil
+        window[draft: "session"].runConfig.receive(readOnly)
+        #expect(window[draft: "session"].runConfig.choice == nil)
+        #expect(window[draft: "another-session"].runConfig.config == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingPreviewStopsItsDetachedComparison() async throws {
+        let started = Mutex(false)
+        let release = DispatchSemaphore(value: 0)
+        let task = Task {
+            await RecordedFileDiff.previewInBackground(for: .init(id: "cancel", oldText: "old", newText: "new")) { _ in
+                started.withLock { $0 = true }
+                while !Task.isCancelled {
+                    if release.wait(timeout: .now() + .milliseconds(5)) == .success { break }
+                }
+                return .unavailable(reason: Task.isCancelled ? "cancelled" : "completed")
+            }
+        }
+        defer { task.cancel(); release.signal() }
+        for _ in 0..<200 {
+            if started.withLock({ $0 }) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(started.withLock { $0 })
+        task.cancel()
+        // A missing cancellation handler must fail instead of hanging the test run.
+        let timeout = Task.detached {
+            try? await Task.sleep(for: .seconds(2))
+            release.signal()
+        }
+        defer { timeout.cancel() }
+        guard case .unavailable(let reason) = await task.value else {
+            Issue.record("Cancelled comparison unexpectedly produced a preview")
+            return
+        }
+        #expect(reason == "cancelled")
     }
 
     @Test func projectTemplatesUseRecentLocalRootsRatherThanListOrder() throws {

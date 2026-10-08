@@ -1062,6 +1062,12 @@ public final class AppModel {
         return outgoingByWorkspace[workspaceID]?[sessionID]
     }
 
+    public func pendingSessionStart(sessionID: String) -> OutgoingSessionStart? {
+        guard let workspaceID = selectedWorkspaceID,
+              let start = outgoingStartsByWorkspace[workspaceID]?[sessionID], !start.isConfirmed else { return nil }
+        return start
+    }
+
     public func isSessionStartPending(sessionID: String) -> Bool {
         guard let workspaceID = selectedWorkspaceID else { return false }
         return outgoingStartsByWorkspace[workspaceID]?[sessionID]?.isConfirmed == false

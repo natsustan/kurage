@@ -228,6 +228,94 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["send-message"].isEnabled)
     }
 
+    func testRejectedMessageEditingProtectsNewDraftAndAllowsSendingAgain() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-send-not-delivered"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let editor = app.textViews["message-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        paste("Rejected message", into: editor, app: app)
+        app.buttons["send-message"].click()
+        let edit = app.buttons["edit-failed-message"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["send-message"].isEnabled)
+        paste("Newer draft", into: editor, app: app)
+        edit.click()
+        XCTAssertTrue(app.sheets.buttons["Replace draft"].waitForExistence(timeout: 5))
+        app.sheets.buttons["Cancel"].click()
+        XCTAssertEqual(editor.value as? String, "Newer draft")
+        edit.click()
+        app.sheets.buttons["Replace draft"].click()
+        XCTAssertEqual(editor.value as? String, "Rejected message")
+        XCTAssertTrue(app.buttons["send-message"].isEnabled)
+        try await capture(app, name: "mac-recovered-message")
+        app.buttons["send-message"].click()
+        XCTAssertTrue(edit.waitForNonExistence(timeout: 10))
+        XCTAssertEqual(editor.value as? String, "")
+    }
+
+    func testPendingRootCanBeReopenedAndRetriedFromSidebar() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-start-unconfirmed"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["new-session"].waitForExistence(timeout: 15))
+        app.buttons["new-session"].click()
+        let editor = app.textViews["new-message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        paste("Recover pending root", into: editor, app: app)
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["edit-failed-message"].exists)
+        let other = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "session-")).firstMatch
+        XCTAssertTrue(other.waitForExistence(timeout: 10))
+        other.click()
+        let pending = app.menuButtons["pending-sessions"]
+        XCTAssertTrue(pending.waitForExistence(timeout: 5))
+        pending.click()
+        app.menuItems["Recover pending root"].click()
+        XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-pending-session-reopened")
+        app.buttons["Retry"].click()
+        XCTAssertTrue(pending.waitForNonExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Recover pending root"].firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testRejectedRootReturnsToCreationEditor() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-start-rejected"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["new-session"].waitForExistence(timeout: 15))
+        app.buttons["new-session"].click()
+        let editor = app.textViews["new-message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        app.popUpButtons["new-model"].click()
+        app.menuItems["gpt-5.4-mini"].click()
+        paste("Edit rejected first turn", into: editor, app: app)
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.buttons["edit-failed-message"].waitForExistence(timeout: 15))
+        app.buttons["edit-failed-message"].click()
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        XCTAssertEqual(editor.value as? String, "Edit rejected first turn")
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue((app.popUpButtons["new-model"].value as? String ?? "").contains("gpt-5.4-mini"))
+        try await capture(app, name: "mac-recovered-first-turn")
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.menuButtons["pending-sessions"].waitForNonExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["edit-failed-message"].exists)
+    }
+
     private func paste(_ text: String, into editor: XCUIElement, app: XCUIApplication) {
         withPasteboard { pasteboard in
             pasteboard.setString(text, forType: .string)

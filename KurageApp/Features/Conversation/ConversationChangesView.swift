@@ -530,9 +530,7 @@ struct RecordedFileDiffView: View {
             if completedEdit == edit && preview != nil { return }
             preview = nil
             completedEdit = nil
-            let computePreview = computePreview
-            let task = Task.detached(priority: .userInitiated) { computePreview(edit) }
-            let result = await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+            let result = await RecordedFileDiff.previewInBackground(for: edit, compute: computePreview)
             guard !Task.isCancelled else { return }
             preview = result
             completedEdit = edit

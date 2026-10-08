@@ -154,6 +154,15 @@ public enum RecordedFileDiff {
     private static let maxInputLines = 200_000
     private static let maxVisibleLines = 2_000
 
+    /// Run the bounded comparison off the UI actor and forward the caller's cancellation.
+    public static func previewInBackground(
+        for edit: ConversationFileEdit,
+        compute: @escaping @Sendable (ConversationFileEdit) -> Preview = { preview(for: $0) }
+    ) async -> Preview {
+        let task = Task.detached(priority: .userInitiated) { compute(edit) }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+    }
+
     public static func preview(for edit: ConversationFileEdit) -> Preview {
         do {
             let result = try compare(edit)

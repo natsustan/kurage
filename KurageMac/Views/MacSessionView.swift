@@ -53,11 +53,11 @@ private struct MacConversationView: View {
     let rootID: String
     let isAwake: Bool
     @State private var conversation: Conversation?
-    @State private var runConfig: SessionRunConfig?
     @State private var activity: SessionActivity?
     @State private var connection = "Connecting…"
     @State private var error: String?
     @State private var cancelling = false
+    @State private var confirmReplaceDraft = false
     @State private var atBottom = true
     @State private var latestMessageAt: Double?
     @State private var scrollRequest = 0
@@ -72,7 +72,7 @@ private struct MacConversationView: View {
         let outgoing = model.outgoingMessage(sessionID: sessionID)
         let turns = model.displayedTurns(conversation?.turns ?? [], sessionID: sessionID)
         let isRunning = (activity ?? model.sessionSummary(sessionID)?.activity) == .running
-        let config = runConfig?.applying(window[draft: sessionID].choice)
+        let config = window[draft: sessionID].runConfig.displayed
         VStack(spacing: 0) {
             if !connection.isEmpty {
                 Text(connection).font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
@@ -82,6 +82,16 @@ private struct MacConversationView: View {
             if let outgoing, outgoing.delivery != .sending, outgoing.delivery != .sent {
                 HStack {
                     Text(deliveryDescription(outgoing.delivery)).foregroundStyle(.secondary)
+                    if case .failed = outgoing.delivery {
+                        Button("Edit") {
+                            if window[draft: sessionID].hasContent {
+                                confirmReplaceDraft = true
+                            } else {
+                                editFailedMessage()
+                            }
+                        }
+                        .accessibilityIdentifier("edit-failed-message")
+                    }
                     if outgoing.canRetry {
                         Button("Retry") {
                             if model.retryOutgoingMessage(sessionID: sessionID) { deliver() }
@@ -96,8 +106,13 @@ private struct MacConversationView: View {
                             && (!isRunning || model.supportsTextSendingWhileRunning),
                         isRunning: isRunning, canStop: model.supportsSessionCancellation && !cancelling,
                         onSend: send, onStop: stop) { value in
-                window[draft: sessionID].choice = runConfig?.choosing(value)
+                window[draft: sessionID].runConfig.choose(value)
             }
+        }
+        .confirmationDialog("Replace the current draft?", isPresented: $confirmReplaceDraft) {
+            Button("Replace draft", role: .destructive) { editFailedMessage(replacingDraft: true) }
+        } message: {
+            Text("The failed message and its attachments will replace your current draft.")
         }
         .inspector(isPresented: $window.showsChanges) {
             if window.showsChanges {
@@ -116,7 +131,7 @@ private struct MacConversationView: View {
                     try await model.observeConversation(sessionID: sessionID, rootSessionID: rootID) { update in
                         conversation = update.conversation
                         activity = update.activity
-                        runConfig = update.runConfig
+                        window[draft: sessionID].runConfig.receive(update.runConfig)
                         latestMessageAt = update.lastMessageAt
                         connection = update.syncState == .live ? "" : "Reconnecting…"
                         if update.syncState == .live { delay = 1 }
@@ -142,7 +157,7 @@ private struct MacConversationView: View {
         let draft = window[draft: sessionID]
         do {
             try model.stageOutgoingMessage(draft.text, composerText: draft.text, mentions: .init(),
-                attachments: draft.attachments, runConfig: draft.choice, sessionID: sessionID)
+                attachments: draft.attachments, runConfig: draft.runConfig.choice, sessionID: sessionID)
             window[draft: sessionID].text = ""
             window[draft: sessionID].attachments = []
             error = nil
@@ -151,12 +166,25 @@ private struct MacConversationView: View {
         } catch { self.error = "Could not prepare the message. Resolve the previous send and try again." }
     }
 
+    private func editFailedMessage(replacingDraft: Bool = false) {
+        if !window.editFailedMessage(sessionID: sessionID, model: model, replacingDraft: replacingDraft) {
+            error = "Could not edit this message. Its delivery may still be pending."
+        } else {
+            error = nil
+        }
+    }
+
     private func deliver() {
         let workspaceID = model.selectedWorkspaceID
         let turnID = model.outgoingMessage(sessionID: sessionID)?.id
+        let generation = model.workspaceGeneration
         // Transmission outlives navigation. The shared outbox owns its result and retry identity.
         Task {
-            do { try await model.deliverOutgoingMessage(sessionID: sessionID, workspaceID: workspaceID, turnID: turnID) }
+            do {
+                let choice = try await model.deliverOutgoingMessage(sessionID: sessionID, workspaceID: workspaceID, turnID: turnID)
+                guard generation == model.workspaceGeneration else { return }
+                window[draft: sessionID].runConfig.didSend(choice)
+            }
             catch { /* The shared outbox exposes delivery failure and same-ID retry. */ }
         }
     }

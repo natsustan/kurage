@@ -4,6 +4,7 @@ import KurageCore
 struct MacSidebar: View {
     let model: AppModel
     @Bindable var window: MacWindowState
+    @State private var recoveryError: String?
     @State private var groups: [ProjectGroup] = []
     @State private var visibleGroups: [ProjectGroup] = []
     @State private var projectTemplates: [SessionSummary] = []
@@ -50,6 +51,23 @@ struct MacSidebar: View {
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            if !model.pendingSessionStarts.isEmpty {
+                Menu("Pending sessions", systemImage: "arrow.clockwise.circle") {
+                    ForEach(model.pendingSessionStarts) { pending in
+                        Button(String(pending.displayText.prefix(50))) {
+                            do {
+                                try window.openPendingStart(pending, model: model)
+                                recoveryError = nil
+                            } catch { recoveryError = "Could not reopen the pending session." }
+                        }
+                        .accessibilityIdentifier("pending-session-\(pending.id)")
+                    }
+                }
+                .accessibilityIdentifier("pending-sessions")
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+            if let recoveryError { Text(recoveryError).font(.caption).foregroundStyle(.red).padding(12) }
             List(selection: $window.selectedRootID) {
                 ForEach(visibleGroups) { group in
                     Section(group.name) {

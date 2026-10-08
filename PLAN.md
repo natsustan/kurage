@@ -1,5 +1,13 @@
 # Kurage 会话功能
 
+## macOS 分支审查修复（2026-10-08）
+
+- 明确失败的消息提供 Edit，恢复正文和附件；已有新草稿时先确认替换。首条消息失败会返回创建界面，保留原 Agent、仍有效的模型／推理选择与附件。投递未确认时继续沿用原 session/turn ID 重试，不开放编辑。
+- 侧栏增加 Pending sessions，独立于搜索和活跃项目模板提供恢复入口；创建界面发现同项目待确认会话时提供 Resume，避免重复创建。
+- `ConversationRunConfigState` 从 iOS 视图迁入 `KurageCore`，两端共用选择校验与发送后消费逻辑。Mac 每会话草稿持有该状态，离开会话后的发送完成仍会清除已消费选择；账号／工作区切换后的完成不会回写旧窗口状态。
+- 两端差异预览共用 `RecordedFileDiff.previewInBackground`，通过取消处理器将视图任务取消传给 detached 比较；Mac 关闭预览、切换会话或休眠时停止无消费者的计算。
+- 本轮验证：Mac 原生 11 项通过，4 条受影响的 Mac fixture UI 测试分次通过；iOS 27 / iPhone 17 Simulator 的配置状态、发件箱与差异预览 48 项定向测试通过。覆盖失败恢复、草稿保护、待确认根会话重开及原 ID 重试、首条消息与模型选择恢复、配置生命周期和 detached 计算取消；已检查恢复界面及 Changes 截图，`git diff --check` 通过。初次运行的 fixture 错误类型断言、Touch Bar 同名按钮匹配和新增测试的非 Equatable 断言已修正并通过重跑。真实账号网络恢复、实际休眠／唤醒及 macOS 26 尚未验证。
+
 ## Native macOS client and shared core (2026-10-08)
 
 - Added a native macOS 26+ SwiftUI app in this repository, not Catalyst. The initial app uses one window with a project/session sidebar, conversation tabs and a default-closed Changes inspector. It does not execute local agents or provide a terminal. Notifications, Quick Actions and additional settings remain deferred on Mac.

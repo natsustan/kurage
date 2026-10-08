@@ -12,7 +12,11 @@ struct KurageMacApp: App {
         fixtureAppearance = fixture && arguments.contains("--fixture-dark") ? .dark : nil
         let defaults = fixture ? UserDefaults(suiteName: "com.spike.kurage.macos.fixture")! : .standard
         _model = State(initialValue: AppModel(
-            client: fixture ? FixtureLodyClient(startsSignedIn: true, streamsConversationUpdates: true) : HTTPLodyClient(),
+            client: fixture ? FixtureLodyClient(startsSignedIn: true,
+                failStartAndArchiveProjectOnce: arguments.contains("--fixture-start-unconfirmed"),
+                rejectStartOnce: arguments.contains("--fixture-start-rejected"),
+                rejectMissingHistoryOnce: arguments.contains("--fixture-send-not-delivered"),
+                streamsConversationUpdates: true) : HTTPLodyClient(),
             quickActionDefaults: defaults
         ))
     }

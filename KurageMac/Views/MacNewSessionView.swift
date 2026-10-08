@@ -16,6 +16,24 @@ struct MacNewSessionView: View {
     @State private var selectedTemplate: SessionSummary?
     @State private var projects: [SessionSummary] = []
     @State private var importing = false
+    @State private var restoredConfiguration = false
+
+    init(model: AppModel, destination: NewSessionDestination, isAwake: Bool, onStarted: @escaping (String) -> Void) {
+        self.model = model
+        self.destination = destination
+        self.isAwake = isAwake
+        self.onStarted = onStarted
+        var draft = MacWindowState.Draft()
+        draft.text = destination.restoredMessage?.composerText ?? ""
+        draft.attachments = destination.restoredMessage?.attachments ?? []
+        _draft = State(initialValue: draft)
+        _providerID = State(initialValue: destination.restoredStart?.request.agentConfigID)
+    }
+
+    private var pendingStart: PendingSessionStart? {
+        guard !destination.isTab else { return nil }
+        return model.pendingSessionStarts.first { $0.projectID == template.projectID }
+    }
 
     private var template: SessionSummary { selectedTemplate ?? destination.template }
 
@@ -86,6 +104,16 @@ struct MacNewSessionView: View {
                 }
                 MacAttachmentPicker(attachments: $draft.attachments, pending: $draft.pendingAttachments,
                     importing: $importing, showsButton: false)
+                if let pendingStart {
+                    Button("Resume pending session") {
+                        do {
+                            let id = try model.restoreSessionStart(pendingStart, projectName: template.projectName ?? "Project")
+                            onStarted(id)
+                            dismiss()
+                        } catch { self.error = "Could not reopen the pending session." }
+                    }
+                    .accessibilityIdentifier("resume-pending-session")
+                }
                 if let error {
                     HStack {
                         Text(error).foregroundStyle(.red)
@@ -105,7 +133,7 @@ struct MacNewSessionView: View {
                         .disabled(draft.isLoadingAttachments).accessibilityIdentifier("attach-images")
                     Button("Create", systemImage: "return", action: start)
                         .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
-                        .disabled(loading || draft.isLoadingAttachments || options == nil || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.attachments.isEmpty)
+                        .disabled(pendingStart != nil || loading || draft.isLoadingAttachments || options == nil || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.attachments.isEmpty)
                         .accessibilityIdentifier("start-session")
                 }
             }
@@ -129,6 +157,20 @@ struct MacNewSessionView: View {
                         isTab: destination.isTab, refresh: true)
                 }
                 try Task.checkCancellation()
+                if !restoredConfiguration {
+                    if template.id == destination.template.id,
+                       let start = destination.restoredStart,
+                       start.request.agentConfigID == nil || result.agentConfigID == start.request.agentConfigID {
+                        for choice in start.request.selections {
+                            if let model = result.runConfig?.model, choice.configOptionID == model.configOptionID {
+                                result.runConfig?.selectModel(choice.value)
+                            } else if choice.configOptionID == result.runConfig?.reasoning?.configOptionID {
+                                result.runConfig?.selectReasoning(choice.value)
+                            }
+                        }
+                    }
+                    restoredConfiguration = true
+                }
                 options = result
                 loading = false
             } catch is CancellationError { return }

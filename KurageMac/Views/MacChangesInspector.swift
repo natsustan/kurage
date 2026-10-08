@@ -275,9 +275,7 @@ private struct MacFileChangeDisclosure: View {
                     unavailable = result
                     return
                 }
-                let diff = await Task.detached(priority: .userInitiated) {
-                    RecordedFileDiff.preview(for: edit)
-                }.value
+                let diff = await RecordedFileDiff.previewInBackground(for: edit)
                 try Task.checkCancellation()
                 preview = diff
             } catch is CancellationError {
