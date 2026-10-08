@@ -316,6 +316,35 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["edit-failed-message"].exists)
     }
 
+    func testActivityGroupRevealsToolTitles() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let work = app.disclosureTriangles.matching(NSPredicate(format: "label BEGINSWITH %@", "Worked for")).firstMatch
+        XCTAssertTrue(work.waitForExistence(timeout: 10))
+        work.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
+        let activity = app.disclosureTriangles.matching(NSPredicate(format: "label CONTAINS %@", "Ran 2 commands")).firstMatch
+        XCTAssertTrue(activity.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["git status --short"].exists)
+        activity.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
+        for title in ["git status --short", "Read ConversationView.swift", "xcodebuild test"] {
+            XCTAssertTrue(app.staticTexts[title].firstMatch.waitForExistence(timeout: 5))
+        }
+        // An unrelated parent update must not reset the disclosure state.
+        app.buttons["toggle-changes"].click()
+        XCTAssertTrue(app.staticTexts["git status --short"].exists)
+        app.buttons["toggle-changes"].click()
+        if app.buttons["scroll-latest"].exists { app.buttons["scroll-latest"].click() }
+        try await capture(app, name: "mac-activity-tool-titles")
+        activity.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 26, dy: 8)).click()
+        XCTAssertTrue(app.staticTexts["git status --short"].waitForNonExistence(timeout: 5))
+    }
+
     func testFullImageFailureCanBeRetried() async throws {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -132,7 +132,7 @@ private struct MacMessageParts: View {
                     case .file(let file):
                         Label(file.fileName, systemImage: "doc").foregroundStyle(.secondary)
                     case .activity(let activity):
-                        Text(activity.summary).font(.callout).foregroundStyle(.secondary)
+                        MacActivityView(activity: activity)
                     case .error(let error):
                         Text(error.message ?? String(localized: error.title)).textSelection(.enabled)
                             .foregroundStyle(.orange).padding(12)
@@ -141,6 +141,34 @@ private struct MacMessageParts: View {
                 }
             }
         }
+    }
+}
+
+private struct MacActivityView: View {
+    let activity: ConversationActivity
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            if activity.steps.isEmpty {
+                Text(activity.summary)
+            } else {
+                DisclosureGroup(activity.summary, isExpanded: $expanded) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(activity.steps) { step in
+                            Text(verbatim: step.title)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
     }
 }
 
