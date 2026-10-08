@@ -81,6 +81,7 @@
 		C614E10AF67B279394205AED /* SessionListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */; };
 		CC3A5456BA66D60A2A00A65C /* SessionSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA1E91F9E885A098AEFBFF3 /* SessionSearchTests.swift */; };
 		CF349598601956A92CD49E89 /* WorkspaceSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B3AD0203F2338F8D1BCBE9 /* WorkspaceSelectionTests.swift */; };
+		D4F725BAB39B59A6530C3EC7 /* ConversationQuestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A318FB6C86AA0B5E9D6FBD42 /* ConversationQuestionCard.swift */; };
 		DB44B23855E90D697C75452D /* OneSignalNotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E9B4AA6043B15D5E5D0A550 /* OneSignalNotificationService.swift */; };
 		DD1B41F3673C97F1791C0435 /* ProjectGitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800F9A6F844A3CEEDC29A780 /* ProjectGitTests.swift */; };
 		DF2F9613F4D0611C8AE09A04 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 223485F7EFD870EC6A23E934 /* NotificationService.swift */; };
@@ -791,6 +792,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D4F725BAB39B59A6530C3EC7 /* ConversationQuestionCard.swift in Sources */,
 				9D3BB548A4A81F2CD7C4809A /* KurageMacApp.swift in Sources */,
 				EEB077BDA49C01A6D1787B4A /* MacAttachmentSource.swift in Sources */,
 				673F8B71CE773C8C6630F673 /* MacChangesInspector.swift in Sources */,

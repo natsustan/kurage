@@ -150,7 +150,9 @@ private struct MacSessionImage: View {
     let image: ConversationImage
     let isAwake: Bool
     @State private var data: Data?
+    @State private var loadedOriginal = false
     @State private var failed = false
+    @State private var loading = false
     @State private var expanded = false
     @State private var retry = 0
 
@@ -165,22 +167,28 @@ private struct MacSessionImage: View {
             if let data, let bitmap = NSImage(data: data) {
                 Button { expanded.toggle() } label: {
                     Image(nsImage: bitmap).resizable().scaledToFit()
-                        .frame(maxWidth: expanded ? 760 : 320, maxHeight: expanded ? 700 : 240)
+                        .frame(maxWidth: expanded && loadedOriginal ? 760 : 320, maxHeight: expanded && loadedOriginal ? 700 : 240)
                 }
                 .buttonStyle(.plain).accessibilityLabel(image.accessibilityName)
                 .help(expanded ? "Show thumbnail" : "Show full image")
-            } else if failed {
-                Button("Retry image", systemImage: "photo") { retry += 1 }
-            } else { ProgressView().frame(width: 180, height: 120) }
+            }
+            if failed {
+                Button(expanded ? "Retry full image" : "Retry image", systemImage: "photo") { retry += 1 }
+            } else if loading || data == nil {
+                ProgressView().accessibilityLabel(expanded ? "Loading full image" : "Loading image")
+            }
         }
         .task(id: LoadKey(awake: isAwake, expanded: expanded, retry: retry)) {
             guard isAwake else { return }
             failed = false
+            loading = true
+            defer { loading = false }
             do {
                 let result = try await model.loadSessionImage(image, conversationSessionID: sessionID,
                                                               variant: expanded ? .original : .inline)
                 try Task.checkCancellation()
                 data = result
+                loadedOriginal = expanded
             } catch is CancellationError { return }
             catch { if !Task.isCancelled { failed = true } }
         }

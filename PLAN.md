@@ -1144,3 +1144,11 @@
 
 - 在 XcodeGen 主应用 Info.plist 配置中声明 `ITSAppUsesNonExemptEncryption: false`，并重新生成工程。当前加密调用使用 Apple 系统提供的 URLSession、CryptoKit 和 WKWebView Web Crypto（差异内容 AES-GCM），未发现自有加密算法实现。
 - 已读取生成的 Info.plist 确认该键为 Boolean false。本轮未重新归档、上传或运行测试；该声明只会随之后的新构建生效，已上传构建仍需在 App Store Connect 完成问卷。
+
+## PR #48 审查修复（2026-10-08）
+
+- Mac 会话接入共享 `ConversationQuestionCard`，支持问题展示、自由输入、选项、多题翻页、私密字段、回答和跳过；请求身份保持草稿，提交沿用 `AppModel.respondToQuestion` 的工作区隔离和可取消协议路径。仅在当前工作区、前台、已连接且运行中的会话允许提交，停止或 outcome 到达后撤下问题。
+- XcodeGen 将现有问答卡片加入 Mac target，Mac 使用系统强调色，iOS 保留现有主题色，避免维护两份问答交互。
+- Mac 图片保留已加载缩略图及其尺寸，只有成功加载原图才放大，同时独立呈现原图加载进度及 `Retry full image`，原图失败不再被缩略图遮蔽。fixture 增加仅原图首次失败的注入开关，以覆盖缩略图成功、原图失败及重试恢复。
+- 新增 Mac fixture UI 回归：多题回答、返回上一题保留草稿、深色跳过，以及原图失败后重试。真实账号问答、跨端并发回答、断网/睡眠恢复及真实原图服务失败仍待实测。
+- 本轮验证：macOS 27 上 11 项 `KurageMacTests` 通过；两个新增 UI 用例分别通过（问答浅色提交/深色跳过，图片失败保留缩略图尺寸/重试成功放大），已检查三张截图。iOS Simulator 通用目标构建通过；`xcodegen generate` 和 `git diff --check` 通过。macOS 26、较大字号和最小窗口布局尚未验证。

@@ -142,6 +142,7 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: KurageMac
+      - path: KurageApp/Features/Conversation/ConversationQuestionCard.swift
     dependencies:
       - package: KurageCore
       - package: MarkdownView

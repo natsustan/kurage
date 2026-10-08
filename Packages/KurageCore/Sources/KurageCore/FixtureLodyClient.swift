@@ -109,6 +109,8 @@ public final class FixtureLodyClient: LodyClient {
             id: "\(turnID):\(path)", oldText: prefix + edit.oldText, newText: prefix + edit.newText))
     }
 
+    private var failOriginalImageOnce = false
+
     public init(
         startsSignedIn: Bool = false,
         records: [SessionRecord] = SessionRecord.samples,
@@ -129,6 +131,7 @@ public final class FixtureLodyClient: LodyClient {
         authorizationDelay: Duration? = nil,
         streamsConversationUpdates: Bool = false,
         failFilePreviewOnce: Bool = false,
+        failOriginalImageOnce: Bool = false,
         filePreviewUnavailableReason: String? = nil,
         filePreviewDelay: Duration = .milliseconds(200),
         filePreviewLargeRewrite: Bool = false,
@@ -147,6 +150,7 @@ public final class FixtureLodyClient: LodyClient {
         self.failWorkspaceRefreshOnce = failWorkspaceRefreshOnce
         self.projectGitFailureOnce = projectGitFailureOnce
         self.projectGitStates = projectGitStates
+        self.failOriginalImageOnce = failOriginalImageOnce
         self.failFilePreviewOnce = failFilePreviewOnce
         self.filePreviewUnavailableReason = filePreviewUnavailableReason
         self.filePreviewDelay = filePreviewDelay
@@ -757,6 +761,11 @@ public final class FixtureLodyClient: LodyClient {
             }
         }
         guard known else { throw LodyClientError.sessionMissing }
+        try Task.checkCancellation()
+        if variant == .original, failOriginalImageOnce {
+            failOriginalImageOnce = false
+            throw URLError(.timedOut)
+        }
         return attachmentImages[imageID] ?? (imageID == "pr-user-shot" ? FixtureImage.portraitPNG : FixtureImage.png)
     }
 

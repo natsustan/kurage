@@ -54,6 +54,7 @@ private struct MacConversationView: View {
     let isAwake: Bool
     @State private var conversation: Conversation?
     @State private var activity: SessionActivity?
+    @State private var observedGeneration: Int?
     @State private var connection = "Connecting…"
     @State private var error: String?
     @State private var cancelling = false
@@ -69,6 +70,7 @@ private struct MacConversationView: View {
     }
 
     var body: some View {
+        let generation = model.workspaceGeneration
         let outgoing = model.outgoingMessage(sessionID: sessionID)
         let turns = model.displayedTurns(conversation?.turns ?? [], sessionID: sessionID)
         let isRunning = (activity ?? model.sessionSummary(sessionID)?.activity) == .running
@@ -79,6 +81,22 @@ private struct MacConversationView: View {
             }
             MacTranscript(model: model, sessionID: sessionID, turns: turns,
                           atBottom: $atBottom, scrollRequest: scrollRequest, isAwake: isAwake)
+            if isRunning, let request = conversation?.questions?.first {
+                ConversationQuestionCard(
+                    request: request,
+                    isReady: isAwake && scenePhase == .active && connection.isEmpty
+                        && observedGeneration == generation && model.supportsQuestionResponses
+                ) { answers in
+                    try await model.respondToQuestion(request, answers: answers, sessionID: sessionID,
+                                                      workspaceGeneration: generation)
+                    try Task.checkCancellation()
+                    guard generation == model.workspaceGeneration else { throw CancellationError() }
+                    conversation?.questions?.removeAll { $0.id == request.id }
+                }
+                .id(request.id)
+                .frame(maxWidth: 800)
+                .padding(12)
+            }
             if let outgoing, outgoing.delivery != .sending, outgoing.delivery != .sent {
                 HStack {
                     Text(deliveryDescription(outgoing.delivery)).foregroundStyle(.secondary)
@@ -123,6 +141,8 @@ private struct MacConversationView: View {
         }
         .task(id: ObservationKey(awake: isAwake, starting: model.isSessionStartPending(sessionID: sessionID))) {
             guard isAwake, !model.isSessionStartPending(sessionID: sessionID) else { return }
+            connection = "Connecting…"
+            observedGeneration = generation
             model.restoreOutgoingMessage(sessionID: sessionID)
             conversation = model.cachedConversation(sessionID: sessionID)
             var delay = 1

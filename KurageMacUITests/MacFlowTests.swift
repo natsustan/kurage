@@ -316,6 +316,66 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.buttons["edit-failed-message"].exists)
     }
 
+    func testFullImageFailureCanBeRetried() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-image-failure"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-pr"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let image = app.buttons["result.png"].firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        let thumbnailWidth = image.frame.width
+        image.click()
+        let retry = app.buttons["Retry full image"].firstMatch
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        XCTAssertTrue(image.exists)
+        XCTAssertEqual(image.frame.width, thumbnailWidth, accuracy: 1)
+        try await capture(app, name: "mac-original-image-failed")
+        retry.click()
+        XCTAssertTrue(retry.waitForNonExistence(timeout: 10))
+        XCTAssertTrue(image.exists)
+        XCTAssertGreaterThan(image.frame.width, thumbnailWidth)
+    }
+
+    func testQuestionAnswerAndSkip() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-questions"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-question"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let reply = app.textFields["question-reply"].firstMatch
+        let multilineReply = app.textViews["question-reply"].firstMatch
+        XCTAssertTrue(app.buttons["question-next"].waitForExistence(timeout: 10))
+        let input = reply.exists ? reply : multilineReply
+        paste("Review PR 48", into: input, app: app)
+        app.buttons["question-next"].click()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Code diff")).firstMatch.click()
+        app.buttons["question-previous"].click()
+        XCTAssertEqual(input.value as? String, "Review PR 48")
+        app.buttons["question-next"].click()
+        try await capture(app, name: "mac-question-answer")
+        app.buttons["question-send"].click()
+        XCTAssertTrue(app.buttons["question-send"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Answer received."].firstMatch.waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments += ["--fixture-dark"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        XCTAssertTrue(app.buttons["question-skip"].waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-question-skip-dark")
+        app.buttons["question-skip"].click()
+        XCTAssertTrue(app.buttons["question-skip"].waitForNonExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Question skipped."].firstMatch.waitForExistence(timeout: 10))
+    }
+
     private func paste(_ text: String, into editor: XCUIElement, app: XCUIApplication) {
         withPasteboard { pasteboard in
             pasteboard.setString(text, forType: .string)
