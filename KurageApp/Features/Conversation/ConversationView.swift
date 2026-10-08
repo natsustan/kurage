@@ -509,17 +509,19 @@ struct ConversationContent: View {
 
     private func cancelSession() {
         guard !isReadOnly, isCurrentWorkspace, !isSending, !isCancelling, model.supportsSessionCancellation,
-              isRunning else { return }
+              isRunning, let workspaceID = model.selectedWorkspaceID else { return }
         isCancelling = true
         banner = nil
         Task {
             guard isCurrentWorkspace else { return }
             defer { isCancelling = false }
             do {
-                try await model.cancelSession(sessionID: sessionID)
+                try await model.cancelSession(sessionID: sessionID, workspaceID: workspaceID,
+                                              workspaceGeneration: workspaceGeneration)
             } catch is CancellationError {
                 return
             } catch {
+                guard isCurrentWorkspace else { return }
                 banner = "Could not stop the current reply. Try again."
             }
         }

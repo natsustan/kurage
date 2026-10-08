@@ -432,7 +432,8 @@ struct FixtureLodyClientTests {
     @Test func cancellingRunningSessionMakesItIdle() async throws {
         let model = AppModel(client: FixtureLodyClient(startsSignedIn: true))
         await model.adoptExistingAccount()
-        try await model.cancelSession(sessionID: "session-tests")
+        try await model.cancelSession(sessionID: "session-tests", workspaceID: "ws-demo",
+                                      workspaceGeneration: model.workspaceGeneration)
         #expect(model.sessions.first { $0.id == "session-tests" }?.activity == .idle)
     }
 

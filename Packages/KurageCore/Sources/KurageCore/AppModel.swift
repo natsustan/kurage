@@ -1479,11 +1479,18 @@ public final class AppModel {
         pendingStartsByWorkspace[workspaceID] = client.pendingSessionStarts(workspaceID: workspaceID)
     }
 
-    public func cancelSession(sessionID: SessionSummary.ID) async throws {
-        guard let workspaceID = selectedWorkspaceID else { throw LodyClientError.notConnected }
+    public func cancelSession(sessionID: SessionSummary.ID, workspaceID: WorkspaceSummary.ID,
+                              workspaceGeneration expectedGeneration: Int) async throws {
+        try Task.checkCancellation()
+        guard selectedWorkspaceID == workspaceID, workspaceGeneration == expectedGeneration else {
+            throw CancellationError()
+        }
         let generation = authenticationGeneration
+        guard isCurrentAuthentication(generation) else { throw CancellationError() }
         try await client.cancelSession(sessionID: sessionID, workspaceID: workspaceID)
-        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID else {
+        try Task.checkCancellation()
+        guard isCurrentAuthentication(generation), selectedWorkspaceID == workspaceID,
+              workspaceGeneration == expectedGeneration else {
             throw CancellationError()
         }
         await refreshSessions(restart: true)

@@ -210,11 +210,20 @@ private struct MacConversationView: View {
     }
 
     private func stop() {
+        guard let workspaceID = model.selectedWorkspaceID else { return }
+        let generation = model.workspaceGeneration
         cancelling = true
         Task {
             defer { cancelling = false }
-            do { try await model.cancelSession(sessionID: sessionID) }
-            catch { self.error = "Could not stop the session. Try again." }
+            do {
+                try await model.cancelSession(sessionID: sessionID, workspaceID: workspaceID,
+                                              workspaceGeneration: generation)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard generation == model.workspaceGeneration else { return }
+                self.error = "Could not stop the session. Try again."
+            }
         }
     }
 
