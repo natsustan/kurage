@@ -11,24 +11,23 @@ struct MacComposer: View {
     let onSend: () -> Void
     let onStop: () -> Void
     let onChoose: (String) -> Void
+    @State private var importing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            MacAttachmentPicker(attachments: $draft.attachments, loading: $draft.isLoadingAttachments)
-            TextEditor(text: $draft.text)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .frame(height: 88)
-                .overlay(alignment: .topLeading) {
-                    if draft.text.isEmpty {
-                        Text("Message…").foregroundStyle(.tertiary).padding(.leading, 5)
-                            .allowsHitTesting(false).accessibilityHidden(true)
-                    }
+            MacAttachmentPicker(attachments: $draft.attachments, pending: $draft.pendingAttachments, importing: $importing)
+            MacMessageEditor(text: $draft.text, accessibilityLabel: "Message", accessibilityIdentifier: "message-editor") {
+                draft.pendingAttachments.append(contentsOf: $0)
+            }
+            .frame(height: 88)
+            .overlay(alignment: .topLeading) {
+                if draft.text.isEmpty {
+                    Text("Message…").foregroundStyle(.tertiary).padding(.leading, 9).padding(.top, 6)
+                        .allowsHitTesting(false).accessibilityHidden(true)
                 }
-                .padding(8)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
-                .accessibilityLabel("Message")
-                .accessibilityIdentifier("message-editor")
+            }
+            .padding(8)
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10))
             HStack {
                 if let config = runConfig {
                     if let editable = config.editable {
@@ -64,65 +63,66 @@ struct MacComposer: View {
 
 struct MacAttachmentPicker: View {
     @Binding var attachments: [ComposerAttachment]
-    @Binding var loading: Bool
-    @State private var importing = false
+    @Binding var pending: [MacAttachmentSource]
+    @Binding var importing: Bool
+    var showsButton = true
     @State private var error: String?
-    @State private var urls: [URL] = []
-    @State private var selection = UUID()
 
     var body: some View {
         HStack {
-            Button("Attach images", systemImage: "paperclip") { importing = true }
-                .disabled(loading).accessibilityIdentifier("attach-images")
-            if loading { ProgressView().controlSize(.small) }
-            ScrollView(.horizontal) {
-                HStack {
-                    ForEach(attachments) { attachment in
-                        HStack(spacing: 4) {
-                            Image(systemName: "photo")
-                            Text(attachment.fileName).lineLimit(1)
-                            Button("Remove \(attachment.fileName)", systemImage: "xmark") {
-                                attachments.removeAll { $0.id == attachment.id }
-                            }.labelStyle(.iconOnly).buttonStyle(.plain)
+            if showsButton {
+                Button("Attach files", systemImage: "plus") { importing = true }
+                    .labelStyle(.iconOnly)
+                    .help("Attach images or files, or paste with ⌘V")
+                    .disabled(!pending.isEmpty).accessibilityIdentifier("attach-images")
+            }
+            if !pending.isEmpty { ProgressView().controlSize(.small) }
+            if !attachments.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(attachments) { attachment in
+                            HStack(spacing: 4) {
+                                if let data = attachment.thumbnailData, let image = NSImage(data: data) {
+                                    Image(nsImage: image).resizable().scaledToFit().frame(width: 44, height: 44)
+                                } else {
+                                    Image(systemName: attachment.isImage ? "photo" : "doc")
+                                }
+                                Text(attachment.fileName).lineLimit(1)
+                                Button("Remove \(attachment.fileName)", systemImage: "xmark") {
+                                    attachments.removeAll { $0.id == attachment.id }
+                                }.labelStyle(.iconOnly).buttonStyle(.plain)
+                            }
+                            .font(.caption).padding(6).background(.quaternary, in: Capsule())
                         }
-                        .font(.caption).padding(6).background(.quaternary, in: Capsule())
                     }
                 }
             }
             if let error { Text(error).font(.caption).foregroundStyle(.red) }
         }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.png, .jpeg, .gif, .webP], allowsMultipleSelection: true) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.data], allowsMultipleSelection: true) { result in
             do {
-                urls = try result.get()
-                loading = !urls.isEmpty
-                selection = UUID()
-            } catch { self.error = "Could not open the selected images." }
+                pending.append(contentsOf: try result.get().map { MacAttachmentSource(content: .file($0)) })
+            } catch { self.error = "Could not open the selected files." }
         }
-        .task(id: selection) {
-            guard !urls.isEmpty else { return }
-            loading = true
-            defer { loading = false }
+        .task(id: pending.map(\.id)) {
+            let selected = pending
+            guard !selected.isEmpty else { return }
             error = nil
             do {
-                let selected = urls
-                let loaded = try await Task.detached(priority: .userInitiated) {
-                    try selected.map { url in
-                        let access = url.startAccessingSecurityScopedResource()
-                        defer { if access { url.stopAccessingSecurityScopedResource() } }
-                        let values = try url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
-                        guard let size = values.fileSize, size <= 5 * 1024 * 1024 else {
-                            throw AttachmentError.invalid("Images must be 5 MB or smaller.")
-                        }
-                        return try ComposerAttachment(fileName: url.lastPathComponent,
-                            mimeType: values.contentType?.preferredMIMEType ?? "application/octet-stream",
-                            data: Data(contentsOf: url), isImage: true)
-                    }
-                }.value
+                guard attachments.count + selected.count <= 8 else {
+                    throw AttachmentError.invalid("Attach up to 8 items per message.")
+                }
+                var loaded: [ComposerAttachment] = []
+                for source in selected { loaded.append(try await source.load()) }
                 try Task.checkCancellation()
+                guard pending.map(\.id) == selected.map(\.id) else { return }
                 attachments.append(contentsOf: loaded)
             } catch is CancellationError { return }
-            catch { self.error = error.localizedDescription }
+            catch {
+                guard !Task.isCancelled, pending.map(\.id) == selected.map(\.id) else { return }
+                self.error = error.localizedDescription
+            }
+            pending = []
         }
-        .onDisappear { loading = false }
     }
 }

@@ -23,6 +23,95 @@ struct MacClientTests {
         #expect(!second.showsChanges)
     }
 
+    @Test func projectTemplatesUseRecentLocalRootsRatherThanListOrder() throws {
+        var old = SessionSummary(id: "old", title: "Old", agentName: "codex", activity: .idle,
+            preview: "", projectID: "local:a", isPinned: true, lastMessageAt: 10)
+        var recent = old
+        recent.projectID = "local:b"
+        recent.lastMessageAt = nil
+        recent.lastActivityAt = 40
+        var child = old
+        child.projectID = "local:child"
+        child.parentSessionID = "root"
+        child.lastMessageAt = 100
+        var remote = old
+        remote.projectID = "github:remote"
+        remote.lastMessageAt = 200
+        let duplicate = old
+        old.lastMessageAt = 30
+        let result = NewSessionDestination.projectTemplates(in: [duplicate, child, remote, old, recent])
+        #expect(result.map(\.projectID) == ["local:b", "local:a"])
+        #expect(result.last?.lastMessageAt == 30)
+    }
+
+    @Test func pasteboardPrefersFilesAndDoesNotTreatTextAsAttachments() throws {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setString("file:///tmp/not-an-attachment.txt", forType: .string)
+        #expect(MacAttachmentSource.read(from: pasteboard).isEmpty)
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString("file:///tmp/report.txt", forType: .fileURL)
+        item.setData(Data([1, 2, 3]), forType: .png)
+        pasteboard.writeObjects([item])
+        let sources = MacAttachmentSource.read(from: pasteboard)
+        #expect(sources.count == 1)
+        guard case .file(let url) = try #require(sources.first).content else {
+            Issue.record("Expected a file, not Finder's preview")
+            return
+        }
+        #expect(url.lastPathComponent == "report.txt")
+    }
+
+    @Test func attachmentImportReadsFilesConvertsTIFFAndRejectsInvalidInputs() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("notes.txt")
+        let bytes = Data("Attachment text with Unicode 你好".utf8)
+        try bytes.write(to: file)
+        let attachment = try await MacAttachmentSource(content: .file(file)).load()
+        #expect(attachment.data == bytes)
+        #expect(attachment.fileName == "notes.txt")
+        #expect(!attachment.isImage)
+        #expect(attachment.mimeType == "text/plain")
+        let image = NSImage(size: NSSize(width: 80, height: 40), flipped: false) { rect in
+            NSColor.systemBlue.setFill()
+            rect.fill()
+            return true
+        }
+        let tiff = try #require(image.tiffRepresentation)
+        let photo = try await MacAttachmentSource(content: .image(tiff, "image/tiff")).load()
+        #expect(photo.isImage)
+        #expect(photo.mimeType == "image/jpeg")
+        #expect(photo.fileName == "Pasted image.jpg")
+        let decoded = try #require(NSBitmapImageRep(data: photo.data))
+        #expect(decoded.pixelsWide == 160 || decoded.pixelsWide == 80)
+        #expect(decoded.pixelsWide == decoded.pixelsHigh * 2)
+        let png = try #require(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
+        let original = try await MacAttachmentSource(content: .image(png, "image/png")).load()
+        #expect(original.data == png)
+        #expect(original.mimeType == "image/png")
+        await #expect(throws: AttachmentError.self) {
+            _ = try await MacAttachmentSource(content: .file(directory)).load()
+        }
+        try Data(count: 16 * 1024 * 1024).write(to: file)
+        let atLimit = try await MacAttachmentSource(content: .file(file)).load()
+        #expect(atLimit.data.count == 16 * 1024 * 1024)
+        try Data(count: 16 * 1024 * 1024 + 1).write(to: file)
+        await #expect(throws: AttachmentError.self) {
+            _ = try await MacAttachmentSource(content: .file(file)).load()
+        }
+        await #expect(throws: AttachmentError.self) {
+            _ = try await MacAttachmentSource(content: .image(Data([1, 2]), "image/png")).load()
+        }
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await MacAttachmentSource(content: .image(tiff, "image/tiff")).load()
+        }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+    }
+
     @Test func nativeClientUsesSharedOutboxAndIndependentBranchData() async throws {
         let client = FixtureLodyClient(startsSignedIn: true)
         let model = AppModel(client: client)

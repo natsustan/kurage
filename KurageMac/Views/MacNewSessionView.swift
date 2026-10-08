@@ -13,58 +13,119 @@ struct MacNewSessionView: View {
     @State private var loading = true
     @State private var error: String?
     @State private var refresh = 0
+    @State private var selectedTemplate: SessionSummary?
+    @State private var projects: [SessionSummary] = []
+    @State private var importing = false
+
+    private var template: SessionSummary { selectedTemplate ?? destination.template }
 
     private struct LoadKey: Equatable {
+        let templateID: String
         let providerID: String?
         let refresh: Int
         let awake: Bool
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(destination.isTab ? "New tab" : "New session").font(.title2.bold())
-            Text(destination.template.projectName ?? "Project").foregroundStyle(.secondary)
-            if let options {
-                if !options.providers.isEmpty {
-                    Picker("Agent", selection: Binding(get: { providerID ?? options.agentConfigID }, set: { providerID = $0 })) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 16) {
+                if destination.isTab {
+                    Label(template.projectName ?? "Project", systemImage: "folder")
+                    Text("New tab").foregroundStyle(.secondary)
+                } else {
+                    Menu {
+                        ForEach(projects) { project in
+                            Button {
+                                guard project.projectID != template.projectID else { return }
+                                selectedTemplate = project
+                                providerID = nil
+                                options = nil
+                                loading = true
+                            } label: {
+                                if project.projectID == template.projectID {
+                                    Label(project.projectName ?? "Project", systemImage: "checkmark")
+                                } else {
+                                    Text(project.projectName ?? "Project")
+                                }
+                            }
+                        }
+                    } label: {
+                        Label(template.projectName ?? "Project", systemImage: "folder")
+                    }
+                    .fixedSize().accessibilityIdentifier("new-project")
+                }
+                Spacer()
+                if let options, !options.providers.isEmpty {
+                    Picker("Agent", selection: Binding(get: { providerID ?? options.agentConfigID }, set: {
+                        guard $0 != (providerID ?? options.agentConfigID) else { return }
+                        providerID = $0
+                        self.options = nil
+                        loading = true
+                    })) {
                         ForEach(options.providers) { Text($0.label).tag($0.value) }
                     }
-                    .accessibilityIdentifier("new-agent")
+                    .labelsHidden().fixedSize().accessibilityIdentifier("new-agent")
                 }
-                MacNewSessionConfiguration(options: $options)
+                Button("Cancel", systemImage: "xmark") { dismiss() }
+                    .labelStyle(.iconOnly).buttonStyle(.plain).keyboardShortcut(.cancelAction)
             }
-            if loading { ProgressView("Loading configuration…") }
-            if let error {
-                HStack {
-                    Text(error).foregroundStyle(.red)
-                    Button("Retry") { refresh += 1 }
+            .padding(20)
+            Divider()
+            VStack(alignment: .leading, spacing: 14) {
+                MacMessageEditor(text: $draft.text, accessibilityLabel: "First message",
+                    accessibilityIdentifier: "new-message", initiallyFocused: true) {
+                    draft.pendingAttachments.append(contentsOf: $0)
+                }
+                .frame(height: 150)
+                .overlay(alignment: .topLeading) {
+                    if draft.text.isEmpty {
+                        Text("What do you want to work on?").foregroundStyle(.tertiary)
+                            .padding(.horizontal, 9).padding(.top, 6)
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
+                MacAttachmentPicker(attachments: $draft.attachments, pending: $draft.pendingAttachments,
+                    importing: $importing, showsButton: false)
+                if let error {
+                    HStack {
+                        Text(error).foregroundStyle(.red)
+                        Button("Retry") { refresh += 1 }
+                    }
+                }
+                HStack(spacing: 12) {
+                    if loading {
+                        ProgressView().controlSize(.small).accessibilityLabel("Loading configuration")
+                    } else {
+                        MacNewSessionConfiguration(options: $options)
+                    }
+                    Spacer(minLength: 12)
+                    Button("Attach files", systemImage: "plus") { importing = true }
+                        .labelStyle(.iconOnly).buttonStyle(.plain)
+                        .help("Attach images or files, or paste with ⌘V")
+                        .disabled(draft.isLoadingAttachments).accessibilityIdentifier("attach-images")
+                    Button("Create", systemImage: "return", action: start)
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
+                        .disabled(loading || draft.isLoadingAttachments || options == nil || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.attachments.isEmpty)
+                        .accessibilityIdentifier("start-session")
                 }
             }
-            MacAttachmentPicker(attachments: $draft.attachments, loading: $draft.isLoadingAttachments)
-            TextEditor(text: $draft.text).font(.body).frame(height: 160)
-                .accessibilityLabel("First message").accessibilityIdentifier("new-message")
-                .border(.separator)
-            HStack {
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Start session", action: start)
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(loading || draft.isLoadingAttachments || options == nil || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.attachments.isEmpty)
-                    .accessibilityIdentifier("start-session")
-            }
+            .padding(20)
         }
-        .padding(24).frame(width: 540)
-        .task(id: LoadKey(providerID: providerID, refresh: refresh, awake: isAwake)) {
+        .frame(width: 720)
+        .onChange(of: model.sessions, initial: true) { _, sessions in
+            projects = NewSessionDestination.projectTemplates(in: sessions)
+        }
+        .task(id: LoadKey(templateID: template.id, providerID: providerID, refresh: refresh, awake: isAwake)) {
             loading = true
             guard isAwake else { return }
             error = nil
             do {
-                var result = try await model.newSessionOptions(templateSessionID: destination.template.id,
-                    agentConfigID: providerID, projectID: destination.template.projectID,
+                var result = try await model.newSessionOptions(templateSessionID: template.id,
+                    agentConfigID: providerID, projectID: template.projectID,
                     isTab: destination.isTab, refresh: refresh > 0)
                 if result.needsRefresh == true {
-                    result = try await model.newSessionOptions(templateSessionID: destination.template.id,
-                        agentConfigID: providerID, projectID: destination.template.projectID,
+                    result = try await model.newSessionOptions(templateSessionID: template.id,
+                        agentConfigID: providerID, projectID: template.projectID,
                         isTab: destination.isTab, refresh: true)
                 }
                 try Task.checkCancellation()
@@ -81,14 +142,14 @@ struct MacNewSessionView: View {
     }
 
     private func start() {
-        guard !loading, let options, let projectID = destination.template.projectID,
+        guard !loading, !draft.isLoadingAttachments, let options, let projectID = template.projectID,
               let workspaceID = model.selectedWorkspaceID else { return }
         do {
             let id = try model.stageSessionStart(draft.text, composerText: draft.text, mentions: .init(),
                 attachments: draft.attachments, agentConfigID: options.agentConfigID,
                 selections: options.runConfig?.selections ?? [], projectID: projectID,
-                projectName: destination.template.projectName ?? "Project", templateSessionID: destination.template.id,
-                parentSessionID: destination.isTab ? destination.template.id : nil)
+                projectName: template.projectName ?? "Project", templateSessionID: template.id,
+                parentSessionID: destination.isTab ? template.id : nil)
             let turnID = model.outgoingMessage(sessionID: id)?.id
             Task {
                 do { try await model.deliverOutgoingMessage(sessionID: id, workspaceID: workspaceID, turnID: turnID) }
@@ -104,7 +165,7 @@ private struct MacNewSessionConfiguration: View {
     @Binding var options: NewSessionOptions?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        HStack(spacing: 12) {
             if let config = options?.runConfig {
                 if let model = config.model {
                     Picker("Model", selection: Binding(get: { model.value }, set: { options?.runConfig?.selectModel($0) })) {
@@ -121,5 +182,7 @@ private struct MacNewSessionConfiguration: View {
                 Text("This agent's configuration is read-only.").foregroundStyle(.secondary)
             }
         }
+        .labelsHidden()
+        .fixedSize()
     }
 }

@@ -6,6 +6,7 @@ struct MacSidebar: View {
     @Bindable var window: MacWindowState
     @State private var groups: [ProjectGroup] = []
     @State private var visibleGroups: [ProjectGroup] = []
+    @State private var projectTemplates: [SessionSummary] = []
 
     private struct ProjectGroup: Identifiable {
         let id: String
@@ -15,25 +16,20 @@ struct MacSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Menu {
-                ForEach(groups) { group in
-                    if let first = group.sessions.first, let projectID = first.projectID {
-                        Button(group.name) {
-                            window.newSession = NewSessionDestination(
-                                template: model.newSessionTemplate(projectID: projectID) ?? first, isTab: false)
-                        }
-                    }
+            Button {
+                if let template = projectTemplates.first {
+                    window.newSession = NewSessionDestination(template: template, isTab: false)
                 }
             } label: {
                 Label("New Session", systemImage: "square.and.pencil")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
+            .buttonStyle(.plain)
+            .keyboardShortcut("n", modifiers: .command)
             .focusEffectDisabled()
-            .disabled(!model.supportsSessionCreation)
+            .disabled(!model.supportsSessionCreation || projectTemplates.isEmpty)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 16)
             .accessibilityIdentifier("new-session")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -62,9 +58,9 @@ struct MacSidebar: View {
                                 .tag(session.id)
                                 .accessibilityIdentifier("session-\(session.id)")
                                 .contextMenu {
-                                    if session.projectID != nil, model.supportsSessionCreation {
+                                    if let template = projectTemplates.first(where: { $0.projectID == session.projectID }),
+                                       model.supportsSessionCreation {
                                         Button("New session in project") {
-                                            let template = model.newSessionTemplate(projectID: session.projectID!) ?? session
                                             window.newSession = NewSessionDestination(template: template, isTab: false)
                                         }
                                     }
@@ -85,6 +81,7 @@ struct MacSidebar: View {
     }
 
     private func updateGroups() {
+        projectTemplates = NewSessionDestination.projectTemplates(in: model.sessions)
         var order: [String] = []
         var grouped: [String: [SessionSummary]] = [:]
         for session in model.sessions {

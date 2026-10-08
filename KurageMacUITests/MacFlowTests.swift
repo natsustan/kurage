@@ -9,7 +9,7 @@ final class MacFlowTests: XCTestCase {
         app.launchArguments = ["--fixture"]
         app.launch()
         app.activate()
-        let newSession = app.menuButtons["new-session"]
+        let newSession = app.buttons["new-session"]
         let search = app.textFields["session-search"]
         let longSession = app.staticTexts["session-session-long"].firstMatch
         let reviewSession = app.staticTexts["session-session-pr"].firstMatch
@@ -55,9 +55,13 @@ final class MacFlowTests: XCTestCase {
         add(menuAttachment)
         app.typeKey(.escape, modifierFlags: [])
         newSession.click()
+        XCTAssertTrue(app.textViews["new-message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-new-session-empty")
+        app.menuButtons["new-project"].click()
         XCTAssertTrue(app.menuItems["kurage"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.menuItems["prism"].exists)
-        try await capture(app, name: "mac-sidebar-new-menu")
+        try await capture(app, name: "mac-new-project-menu")
         app.menuItems["kurage"].click()
         XCTAssertTrue(app.textViews["new-message"].waitForExistence(timeout: 10))
         app.buttons["Cancel"].click()
@@ -113,20 +117,28 @@ final class MacFlowTests: XCTestCase {
         app.launchArguments = ["--fixture", "--fixture-dark"]
         app.launch()
         app.activate()
-        XCTAssertTrue(app.menuButtons["new-session"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["new-session"].waitForExistence(timeout: 15))
         try await capture(app, name: "mac-sidebar-initial-dark")
-        app.menuButtons["new-session"].click()
+        app.typeKey("n", modifierFlags: .command)
+        XCTAssertTrue(app.menuButtons["new-project"].waitForExistence(timeout: 5))
+        app.menuButtons["new-project"].click()
         app.menuItems["kurage"].click()
         let editor = app.textViews["new-message"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         let model = app.popUpButtons["new-model"]
         XCTAssertTrue(model.waitForExistence(timeout: 10))
+        let agent = app.popUpButtons["new-agent"]
+        for name in ["Claude Code", "Codex", "Codex"] {
+            agent.click()
+            app.menuItems[name].click()
+            XCTAssertTrue(model.waitForExistence(timeout: 10))
+        }
         model.click()
         app.menuItems["gpt-5.4-mini"].click()
         XCTAssertTrue((model.value as? String ?? "").contains("gpt-5.4-mini"))
         paste("Mac root integration", into: editor, app: app)
         try await capture(app, name: "mac-new-root-dark")
-        app.buttons["start-session"].click()
+        editor.typeKey(.return, modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["Mac root integration"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
         try await capture(app, name: "mac-conversation-dark")
@@ -155,7 +167,78 @@ final class MacFlowTests: XCTestCase {
         try await capture(app, name: "mac-image-expanded")
     }
 
+    func testPastedAttachmentsAndProjectSwitchPreserveDraft() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(app.buttons["new-session"].waitForExistence(timeout: 15))
+        app.buttons["new-session"].click()
+        let editor = app.textViews["new-message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        paste("Check these attachments", into: editor, app: app)
+        editor.typeKey(.return, modifierFlags: [])
+        editor.typeText("Second line")
+        let draft = "Check these attachments\nSecond line"
+        XCTAssertEqual(editor.value as? String, draft)
+
+        let image = NSImage(size: NSSize(width: 160, height: 100), flipped: false) { rect in
+            NSColor.systemTeal.setFill()
+            rect.fill()
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 40, dy: 20)).fill()
+            return true
+        }
+        let tiff = try XCTUnwrap(image.tiffRepresentation)
+        withPasteboard { pasteboard in
+            pasteboard.setData(tiff, forType: .tiff)
+            editor.typeKey("v", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["Remove Pasted image.jpg"].waitForExistence(timeout: 10))
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("paste-\(UUID()).txt")
+        try Data("File attachment contents".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        withPasteboard { pasteboard in
+            pasteboard.writeObjects([file as NSURL])
+            editor.typeKey("v", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["Remove \(file.lastPathComponent)"].waitForExistence(timeout: 10))
+        }
+        app.menuButtons["new-project"].click()
+        app.menuItems["prism"].click()
+        XCTAssertEqual(editor.value as? String, draft)
+        XCTAssertTrue(app.buttons["Remove Pasted image.jpg"].exists)
+        XCTAssertTrue(app.buttons["Remove \(file.lastPathComponent)"].exists)
+        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        try await capture(app, name: "mac-new-session-attachments")
+        app.buttons["start-session"].click()
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[file.lastPathComponent].firstMatch.waitForExistence(timeout: 10))
+        let composer = app.textViews["message-editor"]
+        composer.click()
+        withPasteboard { pasteboard in
+            pasteboard.setData(tiff, forType: .tiff)
+            composer.typeKey("v", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["Remove Pasted image.jpg"].waitForExistence(timeout: 10))
+        }
+        XCTAssertEqual(composer.value as? String, "")
+        XCTAssertTrue(app.buttons["send-message"].isEnabled)
+        try await capture(app, name: "mac-composer-pasted-image")
+        app.buttons["Remove Pasted image.jpg"].click()
+        XCTAssertFalse(app.buttons["send-message"].isEnabled)
+    }
+
     private func paste(_ text: String, into editor: XCUIElement, app: XCUIApplication) {
+        withPasteboard { pasteboard in
+            pasteboard.setString(text, forType: .string)
+            app.activate()
+            editor.click()
+            editor.typeKey("v", modifierFlags: .command)
+            XCTAssertEqual(editor.value as? String, text)
+        }
+    }
+
+    private func withPasteboard(_ body: (NSPasteboard) -> Void) {
         let pasteboard = NSPasteboard.general
         let saved = (pasteboard.pasteboardItems ?? []).map { original in
             let copy = NSPasteboardItem()
@@ -165,18 +248,9 @@ final class MacFlowTests: XCTestCase {
             return copy
         }
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-        let change = pasteboard.changeCount
-        defer {
-            if pasteboard.changeCount == change {
-                pasteboard.clearContents()
-                pasteboard.writeObjects(saved)
-            }
-        }
-        app.activate()
-        editor.click()
-        editor.typeKey("v", modifierFlags: .command)
-        XCTAssertEqual(editor.value as? String, text)
+        body(pasteboard)
+        pasteboard.clearContents()
+        pasteboard.writeObjects(saved)
     }
 
     private func capture(_ app: XCUIApplication, name: String) async throws {

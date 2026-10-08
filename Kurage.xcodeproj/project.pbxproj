@@ -68,6 +68,7 @@
 		AAEDCFA3378D9106D39367BB /* NotificationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD856DF2F6F7F07A50E68563 /* NotificationTests.swift */; };
 		AC5ED9D79BFC3193F858618E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6998C6DDA1554E4E716FF9AF /* Assets.xcassets */; };
 		AEB3BBDF3678B7A48630E01D /* SessionProjectPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBCDF436626D73BEB441EB3 /* SessionProjectPicker.swift */; };
+		B09305C44671ACD0BB01FCD8 /* MacMessageEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9B1FBFFAAD48DE5E4820808 /* MacMessageEditor.swift */; };
 		B25EADF2483C19E57FBFC439 /* FixtureLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D2F85601FC5D5503AA74410 /* FixtureLodyClientTests.swift */; };
 		B458BDCF9D6B337E6913B7CA /* ConversationQuestionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A318FB6C86AA0B5E9D6FBD42 /* ConversationQuestionCard.swift */; };
 		B7F8D8522DD150FD399C188E /* MacClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80AD33EB498A68F470DC1612 /* MacClientTests.swift */; };
@@ -92,6 +93,7 @@
 		E95CD1A7C5C0D6F6D0C799A4 /* HTTPLodyClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5563DD49D0B4D7F368D4C9C3 /* HTTPLodyClientTests.swift */; };
 		EA004FC38EE7E82876F98010 /* ConversationLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B366CEB77792BB4C07117803 /* ConversationLayout.swift */; };
 		EA65E2F70800ECD9D895826B /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DA6BABACA4081EE53AECD44 /* SettingsView.swift */; };
+		EEB077BDA49C01A6D1787B4A /* MacAttachmentSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F82AB1C2280647F9FCE2101 /* MacAttachmentSource.swift */; };
 		F08B2A353936073585BC6820 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5506E74A6347C9820765D255 /* AboutView.swift */; };
 		F147BA09F273F0B35A5CF7A5 /* SessionTabsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4648AABABDD563A6C22EA8E /* SessionTabsTests.swift */; };
 		F2FB166F16323DB7B77E9C0B /* NotificationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */; };
@@ -207,6 +209,7 @@
 		8904A812520B7926A82D2E9C /* MacRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRootView.swift; sourceTree = "<group>"; };
 		8A11144F5C5E5C7A21151CDA /* AccountAvatar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountAvatar.swift; sourceTree = "<group>"; };
 		8EA0677BCC7D60C5FAF950EF /* SessionListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListView.swift; sourceTree = "<group>"; };
+		8F82AB1C2280647F9FCE2101 /* MacAttachmentSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAttachmentSource.swift; sourceTree = "<group>"; };
 		91B7EB6A13F7BCA1468CB34A /* QuickActionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsView.swift; sourceTree = "<group>"; };
 		91DECA865E619085D6495AE9 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		927BA75AC84F9725F9979AA7 /* NotificationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationSettingsView.swift; sourceTree = "<group>"; };
@@ -244,6 +247,7 @@
 		DC9E5B359CECA0C2ACC65CD1 /* SessionProjectGroup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectGroup.swift; sourceTree = "<group>"; };
 		DD05638D968AB68EF4E23886 /* NewSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionView.swift; sourceTree = "<group>"; };
 		E1CD7DD7EDC275A63B1AEEF3 /* SessionMetadataTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadataTests.swift; sourceTree = "<group>"; };
+		E9B1FBFFAAD48DE5E4820808 /* MacMessageEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacMessageEditor.swift; sourceTree = "<group>"; };
 		EB9CBF5D67600758BC6F29C0 /* NotificationFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationFlowTests.swift; sourceTree = "<group>"; };
 		EDB0AD03CFF217B38FE83C21 /* ConversationImageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationImageTests.swift; sourceTree = "<group>"; };
 		F29673DBA060CA471CBB7B12 /* KurageTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = KurageTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -501,6 +505,7 @@
 		B8E4FBA8761FF024950429FA /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				8F82AB1C2280647F9FCE2101 /* MacAttachmentSource.swift */,
 				34873C9D668B106BABD9CABB /* MacWindowState.swift */,
 			);
 			path = Models;
@@ -511,6 +516,7 @@
 			children = (
 				BB3F4B2B261B91E553899B40 /* MacChangesInspector.swift */,
 				13FEE5716C40E9FF35FA89E1 /* MacComposer.swift */,
+				E9B1FBFFAAD48DE5E4820808 /* MacMessageEditor.swift */,
 				7046E5397DBE9D5493B91527 /* MacNewSessionView.swift */,
 				8904A812520B7926A82D2E9C /* MacRootView.swift */,
 				A086D5ABB6BB022F0EB8CFF8 /* MacSessionView.swift */,
@@ -786,8 +792,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				9D3BB548A4A81F2CD7C4809A /* KurageMacApp.swift in Sources */,
+				EEB077BDA49C01A6D1787B4A /* MacAttachmentSource.swift in Sources */,
 				673F8B71CE773C8C6630F673 /* MacChangesInspector.swift in Sources */,
 				25AB604E4DE6F616E85E6091 /* MacComposer.swift in Sources */,
+				B09305C44671ACD0BB01FCD8 /* MacMessageEditor.swift in Sources */,
 				708ECDB724DED7644692177B /* MacNewSessionView.swift in Sources */,
 				28C497B37072FA5C18551D7B /* MacRootView.swift in Sources */,
 				E81F37EC0E3AE0396F3579DD /* MacSessionView.swift in Sources */,

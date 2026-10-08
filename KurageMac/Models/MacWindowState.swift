@@ -10,7 +10,8 @@ final class MacWindowState {
         var text = ""
         var attachments: [ComposerAttachment] = []
         var choice: RunConfigChoice?
-        var isLoadingAttachments = false
+        var pendingAttachments: [MacAttachmentSource] = []
+        var isLoadingAttachments: Bool { !pendingAttachments.isEmpty }
     }
 
     var selectedRootID: String?
@@ -41,4 +42,15 @@ struct NewSessionDestination: Identifiable {
     let template: SessionSummary
     let isTab: Bool
     var id: String { "\(template.id):\(isTab)" }
+
+    static func projectTemplates(in sessions: [SessionSummary]) -> [SessionSummary] {
+        var seen = Set<String>()
+        return sessions.sorted {
+            ($0.lastMessageAt ?? $0.lastActivityAt ?? 0) > ($1.lastMessageAt ?? $1.lastActivityAt ?? 0)
+        }.filter {
+            guard $0.parentSessionID == nil, let projectID = $0.projectID,
+                  projectID.hasPrefix("local:") else { return false }
+            return seen.insert(projectID).inserted
+        }
+    }
 }
