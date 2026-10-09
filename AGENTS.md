@@ -9,12 +9,13 @@
 
 ## Project Structure
 
-- `KurageApp/`: SwiftUI app targeting iPhone, with a minimum deployment target of iOS 26 and Swift 6 strict concurrency checking.
+- `KurageApp/`: SwiftUI app targeting iPhone and iPad, with a minimum deployment target of iOS 26 and Swift 6 strict concurrency checking.
 - `KurageApp/App/`: iOS root UI and platform presentation.
 - `KurageApp/Features/`: Sign-in, session list, and conversation details.
 - `KurageApp/Client/`: iOS OneSignal notification integration.
 - `Packages/KurageCore/`: Shared `AppModel`, domain models, `LodyClient`, live/fixture clients, authentication storage, and WebKit synchronization bridge. Both apps depend on this local Swift package; do not duplicate business logic in platform UI.
-- `KurageMac/`: Native macOS 26+ single-window SwiftUI app (not Catalyst). Window navigation and drafts live in `MacWindowState`; Changes is a default-closed inspector. No terminal or local agent execution. macOS credentials, preferences and cache are independent of iOS. Shared `AppModel` still represents one selected workspace; multi-window workspace coordination is not implemented.
+- `KurageMac/`: Native macOS 26+ SwiftUI app (not Catalyst), with one main workspace window and a separate Settings window. Window navigation and drafts live in `MacWindowState`; Changes is a default-closed inspector. No terminal or local agent execution. macOS credentials, preferences and cache are independent of iOS. Shared `AppModel` still represents one selected workspace; multi-window workspace coordination is not implemented.
+- `KurageApp/Features/Conversation/ConversationQuestionCard.swift` is compiled into both app targets through `project.yml`; preserve platform-specific styling within this shared question UI.
 - `SessionBridge/`: JavaScript bridge for Loro/Flock/Streams and its Node tests.
 - `Packages/KurageCore/Sources/KurageCore/Resources/session-bridge.js`: Generated bridge bundle. Rebuild after changing `SessionBridge/` sources; do not edit this artifact directly. Package resources load through `Bundle.module`.
 - `KurageTests/` uses Swift Testing. `KurageUITests/` uses XCTest and launches with `--fixture` for isolated test data.
@@ -25,9 +26,10 @@
 ## Implementation Constraints
 
 - Access data through `AppModel` and `LodyClient` from the UI, keeping the live client and fixtures clearly separated.
-- Session operations must explicitly carry a workspace ID to prevent caches or updates from crossing workspace boundaries.
+- Session operations must explicitly carry a workspace ID to prevent caches or updates from crossing workspace boundaries. Capture the workspace generation before starting asynchronous UI actions and validate it on completion; Stop requires both the original workspace ID and generation, including when switching away and back to the same workspace.
 - Preserve cancellation, subscription cleanup when entering the background, account switching, and isolation from stale updates.
-- The live client supports conversation reading, live updates, idle-session sending, running-session steer, and starting a session in a local project when the signed-in account has a user ID. Running input uses `session/steer`; the machine owns fallback when steer cannot be applied. Ordinary tool permission responses remain fixture-only. Do not treat fixture capabilities as implemented live-service capabilities.
+- The live client supports conversation reading, live updates, idle-session sending, running-session steer, stop, session tabs, image/file uploads, question responses, and historical/Branch file previews. Sending and starting sessions require a signed-in account with a user ID. Running input uses `session/steer`; the machine owns fallback when steer cannot be applied. Ordinary tool permission responses remain fixture-only; question responses are a separate live capability. Do not treat fixture capabilities as implemented live-service capabilities.
+- Preserve outbox delivery semantics: unconfirmed sends and starts retry with their original session/turn IDs; only definitely undelivered messages may be edited. Keep draft-replacement confirmation and pending-session recovery available even when the original project template is no longer active.
 - Continue using the existing secure storage for authentication credentials. Do not persist short-lived Streams tokens in Keychain or write tokens to logs or documentation.
 - Bridge dependencies use pinned versions. Check protocol compatibility and WASM bundling behavior when upgrading.
 
@@ -39,6 +41,17 @@
 - Synchronization flows from the native client through `SessionSyncBridge` to Loro/Flock/Streams in a local WebKit page. Native `URLSession` proxies network requests; JavaScript handles document synchronization and projection.
 - The bridge sends conversation patches to Swift, which reconstructs complete snapshots before publishing to the UI. Preserve ordering, deletions, and growth within a turn; do not drop intermediate patches directly.
 - The disk session cache stores account, workspace, and session-list display data. `AppModel` caches conversation content by workspace and session. Preserve credential association checks and sign-out cleanup to prevent displaying another account's data.
+- `ConversationRunConfigState` in `KurageCore` owns shared configuration selection and consumption rules. Mac drafts hold this state per session; completion after navigation must consume the original session's selection without writing into a new account or workspace.
+
+## Native macOS Behavior
+
+- Losing keyboard focus must not stop synchronization. `MacRootView` keeps the model active while the scene is not backgrounded and the machine is awake; sleep/background cancels subscriptions, and wake resumes them. Workspace generation changes replace the window's scoped navigation and drafts.
+- Settings opens from the sidebar gear or Command-, and does not open automatically at launch. General controls Light/Dark/System through Mac's `appTheme`; Account owns sign-out. Apply the same preference to both windows. Fixture preferences use a separate UserDefaults suite.
+- Sidebar project groups are collapsible. Command-F opens a separate search panel; an empty query shows no results. Search uses title, preview, project and indexed message content; opening a result expands its project. Keep the workspace/settings footer opaque above scrolling rows and use `MacChrome` for consistent sidebar, titlebar and conversation backgrounds.
+- The conversation toolbar names the project and machine; session titles belong on the always-visible tab bar. Keep tabs inside the Changes inspector boundary and aligned with the transcript column. Running/unread indicators retain accessibility values. New Tab (Command-T) requires both tab and session-creation capabilities.
+- Preserve bottom-follow intent across asynchronous image loading, expanded activity groups and viewport changes, while respecting users who scroll upward. Moving the tab bar into transcript safe-area bars/insets changes scroll geometry; validate delayed-image following and read receipts when changing this layout.
+- New Session (Command-N) and New Tab share the composer. Project changes preserve text and attachments while reloading configuration; New Tab keeps its parent's project. Command-Return creates, Return inserts a newline, and Escape or clicking the surrounding scrim dismisses. A failed explicit Agent selection offers an intentional fallback to the default Agent.
+- Attachment imports run off the main actor, preserve security-scoped access and cancellation, and remain in memory. Clipboard file URLs take precedence over image representations. Reuse shared attachment limits and upload/outbox behavior.
 
 ## Swift and UI Conventions
 
@@ -69,6 +82,9 @@
 - For the JavaScript bridge, run `pnpm install --frozen-lockfile` and `pnpm test` in `SessionBridge/`. After changing bridge code, run `pnpm build` to update the app resource.
 - Example iOS build: `xcodebuild -project Kurage.xcodeproj -scheme Kurage -destination 'generic/platform=iOS Simulator' -derivedDataPath DerivedData build`.
 - For iOS tests, first find an available simulator with `xcrun simctl list devices available`, then run `xcodebuild -project Kurage.xcodeproj -scheme Kurage -destination 'platform=iOS Simulator,id=<simulator UUID>' -derivedDataPath DerivedData test`.
+- For Mac tests, use `xcodebuild -project Kurage.xcodeproj -scheme KurageMac -destination 'platform=macOS' -derivedDataPath build/Mac test`, narrowing with `-only-testing:KurageMacTests` or `-only-testing:KurageMacUITests` as appropriate.
+- `script/build_and_run.sh` quits an existing KurageMac process before building, and UI tests relaunch the app. Check for a running user session before choosing these workflows; when preserving it, build directly and launch a separate fixture instance with `open -n <app-path> --args --fixture`. Report any UI tests omitted for this reason.
+- Mac visual checks can add `--fixture-dark` or `--fixture-signed-out` alongside `--fixture`. Regression fixtures also cover questions, running tabs, delayed/failed images, read-receipt retries and failed/unconfirmed sends; consult `KurageMacApp` and `MacFlowTests` for current flags.
 - Match validation to the change. Documentation-only changes do not require app tests. Do not report historical validation results as results from the current run.
 - Fixture tests do not replace validation with a real account for continuous output, network recovery, or returning from the background. Clearly state what remains unverified.
 
@@ -77,6 +93,7 @@
 - Model, cache, authentication, or HTTP behavior: run the relevant `KurageTests`. Prefer injected network sessions, in-memory credential stores, and isolated temporary caches over real accounts.
 - JavaScript synchronization, projection, or networking bridge: run the `SessionBridge` tests and rebuild the bundle. Also validate the native bridge when changing the Swift/JavaScript message contract.
 - Sign-in, session lists, or conversation interactions: run affected `KurageUITests` with `--fixture`. Inspect the app in a simulator when changing layout or scrolling.
+- Mac state, attachment handling or bridge integration: run relevant `KurageMacTests`. Mac interactions/layout: run affected `KurageMacUITests` with fixtures and inspect light/dark windows, including Changes, tab-count changes and asynchronous image growth when relevant. Shared-core changes need validation on affected platforms.
 - Narrow `xcodebuild test` using `-only-testing:KurageTests`, `-only-testing:KurageUITests`, or a more specific test path.
 - Prioritize behavior and regression risks such as account/workspace isolation, stale updates, cancellation, disconnections, and message growth or deletion. Avoid adding unnecessary tests for simple styling or documentation changes.
 
