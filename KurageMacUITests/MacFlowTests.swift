@@ -212,6 +212,59 @@ final class MacFlowTests: XCTestCase {
         XCTAssertEqual(root.frame.minY, tabTop, accuracy: 1)
     }
 
+    func testCompactTabLayoutMovesTabsIntoToolbar() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-running-tab"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let root = app.buttons["tab-session-long"]
+        let running = app.buttons["tab-fixture-running-tab"]
+        let changes = app.buttons["toggle-changes"]
+        let main = app.windows.containing(.button, identifier: "toggle-changes").firstMatch
+        XCTAssertTrue(running.waitForExistence(timeout: 10))
+
+        // The fixture keeps preferences between launches, so start from the default.
+        app.buttons["open-settings"].click()
+        XCTAssertTrue(settingsWindow(app).waitForExistence(timeout: 5))
+        let compact = app.buttons["tab-layout-compact"]
+        let separate = app.buttons["tab-layout-separate"]
+        XCTAssertTrue(separate.waitForExistence(timeout: 5))
+        separate.click()
+        XCTAssertTrue(separate.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        let onRow = NSPredicate { _, _ in root.frame.midY > changes.frame.maxY }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: onRow, object: nil)], timeout: 5), .completed)
+        compact.click()
+        XCTAssertTrue(compact.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        try await captureWindow(settingsWindow(app), name: "mac-settings-tab-layout")
+
+        // Compact tabs share the toolbar row with the title and the Changes button.
+        let inToolbar = NSPredicate { _, _ in abs(root.frame.midY - changes.frame.midY) < 6 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: inToolbar, object: nil)], timeout: 5), .completed)
+        XCTAssertEqual(running.value as? String, "Running")
+        XCTAssertLessThan(root.frame.maxX, changes.frame.minX)
+        XCTAssertFalse(main.popUpButtons["more toolbar items"].exists)
+        // The taller transcript must keep following the bottom after the tab row leaves.
+        XCTAssertTrue(app.buttons["scroll-latest"].waitForNonExistence(timeout: 3))
+        running.click()
+        XCTAssertTrue(app.staticTexts["Work in this tab"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(running.isSelected)
+        try await captureWindow(main, name: "mac-tabs-compact")
+        changes.click()
+        XCTAssertTrue(app.descendants(matching: .any)["changes-inspector"].waitForExistence(timeout: 10))
+        try await captureWindow(main, name: "mac-tabs-compact-changes")
+        changes.click()
+
+        app.buttons["open-settings"].click()
+        XCTAssertTrue(settingsWindow(app).waitForExistence(timeout: 5))
+        separate.click()
+        XCTAssertTrue(separate.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: onRow, object: nil)], timeout: 5), .completed)
+    }
+
     func testReadReceiptRetriesTransientFailures() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-read-retry"]

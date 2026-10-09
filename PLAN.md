@@ -15,6 +15,12 @@
 - 详情工具栏标题是项目名，副标题是机器名（去掉 `.local` 后缀）；没有项目时显示 Conversation。会话名只放在 tab 上，不再写 Main。iOS 的 Main 标签未改。
 - tab 栏常驻，tab 数量变化时对话不跳动。去掉灰色轨道、白色卡片和底部分隔线，与对话同底色；选中项是 primary 文字加 2pt 下划线。tab 栏位于 Changes inspector 内侧，与 transcript 共用 800pt 列和 24pt 边距，首个 tab 与正文左边缘对齐；溢出时两侧边距渐隐。运行中的 tab 显示小 spinner，未读的非当前 tab 显示强调色圆点，辅助功能值为 Running／Unread。新建 tab 支持 ⌘T。
 - tab 栏不放进 transcript 的 safe area：试过 `safeAreaBar` 和 `safeAreaInset`，前者的系统边缘效果在纯色背景上是一条硬白带，两者都会改变滚动几何，让延迟图片跟随底部和已读回执测试失败。现在 transcript 顶部叠一条 16pt 同色渐隐。
+- Settings > General > Tabs 新增 Tab layout：Separate（默认，上述独立 tab 行）和 Compact（类似 Safari 紧凑标签页）。偏好存于 `@AppStorage("tabLayout")`，与主题一样随 Mac 偏好走，fixture 使用独立 suite。Compact 把 tab 放进工具栏标题右侧、Changes 按钮左边，不使用共享玻璃底；选中项是淡色胶囊，状态点、spinner、⌘T、辅助功能标识与 Separate 相同。
+- Compact 的工具栏项按内容宽度汇报尺寸，flexible frame 或 `idealWidth` 会让 NSToolbar 把 tab 和 Changes 一起收进 “more toolbar items” 溢出菜单。因此宽度上限为详情宽度减 320pt（标题、按钮及侧栏收起时的窗口按钮），超出时横向滚动并两端渐隐；详情宽度低于 600pt 时自动退回 Separate 行。两种样式的 New Tab 都在滚动区外，tab 溢出时仍然可见；滚动区宽度不超过内容，tab 少时加号紧跟最后一个 tab。
+- 切换 Separate／Compact（包括窄窗口自动回退）会改变 transcript 高度，lazy 行重排几轮后被读成向上滚动，导致停止跟随底部并出现 Latest。若切换前在底部，布局稳定 250ms 后用现有 `scrollRequest` 重新贴底。曾尝试在 `MacTranscript` 中只屏蔽 resize 后的第一次偏移回退，但重排会持续多轮，已放弃。
+- 窗口标题随 `navigationTitle`／`navigationSubtitle` 变为「项目 – 机器」，UI 测试按 `toggle-changes` 定位主窗口而不是标题 `Kurage`。
+- 2026-10-09 Compact 验证（macOS 27 fixture）：Mac UI 加原生测试 31 项中 29 项通过，失败的 `testActivityGroupRevealsToolTitles`、`testSidebarSessionContextMenu` 与改动前 HEAD 相同。新增 `testCompactTabLayoutMovesTabsIntoToolbar`，覆盖设置切换、tab 与 Changes 同行且无溢出菜单、运行状态、切换 tab、打开 Changes，以及切回 Separate。临时把预留宽度调大后确认了宽度上限下的滚动与渐隐（之后已恢复为 320）。浅色截图已看过。
+- 2026-10-09 Compact 跟进验证：全量 31 项中 29 项通过，失败的两项与 HEAD 相同；Compact 用例新增“切换后不出现 Latest”断言。临时测试看过 Compact 深色、侧栏收起后 Compact（标题移到窗口按钮旁，无溢出菜单），以及 tab 溢出时加号仍可见。窄窗口回退通过临时把阈值调到 2000 验证了渲染和贴底，常量已恢复；XCUITest 拖动窗口边缘无法改变窗口大小，实际拖窄过程未验证。另观察到：Compact 状态不变时收起侧栏也会出现 Latest，属于 transcript 宽度重排，与 tab 布局无关，未处理。真实账号和 macOS 26 未验证。
 - 2026-10-09 第二轮验证（macOS 27 fixture）：Mac UI 加原生测试 30 项中 28 项通过。`testSidebarSessionContextMenu` 失败，在未改动的 HEAD 上也失败；`testConversationChangesAndNewTab` 第 224 行 Changes 加载超时一次，单独重跑两次通过。`testActivityGroupRevealsToolTitles` 在第一轮及 HEAD 上失败、本轮通过，属于不稳定用例。新增 `testRunningTabStatusAndStableTabBar`。浅色、深色、单 tab、多 tab、运行中 tab 和打开 Changes 的截图已看过。真实账号、macOS 26 和大字号未验证。
 - 本轮验证：macOS 27 fixture 里打开 long conversation 后，标题是 `kurage · spike@mac`，根 tab 标签是 `long conversation`，浅色截图已看过。深色、真实账号和 macOS 26 未验证。同一用例在点击 Changes 后进程 SIGABRT（分栏约束循环）。把顶栏改回会话名加大标题副标题、根 tab 写 Main 后，打开 Changes 同样崩溃，因此这次顶栏改动没有引入该崩溃。工作区里未完成的 composer 与侧栏改动未动。
 

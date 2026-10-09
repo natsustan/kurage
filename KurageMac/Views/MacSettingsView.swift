@@ -72,29 +72,28 @@ private func closeSettingsWindow(_ dismiss: DismissWindowAction) {
 
 private struct MacGeneralSettings: View {
     @AppStorage(MacTheme.storageKey) private var theme: MacTheme = .system
+    @AppStorage(MacTabLayout.storageKey) private var tabLayout: MacTabLayout = .separate
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Appearance")
                 .font(.title3.weight(.semibold))
             MacSettingsCard {
-                HStack(alignment: .center, spacing: 14) {
-                    Image(systemName: "circle.lefthalf.filled")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Theme")
-                        Text("Use light, dark, or match your system")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(minWidth: 160, alignment: .leading)
-                    Spacer(minLength: 12)
-                    MacThemePicker(theme: $theme)
-                        .fixedSize()
+                MacSettingsRow(symbolName: "circle.lefthalf.filled", title: "Theme",
+                               detail: "Use light, dark, or match your system") {
+                    MacSegmentedPicker(selection: $theme, title: \.title, symbolName: \.symbolName,
+                                       identifier: { "appearance-theme-\($0.rawValue)" })
+                }
+            }
+            .padding(.top, 12)
+            Text("Tabs")
+                .font(.title3.weight(.semibold))
+                .padding(.top, 28)
+            MacSettingsCard {
+                MacSettingsRow(symbolName: "menubar.rectangle", title: "Tab layout",
+                               detail: "Show tabs on their own row, or in the toolbar beside the title") {
+                    MacSegmentedPicker(selection: $tabLayout, title: \.title, symbolName: \.symbolName,
+                                       identifier: { "tab-layout-\($0.rawValue)" })
                 }
             }
             .padding(.top, 12)
@@ -105,21 +104,52 @@ private struct MacGeneralSettings: View {
     }
 }
 
-private struct MacThemePicker: View {
-    @Binding var theme: MacTheme
+private struct MacSettingsRow<Control: View>: View {
+    let symbolName: String
+    let title: String
+    let detail: String
+    @ViewBuilder var control: Control
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: symbolName)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(minWidth: 160, alignment: .leading)
+            Spacer(minLength: 12)
+            control
+                .fixedSize()
+        }
+    }
+}
+
+private struct MacSegmentedPicker<Option: CaseIterable & Hashable>: View where Option.AllCases: RandomAccessCollection {
+    @Binding var selection: Option
+    let title: (Option) -> String
+    let symbolName: (Option) -> String
+    let identifier: (Option) -> String
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(MacTheme.allCases, id: \.self) { option in
-                let selected = theme == option
+            ForEach(Array(Option.allCases), id: \.self) { option in
+                let selected = selection == option
                 Button {
-                    theme = option
+                    selection = option
                 } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: option.symbolName)
+                        Image(systemName: symbolName(option))
                             .accessibilityHidden(true)
-                        Text(option.title)
+                        Text(title(option))
                     }
                     .font(.system(size: 13))
                     .foregroundStyle(selected ? Color.primary : Color.secondary)
@@ -139,14 +169,14 @@ private struct MacThemePicker: View {
                 }
                 .contentShape(Capsule())
                 .focusEffectDisabled()
-                .accessibilityLabel(option.title)
-                .accessibilityIdentifier("appearance-theme-\(option.rawValue)")
+                .accessibilityLabel(title(option))
+                .accessibilityIdentifier(identifier(option))
                 .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
         .padding(3)
         .background(track, in: Capsule())
-        .animation(.easeInOut(duration: 0.15), value: theme)
+        .animation(.easeInOut(duration: 0.15), value: selection)
     }
 
     private var selectedFill: Color {

@@ -33,6 +33,29 @@ enum MacTheme: String, CaseIterable {
     }
 }
 
+/// Where session tabs sit. Compact moves them into the toolbar beside the title,
+/// like Safari's compact tabs; Separate keeps them on their own row.
+enum MacTabLayout: String, CaseIterable {
+    case separate
+    case compact
+
+    static let storageKey = "tabLayout"
+
+    var title: String {
+        switch self {
+        case .separate: "Separate"
+        case .compact: "Compact"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .separate: "rectangle.split.1x2"
+        case .compact: "menubar.rectangle"
+        }
+    }
+}
+
 enum MacSettingsWindow {
     static let id = "settings"
 }

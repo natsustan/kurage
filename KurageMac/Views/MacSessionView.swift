@@ -6,26 +6,32 @@ struct MacSessionView: View {
     @Bindable var window: MacWindowState
     let root: SessionSummary
     let isAwake: Bool
+    @AppStorage(MacTabLayout.storageKey) private var tabLayout: MacTabLayout = .separate
+    @State private var width: CGFloat = 0
 
     var body: some View {
         let tabs = model.sessionTabs(rootID: root.id).filter { $0.isTabClosed != true }
         let sessionID = window.selectedTab(rootID: root.id)
-        MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake) {
-            MacSessionTabBar(
-                tabs: tabs,
-                rootID: root.id,
-                selectedID: sessionID,
-                canCreate: model.supportsSessionTabs && model.supportsSessionCreation
-                    && model.pendingSessionTab(rootID: root.id) == nil,
-                select: { window.selectTab($0, rootID: root.id) },
-                newTab: { window.newSession = NewSessionDestination(template: root, isTab: true) }
-            )
+        // A narrow detail column cannot fit the title, tabs and buttons in one toolbar
+        // row, and NSToolbar would hide the tabs behind its overflow menu.
+        let compact = tabLayout == .compact && width >= MacSessionTabBar.compactMinimumWidth
+        MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake,
+                            tabsInToolbar: compact) {
+            if !compact { tabBar(.row, tabs: tabs, selectedID: sessionID) }
         }
         .id(sessionID)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .navigationTitle(MacSessionContextTitle.title(projectName: root.projectName))
         .navigationSubtitle(MacSessionContextTitle.subtitle(machineName: root.machineName))
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
+            if compact {
+                ToolbarItem {
+                    tabBar(.toolbar, tabs: tabs, selectedID: sessionID)
+                        .frame(maxWidth: width - MacSessionTabBar.compactReservedWidth)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
             ToolbarItem {
                 Button("Changes", systemImage: "sidebar.right") { window.showsChanges.toggle() }
                     .keyboardShortcut("i", modifiers: [.command, .option])
@@ -35,6 +41,19 @@ struct MacSessionView: View {
         .onChange(of: tabs.map(\.id)) { _, ids in
             if !ids.isEmpty, !ids.contains(sessionID) { window.selectTab(root.id, rootID: root.id) }
         }
+    }
+
+    private func tabBar(_ style: MacSessionTabBar.Style, tabs: [SessionSummary], selectedID: String) -> MacSessionTabBar {
+        MacSessionTabBar(
+            style: style,
+            tabs: tabs,
+            rootID: root.id,
+            selectedID: selectedID,
+            canCreate: model.supportsSessionTabs && model.supportsSessionCreation
+                && model.pendingSessionTab(rootID: root.id) == nil,
+            select: { window.selectTab($0, rootID: root.id) },
+            newTab: { window.newSession = NewSessionDestination(template: root, isTab: true) }
+        )
     }
 }
 
@@ -57,9 +76,23 @@ private enum MacSessionContextTitle {
     }
 }
 
-/// Session tabs share the conversation background and are always shown, so the
-/// transcript does not move when a tab opens or closes. The selected tab is underlined.
+/// Session tabs are always shown, so the transcript does not move when a tab opens
+/// or closes. On their own row they share the conversation background and the selected
+/// tab is underlined; in the toolbar the selected tab is a pill, like Safari's compact tabs.
 private struct MacSessionTabBar: View {
+    enum Style {
+        case row
+        case toolbar
+    }
+
+    /// Below this detail width the compact layout falls back to the row.
+    static let compactMinimumWidth: CGFloat = 600
+    /// Room kept for the title, the Changes button and, with the sidebar hidden, the window
+    /// controls. The toolbar item reports its content width, so an uncapped strip of many
+    /// tabs would push the whole item into the overflow menu.
+    static let compactReservedWidth: CGFloat = 320
+
+    let style: Style
     let tabs: [SessionSummary]
     let rootID: String
     let selectedID: String
@@ -67,50 +100,67 @@ private struct MacSessionTabBar: View {
     let select: (String) -> Void
     let newTab: () -> Void
     @State private var overflow = MacTabOverflow()
+    @State private var contentWidth: CGFloat?
 
-    /// Matches the transcript: an 800pt column with a 24pt gutter, so the first tab
-    /// starts on the conversation's text edge and the gutters hold the overflow fades.
-    private static let gutter: CGFloat = 24
+    /// On the row this matches the transcript: an 800pt column with a 24pt gutter, so the
+    /// first tab starts on the conversation's text edge and the gutters hold the overflow fades.
+    private var gutter: CGFloat { style == .row ? 24 : 8 }
+    private var spacing: CGFloat { style == .row ? 20 : 4 }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 20) {
-                    ForEach(tabs) { tab in
-                        MacSessionTabButton(tab: tab, selected: tab.id == selectedID) { select(tab.id) }
-                            .accessibilityIdentifier("tab-\(tab.id)")
-                            .id(tab.id)
+        // New Tab stays outside the scroll view so it is reachable however many tabs are open.
+        // Capping the scroll view at its content width keeps it beside the last tab otherwise.
+        let strip = HStack(spacing: spacing - gutter) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: spacing) {
+                        ForEach(tabs) { tab in
+                            MacSessionTabButton(tab: tab, selected: tab.id == selectedID, style: style) { select(tab.id) }
+                                .accessibilityIdentifier("tab-\(tab.id)")
+                                .id(tab.id)
+                        }
                     }
-                    MacNewTabButton(action: newTab)
-                        .disabled(!canCreate)
-                        .accessibilityIdentifier("new-tab")
+                    .padding(.horizontal, gutter)
                 }
-                .padding(.horizontal, Self.gutter)
+                .scrollIndicators(.hidden)
+                .onScrollGeometryChange(for: MacTabOverflow.self) { geometry in
+                    MacTabOverflow(
+                        leading: geometry.contentOffset.x > 1,
+                        trailing: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
+                } action: { _, value in
+                    overflow = value
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.width } action: { _, width in
+                    contentWidth = width
+                }
+                .mask { fade }
+                .frame(maxWidth: contentWidth)
+                .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
+                .onChange(of: selectedID) { _, id in proxy.scrollTo(id, anchor: .center) }
             }
-            .scrollIndicators(.hidden)
-            .onScrollGeometryChange(for: MacTabOverflow.self) { geometry in
-                MacTabOverflow(
-                    leading: geometry.contentOffset.x > 1,
-                    trailing: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
-            } action: { _, value in
-                overflow = value
-            }
-            .mask { fade }
-            .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
-            .onChange(of: selectedID) { _, id in proxy.scrollTo(id, anchor: .center) }
+            MacNewTabButton(action: newTab)
+                .disabled(!canCreate)
+                .accessibilityIdentifier("new-tab")
         }
-        .frame(height: 36)
-        .frame(maxWidth: 800 + Self.gutter * 2)
-        .frame(maxWidth: .infinity)
+        switch style {
+        case .row:
+            strip
+                .frame(height: 36)
+                .frame(maxWidth: 800 + gutter * 2, alignment: .leading)
+                .frame(maxWidth: .infinity)
+        case .toolbar:
+            strip
+                .frame(height: 28)
+        }
     }
 
     private var fade: some View {
         HStack(spacing: 0) {
             LinearGradient(colors: [overflow.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing)
-                .frame(width: Self.gutter)
+                .frame(width: gutter)
             Color.black
             LinearGradient(colors: [.black, overflow.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing)
-                .frame(width: Self.gutter)
+                .frame(width: gutter)
         }
     }
 }
@@ -123,6 +173,7 @@ private struct MacTabOverflow: Equatable {
 private struct MacSessionTabButton: View {
     let tab: SessionSummary
     let selected: Bool
+    let style: MacSessionTabBar.Style
     let action: () -> Void
     @State private var hovering = false
 
@@ -136,10 +187,16 @@ private struct MacSessionTabButton: View {
                 status
             }
             .foregroundStyle(selected || hovering ? Color.primary : Color.secondary)
-            .frame(maxWidth: 220)
+            .padding(.horizontal, style == .toolbar ? 10 : 0)
+            .frame(maxWidth: style == .toolbar ? 200 : 220)
             .frame(maxHeight: .infinity)
+            .background {
+                if style == .toolbar, selected || hovering {
+                    Capsule().fill(Color.primary.opacity(selected ? 0.08 : 0.05))
+                }
+            }
             .overlay(alignment: .bottom) {
-                if selected { Capsule().fill(Color.primary).frame(height: 2) }
+                if style == .row, selected { Capsule().fill(Color.primary).frame(height: 2) }
             }
             .contentShape(Rectangle())
         }
@@ -197,7 +254,9 @@ private struct MacConversationView<TabBar: View>: View {
     let sessionID: String
     let rootID: String
     let isAwake: Bool
+    let tabsInToolbar: Bool
     @ViewBuilder let tabBar: TabBar
+    @State private var layoutRepin = 0
     @State private var conversation: Conversation?
     @State private var activity: SessionActivity?
     @State private var observedGeneration: Int?
@@ -355,6 +414,17 @@ private struct MacConversationView<TabBar: View>: View {
                     }
                 }
             }
+        }
+        // Moving the tabs changes the transcript's height, and the lazy rows re-measure for a
+        // few passes, which reads as an upward scroll. Re-pin once layout settles if the
+        // reader was following the bottom.
+        .onChange(of: tabsInToolbar) { _, _ in
+            if atBottom { layoutRepin += 1 }
+        }
+        .task(id: layoutRepin) {
+            guard layoutRepin > 0 else { return }
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            scrollRequest += 1
         }
         .task(id: recentModelsLoadID) {
             recentModels = []
