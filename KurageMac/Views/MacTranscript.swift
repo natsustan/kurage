@@ -44,6 +44,7 @@ struct MacTranscript: View {
                 .frame(maxWidth: .infinity)
             }
             .accessibilityIdentifier("transcript")
+            .scrollContentBackground(.hidden)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
             .onScrollGeometryChange(for: Layout.self) { Layout($0) } action: { old, new in

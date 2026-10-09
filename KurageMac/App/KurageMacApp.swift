@@ -18,7 +18,7 @@ struct KurageMacApp: App {
             : arguments.contains("--fixture-running-tab") ? SessionRecord.samplesWithRunningTab
             : arguments.contains("--fixture-slow-images") ? SessionRecord.samplesWithTrailingImage : SessionRecord.samples
         _model = State(initialValue: AppModel(
-            client: fixture ? FixtureLodyClient(startsSignedIn: true,
+            client: fixture ? FixtureLodyClient(startsSignedIn: !arguments.contains("--fixture-signed-out"),
                 supportsSessionCreation: !arguments.contains("--fixture-no-session-creation"),
                 readReceiptFailures: arguments.contains("--fixture-read-retry") ? 2 : 0,
                 records: records,
@@ -54,6 +54,7 @@ struct KurageMacApp: App {
         .restorationBehavior(.disabled)
         .defaultSize(width: 860, height: 520)
         .windowResizability(.contentMinSize)
+        .windowToolbarStyle(.unified(showsTitle: true))
     }
 }
 

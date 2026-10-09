@@ -29,7 +29,7 @@ final class MacFlowTests: XCTestCase {
         let settingsButton = app.buttons["Settings"]
         XCTAssertTrue(workspace.exists)
         XCTAssertTrue(settingsButton.exists)
-        XCTAssertFalse(app.windows["Settings"].exists)
+        XCTAssertFalse(settingsWindow(app).exists)
         XCTAssertEqual(workspace.frame.minX, newSession.frame.minX, accuracy: 2)
         XCTAssertEqual(workspace.frame.midY, settingsButton.frame.midY, accuracy: 2)
         XCTAssertLessThan(workspace.frame.maxX, settingsButton.frame.minX)
@@ -44,13 +44,18 @@ final class MacFlowTests: XCTestCase {
         search.click()
         let field = app.textFields["session-search-field"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["session-search-heading"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["session-search-heading"].exists)
+        XCTAssertFalse(app.buttons["session-search-result-session-long"].exists)
+        try await capture(app, name: "mac-session-search-empty")
         paste("Question 7", into: field, app: app)
+        XCTAssertTrue(app.staticTexts["session-search-heading"].waitForExistence(timeout: 5))
         let longResult = app.buttons["session-search-result-session-long"]
         XCTAssertTrue(longResult.waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["session-search-result-session-pr"].exists)
         app.buttons["clear-session-search"].click()
         XCTAssertEqual(field.value as? String, "")
+        XCTAssertTrue(app.buttons["session-search-result-session-long"].waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["session-search-heading"].exists)
         paste("PrIsM", into: field, app: app)
         let reviewResult = app.buttons["session-search-result-session-pr"]
         XCTAssertTrue(reviewResult.waitForExistence(timeout: 5))
@@ -211,6 +216,9 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["changes-inspector"].exists)
         try await capture(app, name: "mac-default")
+        let context = app.staticTexts["kurage · spike@mac"]
+        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["tab-session-long"].label, "long conversation")
         paste("Keep main draft", into: editor, app: app)
         app.buttons["toggle-changes"].click()
         XCTAssertTrue(app.staticTexts["ConversationView.swift"].waitForExistence(timeout: 10))
@@ -268,15 +276,16 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
         try await capture(app, name: "mac-conversation-dark")
         app.buttons["Settings"].click()
-        XCTAssertTrue(app.windows["Settings"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["settings-nav-account"].waitForExistence(timeout: 5))
-        app.buttons["settings-nav-account"].click()
+        let settings = settingsWindow(app)
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settingsNav(app, "account").click()
         XCTAssertTrue(app.buttons["sign-out-button"].waitForExistence(timeout: 5))
         app.buttons["sign-out-button"].click()
         XCTAssertTrue(app.sheets.buttons["Sign out"].waitForExistence(timeout: 5))
         app.sheets.buttons["Sign out"].click()
-        XCTAssertTrue(app.buttons["Sign in with Lody"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.windows["Settings"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["sign-in-button"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["welcome-title"].label.contains("Welcome to"))
+        XCTAssertTrue(settings.waitForNonExistence(timeout: 5))
         try await capture(app, name: "mac-sign-in")
     }
 
@@ -287,38 +296,40 @@ final class MacFlowTests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 15))
-        XCTAssertFalse(app.windows["Settings"].exists)
+        XCTAssertFalse(settingsWindow(app).exists)
         app.buttons["open-settings"].click()
-        XCTAssertTrue(app.windows["Settings"].waitForExistence(timeout: 5))
+        let settings = settingsWindow(app)
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
         let light = app.buttons["appearance-theme-light"]
         let dark = app.buttons["appearance-theme-dark"]
         let system = app.buttons["appearance-theme-system"]
         XCTAssertTrue(system.waitForExistence(timeout: 5))
         light.click()
         XCTAssertTrue(light.wait(for: \.isSelected, toEqual: true, timeout: 5))
-        try await captureWindow(app.windows["Settings"], name: "mac-settings-general-light")
+        try await captureWindow(settings, name: "mac-settings-general-light")
         try await captureWindow(app.windows["Kurage"], name: "mac-main-theme-light")
         dark.click()
         XCTAssertTrue(dark.wait(for: \.isSelected, toEqual: true, timeout: 5))
         XCTAssertFalse(light.isSelected)
-        try await captureWindow(app.windows["Settings"], name: "mac-settings-general-dark")
+        try await captureWindow(settings, name: "mac-settings-general-dark")
         try await captureWindow(app.windows["Kurage"], name: "mac-main-theme-dark")
-        app.buttons["settings-nav-account"].click()
+        settingsNav(app, "account").click()
         XCTAssertTrue(app.staticTexts["demo@kurage.app"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["sign-out-button"].exists)
         XCTAssertFalse(app.windows["Kurage"].staticTexts["demo@kurage.app"].exists)
-        try await captureWindow(app.windows["Settings"], name: "mac-settings-account")
+        try await captureWindow(settingsWindow(app), name: "mac-settings-account")
 
         app.terminate()
         app.launch()
         app.activate()
         XCTAssertTrue(app.buttons["open-settings"].waitForExistence(timeout: 15))
         app.buttons["open-settings"].click()
-        XCTAssertTrue(app.windows["Settings"].waitForExistence(timeout: 5))
+        let reopened = settingsWindow(app)
+        XCTAssertTrue(reopened.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["appearance-theme-dark"].wait(for: \.isSelected, toEqual: true, timeout: 5))
         app.buttons["appearance-theme-system"].click()
         XCTAssertTrue(app.buttons["appearance-theme-system"].wait(for: \.isSelected, toEqual: true, timeout: 5))
-        try await captureWindow(app.windows["Settings"], name: "mac-settings-general-system")
+        try await captureWindow(reopened, name: "mac-settings-general-system")
     }
 
     func testImagePreview() async throws {
@@ -642,6 +653,108 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Question skipped."].firstMatch.waitForExistence(timeout: 10))
     }
 
+    func testSidebarSessionContextMenu() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-tests"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        let kurage = app.buttons["project-header-local:machine-1:kurage"]
+        XCTAssertTrue(kurage.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(session.frame.minY, kurage.frame.maxY)
+
+        session.rightClick()
+        let pin = menuItem(app, "Pin")
+        XCTAssertTrue(pin.waitForExistence(timeout: 3))
+        XCTAssertTrue(menuItem(app, "Rename session").exists)
+        XCTAssertTrue(menuItem(app, "Copy Session URL").exists)
+        XCTAssertTrue(menuItem(app, "Archive").exists)
+        XCTAssertTrue(menuItem(app, "New session in project").exists)
+        XCTAssertTrue(menuItem(app, "Open in Lody").exists)
+        pin.click()
+
+        let pinned = app.staticTexts["pinned-header"]
+        XCTAssertTrue(pinned.waitForExistence(timeout: 5))
+        XCTAssertLessThan(pinned.frame.maxY, session.frame.minY)
+        XCTAssertLessThan(session.frame.maxY, kurage.frame.minY)
+        XCTAssertEqual(app.staticTexts.matching(identifier: "session-session-tests").count, 1)
+
+        session.rightClick()
+        let unpin = menuItem(app, "Unpin")
+        XCTAssertTrue(unpin.waitForExistence(timeout: 3))
+        unpin.click()
+        XCTAssertTrue(pinned.waitForNonExistence(timeout: 5))
+        XCTAssertGreaterThan(session.frame.minY, kurage.frame.maxY)
+
+        session.rightClick()
+        menuItem(app, "Rename session").click()
+        let prompt = waitForPrompt(app, titled: "Rename session")
+        let title = prompt.textFields["session-title-field"].exists
+            ? prompt.textFields["session-title-field"]
+            : prompt.textFields.firstMatch
+        XCTAssertTrue(title.waitForExistence(timeout: 3))
+        title.click()
+        title.typeKey("a", modifierFlags: .command)
+        title.typeText("Renamed fixture session")
+        prompt.buttons["Save"].click()
+        let renamed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Renamed fixture session"),
+            object: session
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [renamed], timeout: 5), .completed)
+
+        withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            session.rightClick()
+            let copy = menuItem(app, "Copy Session URL")
+            XCTAssertTrue(copy.waitForExistence(timeout: 3))
+            copy.click()
+            XCTAssertTrue(copy.waitForNonExistence(timeout: 3))
+            let expected = "https://lody.ai/demo/sessions/session-tests"
+            let copied = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                pasteboard.string(forType: .string)?.contains(expected) == true
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [copied], timeout: 3), .completed)
+        }
+
+        session.rightClick()
+        menuItem(app, "Archive").click()
+        let archive = waitForPrompt(app, titled: "Archive session?")
+        archive.buttons["Cancel"].click()
+        XCTAssertTrue(archive.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(session.exists)
+
+        session.rightClick()
+        menuItem(app, "Archive").click()
+        let confirm = waitForPrompt(app, titled: "Archive session?")
+        let archiveButton = confirm.descendants(matching: .any)["archive-confirm"].exists
+            ? confirm.descendants(matching: .any)["archive-confirm"]
+            : confirm.buttons["Archive"]
+        archiveButton.click()
+        XCTAssertTrue(session.waitForNonExistence(timeout: 5))
+    }
+
+    private func menuItem(_ app: XCUIApplication, _ title: String) -> XCUIElement {
+        let item = app.menuItems[title]
+        let button = app.buttons[title]
+        let matched = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            item.exists || button.exists
+        }, object: nil)
+        _ = XCTWaiter.wait(for: [matched], timeout: 3)
+        return item.exists ? item : button
+    }
+
+    private func waitForPrompt(_ app: XCUIApplication, titled title: String) -> XCUIElement {
+        let candidates = [app.dialogs[title], app.sheets[title], app.alerts[title]]
+        let matched = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            candidates.contains { $0.exists }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [matched], timeout: 5), .completed)
+        return candidates.first { $0.exists } ?? app.dialogs[title]
+    }
+
     private func paste(_ text: String, into editor: XCUIElement, app: XCUIApplication) {
         withPasteboard { pasteboard in
             pasteboard.setString(text, forType: .string)
@@ -679,6 +792,20 @@ final class MacFlowTests: XCTestCase {
             .withOffset(CGVector(dx: 18, dy: window.frame.height * 0.55))
             .click()
         XCTAssertTrue(message.waitForNonExistence(timeout: 5))
+    }
+
+    /// The settings scene is titled Settings until a pane title replaces it.
+    private func settingsWindow(_ app: XCUIApplication) -> XCUIElement {
+        let named = app.windows["Settings"]
+        if named.exists { return named }
+        return app.windows.containing(.any, identifier: "settings-nav-general").firstMatch
+    }
+
+    private func settingsNav(_ app: XCUIApplication, _ section: String) -> XCUIElement {
+        let identifier = "settings-nav-\(section)"
+        let button = app.buttons[identifier]
+        if button.exists { return button }
+        return app.descendants(matching: .any)[identifier]
     }
 
     private func capture(_ app: XCUIApplication, name: String) async throws {

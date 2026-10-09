@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import KurageCore
 
@@ -6,7 +7,10 @@ struct MacSidebar: View {
     @Bindable var window: MacWindowState
     @State private var recoveryError: String?
     @State private var groups: [ProjectGroup] = []
+    @State private var pinnedSessions: [SessionSummary] = []
     @State private var projectTemplates: [SessionSummary] = []
+    @State private var sessionAction: MacSessionActionRequest?
+    @Environment(\.colorScheme) private var colorScheme
 
     private struct ProjectGroup: Identifiable {
         let id: String
@@ -30,7 +34,7 @@ struct MacSidebar: View {
                 // 16pt symbol slot and 6pt gap, matching the project header.
                 HStack(spacing: MacSidebarMetrics.iconSpacing) {
                     MacSidebarSymbol(systemName: "square.and.pencil")
-                    Text("New Session")
+                    Text("New session")
                         .lineLimit(1)
                 }
             }
@@ -78,6 +82,13 @@ struct MacSidebar: View {
             }
             if let recoveryError { Text(recoveryError).font(.caption).foregroundStyle(.red).padding(12) }
             List(selection: $window.selectedRootID) {
+                if !pinnedSessions.isEmpty {
+                    MacPinnedHeader()
+                        .selectionDisabled()
+                    ForEach(pinnedSessions) { session in
+                        sessionRow(session)
+                    }
+                }
                 ForEach(groups) { group in
                     let collapsed = window.collapsedProjectIDs.contains(group.id)
                     let template = projectTemplates.first { $0.projectID == group.id }
@@ -100,31 +111,26 @@ struct MacSidebar: View {
                     .selectionDisabled()
                     if !collapsed {
                         ForEach(group.sessions) { session in
-                            MacSessionRow(session: session)
-                                .listRowInsets(EdgeInsets(
-                                    top: 1,
-                                    leading: MacSidebarMetrics.rowLeading + MacSidebarMetrics.titleInset,
-                                    bottom: 1,
-                                    trailing: MacSidebarMetrics.rowTrailing
-                                ))
-                                .tag(session.id)
-                                .accessibilityIdentifier("session-\(session.id)")
-                                .contextMenu {
-                                    if let template, model.supportsSessionCreation {
-                                        Button("New session in project") {
-                                            window.newSession = NewSessionDestination(template: template, isTab: false)
-                                        }
-                                    }
-                                    if let url = model.sessionURL(sessionID: session.id) { Link("Open in Lody", destination: url) }
-                                }
+                            sessionRow(session)
                         }
                     }
                 }
             }
             .listStyle(.sidebar)
+            // The source list paints the system sidebar material over the column fill.
+            .scrollContentBackground(.hidden)
+            .background {
+                MacChrome.sidebar(colorScheme)
+                MacSidebarScrollFill(color: MacChrome.sidebar(dark: colorScheme == .dark))
+            }
             // Sidebar lists add their own leading margin. Zero it so folder icons
             // share the New Session icon's inset instead of sitting further right.
             .contentMargins(.leading, 0, for: .scrollContent)
+            // Keep a scrolling title inside the list. The footer plate covers anything that still overlaps it.
+            .clipped()
+            .modifier(MacSessionActionPresenter(model: model, request: $sessionAction, onArchived: { id in
+                if window.selectedRootID == id { window.selectedRootID = nil }
+            }))
             if let note = model.statusNote {
                 Text(note.text).font(.caption).foregroundStyle(.secondary).padding(12)
             }
@@ -134,18 +140,77 @@ struct MacSidebar: View {
     }
 
     private func updateGroups() {
-        projectTemplates = NewSessionDestination.projectTemplates(in: model.sessions)
+        let sessions = model.sessions
+        projectTemplates = NewSessionDestination.projectTemplates(in: sessions)
+        // Pinned roots move into the top group and leave their project, matching iOS.
+        pinnedSessions = sessions.filter { $0.isPinned == true }
         var order: [String] = []
         var grouped: [String: [SessionSummary]] = [:]
-        for session in model.sessions {
+        var names: [String: String] = [:]
+        for session in sessions {
             let key = session.projectID ?? "unassigned"
-            if grouped[key] == nil { order.append(key) }
-            grouped[key, default: []].append(session)
+            if grouped[key] == nil {
+                order.append(key)
+                grouped[key] = []
+                names[key] = session.projectName ?? "Sessions"
+            }
+            if session.isPinned != true {
+                grouped[key, default: []].append(session)
+            }
         }
-        groups = order.map { key in
+        groups = order.compactMap { key in
             let values = grouped[key] ?? []
-            return ProjectGroup(id: key, name: values.first?.projectName ?? "Sessions", sessions: values)
+            // Keep a local project header when every session is pinned, so New session stays available.
+            let canCreate = key != "unassigned"
+                && model.supportsSessionCreation
+                && projectTemplates.contains { $0.projectID == key }
+            if values.isEmpty && !canCreate { return nil }
+            return ProjectGroup(id: key, name: names[key] ?? "Sessions", sessions: values)
         }
+    }
+
+    private func sessionRow(_ session: SessionSummary) -> some View {
+        let template = projectTemplates.first { $0.projectID == session.projectID }
+        return MacSessionRow(session: session)
+            .listRowInsets(EdgeInsets(
+                top: 1,
+                leading: MacSidebarMetrics.rowLeading + MacSidebarMetrics.titleInset,
+                bottom: 1,
+                trailing: MacSidebarMetrics.rowTrailing
+            ))
+            .tag(session.id)
+            .accessibilityIdentifier("session-\(session.id)")
+            .contextMenu {
+                if model.supportsSessionMetadataEditing {
+                    Button(
+                        session.isPinned == true ? "Unpin" : "Pin",
+                        systemImage: session.isPinned == true ? "pin.slash" : "pin"
+                    ) {
+                        sessionAction = MacSessionActionRequest(session: session, action: .pin)
+                    }
+                    Button("Rename session", systemImage: "pencil") {
+                        sessionAction = MacSessionActionRequest(session: session, action: .rename)
+                    }
+                }
+                Button("Copy Session URL", systemImage: "link") {
+                    sessionAction = MacSessionActionRequest(session: session, action: .copyURL)
+                }
+                .disabled(model.sessionURL(sessionID: session.id) == nil)
+                if let template, model.supportsSessionCreation {
+                    Button("New session in project") {
+                        window.newSession = NewSessionDestination(template: template, isTab: false)
+                    }
+                }
+                if let url = model.sessionURL(sessionID: session.id) {
+                    Link("Open in Lody", destination: url)
+                }
+                if model.supportsSessionArchiving {
+                    Divider()
+                    Button("Archive", systemImage: "archivebox", role: .destructive) {
+                        sessionAction = MacSessionActionRequest(session: session, action: .archive)
+                    }
+                }
+            }
     }
 
     private func toggleProject(_ id: String) {
@@ -267,6 +332,90 @@ private struct MacProjectHeader: View {
     }
 }
 
+private struct MacPinnedHeader: View {
+    var body: some View {
+        HStack(spacing: MacSidebarMetrics.iconSpacing) {
+            Image(systemName: "pin")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: MacSidebarMetrics.iconWidth, height: MacSidebarMetrics.iconWidth)
+                .accessibilityHidden(true)
+            Text("Pinned")
+                .font(.body.weight(.medium))
+                .lineLimit(1)
+                .accessibilityIdentifier("pinned-header")
+                .accessibilityAddTraits(.isHeader)
+        }
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .listRowInsets(EdgeInsets(
+            top: 4,
+            leading: MacSidebarMetrics.rowLeading,
+            bottom: 2,
+            trailing: MacSidebarMetrics.rowTrailing
+        ))
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// Paints the sidebar list's scroll view. Its own background sits above the SwiftUI fill.
+private struct MacSidebarScrollFill: NSViewRepresentable {
+    var color: NSColor
+
+    func makeNSView(context: Context) -> MacSidebarScrollFillView {
+        let view = MacSidebarScrollFillView()
+        view.color = color
+        return view
+    }
+
+    func updateNSView(_ view: MacSidebarScrollFillView, context: Context) {
+        view.color = color
+    }
+}
+
+private final class MacSidebarScrollFillView: NSView {
+    var color = NSColor.clear { didSet { apply() } }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        apply()
+    }
+
+    override func layout() {
+        super.layout()
+        apply()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        apply()
+    }
+
+    private func apply() {
+        guard let scroll = nearestScrollView() else { return }
+        scroll.drawsBackground = true
+        scroll.backgroundColor = color
+        if let table = scroll.documentView as? NSTableView {
+            table.backgroundColor = color
+        }
+        // A source list keeps a visual-effect backdrop in front of backgroundColor.
+        for subview in scroll.subviews where subview is NSVisualEffectView {
+            subview.isHidden = true
+        }
+    }
+
+    private func nearestScrollView() -> NSScrollView? {
+        var view: NSView? = superview
+        while let current = view {
+            if let scroll = current as? NSScrollView { return scroll }
+            if let scroll = current.subviews.compactMap({ $0 as? NSScrollView }).first { return scroll }
+            if current is NSSplitView { return nil }
+            view = current.superview
+        }
+        return nil
+    }
+}
+
 private struct MacSessionRow: View {
     let session: SessionSummary
 
@@ -276,5 +425,7 @@ private struct MacSessionRow: View {
             .fontWeight(session.isUnread ? .semibold : .regular)
             .accessibilityValue(session.isUnread ? "Unread" : "Read")
             .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }

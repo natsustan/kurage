@@ -23,8 +23,9 @@ struct MacSessionView: View {
             MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake)
                 .id(sessionID)
         }
-        .navigationTitle(root.title)
-        .navigationSubtitle(root.projectName ?? "")
+        .navigationTitle(MacSessionContextTitle.inlineTitle(
+            projectName: root.projectName, machineName: root.machineName))
+        .toolbarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem {
                 Button("Changes", systemImage: "sidebar.right") { window.showsChanges.toggle() }
@@ -35,6 +36,20 @@ struct MacSessionView: View {
         .onChange(of: tabs.map(\.id)) { _, ids in
             if !ids.isEmpty, !ids.contains(sessionID) { window.selectTab(root.id, rootID: root.id) }
         }
+    }
+}
+
+/// Project and machine share the toolbar title. The session name lives on its tab.
+private enum MacSessionContextTitle {
+    static func inlineTitle(projectName: String?, machineName: String?) -> String {
+        let parts = [projectName, machineName].compactMap(trimmed)
+        return parts.isEmpty ? "Conversation" : parts.joined(separator: " · ")
+    }
+
+    private static func trimmed(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -54,7 +69,7 @@ private struct MacSessionTabBar: View {
                 HStack(spacing: 4) {
                     ForEach(tabs) { tab in
                         MacSessionTabButton(
-                            title: tab.id == rootID ? "Main" : tab.title,
+                            title: tab.title,
                             selected: tab.id == selectedID
                         ) { select(tab.id) }
                         .accessibilityIdentifier("tab-\(tab.id)")
@@ -65,7 +80,7 @@ private struct MacSessionTabBar: View {
                         .accessibilityIdentifier("new-tab")
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 4)
             }
             .scrollIndicators(.hidden)
             .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
@@ -144,7 +159,17 @@ private struct MacConversationView: View {
     @State private var atBottom = true
     @State private var latestMessageAt: Double?
     @State private var scrollRequest = 0
+    @State private var recentModels: [DefaultModel] = []
+    @State private var loadingRecentModels = false
+    @State private var showsRunConfig = false
     @Environment(\.scenePhase) private var scenePhase
+
+    private var recentModelsLoadID: String? {
+        guard showsRunConfig, isAwake, scenePhase == .active,
+              model.defaultModels(sessionID: rootID).isEmpty,
+              model.sessionSummary(sessionID)?.agentConfigID != nil else { return nil }
+        return "\(model.workspaceGeneration):\(sessionID)"
+    }
 
     private struct ObservationKey: Equatable {
         let awake: Bool
@@ -156,7 +181,10 @@ private struct MacConversationView: View {
         let outgoing = model.outgoingMessage(sessionID: sessionID)
         let turns = model.displayedTurns(conversation?.turns ?? [], sessionID: sessionID)
         let isRunning = (activity ?? model.sessionSummary(sessionID)?.activity) == .running
-        let config = window[draft: sessionID].runConfig.displayed
+        let session = model.sessionSummary(sessionID)
+        let menu = window[draft: sessionID].runConfig.displayed?.shortcutMenu(
+            saved: model.defaultModels(sessionID: rootID), recent: recentModels,
+            agentConfigID: session?.agentConfigID, agentName: session?.agentName ?? "Agent")
         VStack(spacing: 0) {
             if !connection.isEmpty {
                 Text(connection).font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
@@ -200,17 +228,18 @@ private struct MacConversationView: View {
                 }.font(.caption).padding(8)
             }
             if let error { Text(error).foregroundStyle(.red).font(.caption).padding(8) }
-            MacComposer(draft: $window[draft: sessionID], runConfig: config,
+            // The transcript column is 800pt with its 24pt gutter outside that cap.
+            // Keep the same order here so the composer card lines up with the text.
+            MacComposer(draft: $window[draft: sessionID], runConfig: menu, showsRunConfig: $showsRunConfig,
+                        isLoadingModels: loadingRecentModels,
                         canSend: isAwake && model.supportsTextSending && outgoing == nil
                             && (!isRunning || model.supportsTextSendingWhileRunning),
                         isRunning: isRunning, canStop: model.supportsSessionCancellation && !cancelling,
-                        onSend: send, onStop: stop) { value in
-                window[draft: sessionID].runConfig.choose(value)
-            }
+                        onSend: send, onStop: stop, onChoose: chooseRunConfig)
+            .frame(maxWidth: 800)
             .padding(.horizontal, 24)
             .padding(.top, 8)
             .padding(.bottom, 16)
-            .frame(maxWidth: 800)
             .frame(maxWidth: .infinity)
         }
         .confirmationDialog("Replace the current draft?", isPresented: $confirmReplaceDraft) {
@@ -268,6 +297,38 @@ private struct MacConversationView: View {
                 }
             }
         }
+        .task(id: recentModelsLoadID) {
+            recentModels = []
+            guard recentModelsLoadID != nil else {
+                loadingRecentModels = false
+                return
+            }
+            loadingRecentModels = true
+            defer { loadingRecentModels = false }
+            do {
+                let loaded = try await model.recentModels(
+                    sessionID: sessionID, agentConfigID: model.sessionSummary(sessionID)?.agentConfigID)
+                try Task.checkCancellation()
+                recentModels = loaded
+            } catch is CancellationError {
+                return
+            } catch {
+                // The current model stays visible when recent models cannot be loaded.
+            }
+        }
+    }
+
+    private func chooseRunConfig(_ value: String) {
+        window[draft: sessionID].runConfig.choose(value)
+        guard let config = window[draft: sessionID].runConfig.displayed,
+              let editable = config.editable, editable.kind == .reasoning,
+              editable.options.contains(where: { $0.value == value }),
+              let optionID = editable.configOptionID, let modelID = config.model?.value,
+              let agentConfigID = model.sessionSummary(sessionID)?.agentConfigID else { return }
+        model.rememberDefaultModelReasoning(
+            agentConfigID: agentConfigID, modelID: modelID,
+            reasoning: .init(configOptionID: optionID, value: value),
+            sessionID: rootID, workspaceGeneration: model.workspaceGeneration)
     }
 
     private func send() {

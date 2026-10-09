@@ -16,7 +16,7 @@ struct MacSessionSearchOverlay: View {
                     .accessibilityHidden(true)
                 MacSessionSearchPanel(model: model, window: window, onClose: close)
                     .frame(width: width)
-                    .padding(.top, 18)
+                    .padding(.top, MacSessionSearchMetrics.topInset)
             }
         }
     }
@@ -41,8 +41,8 @@ private struct MacSessionSearchPanel: View {
 
     private var hits: [SessionSearchHit] {
         let query = trimmedQuery
+        guard !query.isEmpty else { return [] }
         return model.sessions.compactMap { session in
-            guard !query.isEmpty else { return SessionSearchHit(session: session, snippet: nil) }
             if let result = SessionSearch.result(
                 title: session.title,
                 body: model.sessionSearchBody(sessionID: session.id),
@@ -59,12 +59,13 @@ private struct MacSessionSearchPanel: View {
     var body: some View {
         let hits = hits
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 16))
+                    .font(.system(size: MacSessionSearchMetrics.fieldSize))
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
                 TextField("Search sessions", text: $query)
+                    .font(.system(size: MacSessionSearchMetrics.fieldSize))
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
                     .focused($queryFocused)
@@ -75,7 +76,7 @@ private struct MacSessionSearchPanel: View {
                     .onKeyPress(.escape) { onClose(); return .handled }
                 if model.isIndexingSessionSearch && !trimmedQuery.isEmpty {
                     ProgressView()
-                        .controlSize(.small)
+                        .controlSize(.regular)
                         .accessibilityLabel("Searching messages")
                 }
                 if !query.isEmpty {
@@ -84,15 +85,18 @@ private struct MacSessionSearchPanel: View {
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
+                    .font(.system(size: MacSessionSearchMetrics.secondarySize))
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("clear-session-search")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            Divider()
-            FittingScroll(maxHeight: 440, selection: selection) {
-                resultList(hits)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 16)
+            if !trimmedQuery.isEmpty {
+                Divider()
+                FittingScroll(maxHeight: 440, selection: selection) {
+                    resultList(hits)
+                }
             }
         }
         .background {
@@ -128,7 +132,7 @@ private struct MacSessionSearchPanel: View {
     private func resultList(_ hits: [SessionSearchHit]) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Sessions")
-                .font(.subheadline)
+                .font(.system(size: MacSessionSearchMetrics.secondarySize))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -145,7 +149,7 @@ private struct MacSessionSearchPanel: View {
                         Task { await model.indexSessionsForSearch() }
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.regular)
                     .disabled(model.isIndexingSessionSearch)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
@@ -163,6 +167,7 @@ private struct MacSessionSearchPanel: View {
 
     private func status(_ title: String, identifier: String) -> some View {
         Text(title)
+            .font(.system(size: MacSessionSearchMetrics.titleSize))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -176,14 +181,15 @@ private struct MacSessionSearchPanel: View {
             open(hit.session)
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(hit.session.title)
+                        .font(.system(size: MacSessionSearchMetrics.titleSize))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .foregroundStyle(.primary)
                     if let snippet = hit.snippet {
                         Text(snippet)
-                            .font(.subheadline)
+                            .font(.system(size: MacSessionSearchMetrics.secondarySize))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -191,10 +197,11 @@ private struct MacSessionSearchPanel: View {
                 }
                 Spacer(minLength: 12)
                 Text("Search")
+                    .font(.system(size: MacSessionSearchMetrics.secondarySize))
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 if selected {
@@ -245,6 +252,10 @@ private struct SessionSearchHit: Identifiable {
 
 private enum MacSessionSearchMetrics {
     static let cornerRadius: CGFloat = 14
+    static let topInset: CGFloat = 72
+    static let fieldSize: CGFloat = 18
+    static let titleSize: CGFloat = 16
+    static let secondarySize: CGFloat = 14
 }
 
 /// Scrolls once the rows exceed `maxHeight`, and stays as short as the rows otherwise.

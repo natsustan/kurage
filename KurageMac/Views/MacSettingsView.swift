@@ -27,24 +27,36 @@ private enum MacSettingsSection: String, Hashable, CaseIterable {
 struct MacSettingsView: View {
     let model: AppModel
     @Environment(\.dismissWindow) private var dismissWindow
-    @State private var section: MacSettingsSection = .general
+    @State private var section: MacSettingsSection? = .general
 
     var body: some View {
-        HStack(spacing: 0) {
-            MacSettingsSidebar(section: $section)
-            Divider()
+        // A real split column, like Prism: the sidebar runs under the traffic
+        // lights, and the pane title sits in the detail side of the toolbar.
+        NavigationSplitView {
+            List(selection: $section) {
+                ForEach(MacSettingsSection.allCases, id: \.self) { item in
+                    Label(item.title, systemImage: item.symbolName)
+                        .tag(item)
+                        .accessibilityIdentifier(item.identifier)
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 240)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
             Group {
-                switch section {
+                switch section ?? .general {
                 case .general:
                     MacGeneralSettings()
                 case .account:
                     MacAccountSettings(model: model)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle((section ?? .general).title)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 820, minHeight: 480)
-        .toolbar(removing: .title)
         .onChange(of: model.account) { _, account in
             if account == nil { closeSettingsWindow(dismissWindow) }
         }
@@ -58,63 +70,13 @@ private func closeSettingsWindow(_ dismiss: DismissWindowAction) {
     }
 }
 
-private struct MacSettingsSidebar: View {
-    @Binding var section: MacSettingsSection
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(MacSettingsSection.allCases, id: \.self) { item in
-                let selected = section == item
-                Button {
-                    section = item
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.symbolName)
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 18)
-                            .accessibilityHidden(true)
-                        Text(item.title)
-                            .font(.body.weight(selected ? .semibold : .regular))
-                            .foregroundStyle(.primary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(MacSettingsPlainButtonStyle())
-                .focusEffectDisabled()
-                .background {
-                    if selected {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.08))
-                    }
-                }
-                .accessibilityLabel(item.title)
-                .accessibilityIdentifier(item.identifier)
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 10)
-        .padding(.top, 12)
-        .frame(width: 216)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color.primary.opacity(colorScheme == .dark ? 0.06 : 0.035))
-    }
-}
-
 private struct MacGeneralSettings: View {
     @AppStorage(MacTheme.storageKey) private var theme: MacTheme = .system
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("General")
-                .font(.title2.weight(.semibold))
             Text("Appearance")
                 .font(.title3.weight(.semibold))
-                .padding(.top, 22)
             MacSettingsCard {
                 HStack(alignment: .center, spacing: 14) {
                     Image(systemName: "circle.lefthalf.filled")
@@ -214,9 +176,6 @@ private struct MacAccountSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Account")
-                .font(.title2.weight(.semibold))
-                .padding(.bottom, 6)
             if let account = model.account {
                 MacSettingsCard {
                     MacAccountSummary(account: account)

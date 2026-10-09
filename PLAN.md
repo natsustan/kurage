@@ -1,11 +1,45 @@
 # Kurage 会话功能
 
+## Mac 侧栏与主区域底色（2026-10-09）
+
+- 主窗口侧栏 light `#F7F7F7`、dark `#111111`，会话区 light `#FCFCFC`、dark `#070707`。顶栏按同一条分栏切开：红绿灯和侧栏按钮在侧栏色上，标题在会话区色上。两栏之间是 1pt 分割线，light `#E4E4E4`、dark `#2A2A2A`，一直通到窗口顶。侧栏收起后顶栏整条回到会话区色，不再留下一块侧栏色。脚注底板跟侧栏同色。
+- 本轮验证：macOS 27 另开的浅色 fixture 和 `--fixture --fixture-dark` 都量过像素，空状态和 long conversation 的底色、分割线与上面一致。正式窗口当时在运行，没有跑会退出应用的 UI 测试。真实账号的持续会话和 macOS 26 未验证。
+
+## Mac 侧栏脚注（2026-10-09）
+
+- 侧栏底部的工作区菜单和设置按钮不再透出会话标题。脚注改成不透明底板，盖住滚到它下面的列表，底色与侧栏填充一致。
+- 本轮验证：macOS 27 另开的浅色长列表 fixture 滚到最后一行，标题停在脚注上方；深色 fixture 的脚注与侧栏同色，没有透字。正式窗口当时在运行，没有跑会退出应用的 UI 测试。
+
+## Mac 会话顶栏（2026-10-09）
+
+- 详情工具栏收成一行：项目名和机器名，用「 · 」连接。两者都没有时显示 Conversation。会话名放到根 tab 上，不再单独做大标题，也不再写 Main。tab 条上下间距从 8pt 收到 4pt。iOS 的 Main 标签未改。
+- 窗口标题跟着变成「项目 · 机器」。
+- 本轮验证：macOS 27 fixture 里打开 long conversation 后，标题是 `kurage · spike@mac`，根 tab 标签是 `long conversation`，浅色截图已看过。深色、真实账号和 macOS 26 未验证。同一用例在点击 Changes 后进程 SIGABRT（分栏约束循环）。把顶栏改回会话名加大标题副标题、根 tab 写 Main 后，打开 Changes 同样崩溃，因此这次顶栏改动没有引入该崩溃。工作区里未完成的 composer 与侧栏改动未动。
+
+## Mac 欢迎页（2026-10-09）
+
+- 未登录窗口改成与 iPad 欢迎页同一套版式：圆角 Welcome Icon、点阵背景、居中的 “Welcome to Kurage”，底部胶囊 “Get Started”。设备码和授权链接只在连接时出现，取消走 `cancelConnect`。
+- `--fixture-signed-out` 让 fixture 直接停在这页。已登录的 `--fixture` 不变。
+- 本轮验证：macOS 27 上另开 `--fixture --fixture-signed-out` 与 `--fixture-dark --fixture-signed-out`，浅色和深色窗口都是圆角图标、点阵背景和底部 Get Started。没有退出用户正在运行的 KurageMac，也没有跑会抢走焦点的 UI 测试。真实账号授权和 macOS 26 尚未验证。
+
+## Mac 会话模型菜单（2026-10-09）
+
+- 已有会话的输入区不再弹出只有 reasoning 档位的系统菜单。按钮贴在发送按钮左侧，打开一个锚在按钮上方的 popover：上面是 Default Models（没有收藏时用最近模型），下面是 reasoning。`XHigh` 显示为 Extra High。
+- 能力带 reasoning 时，模型行只显示当前项和同 Agent 的快捷项，不能切换，避免中途换模型丢掉上下文缓存；reasoning 可以改，并写回该收藏模型的记忆。没有 reasoning 档位时才能改模型。没有可改项时只显示摘要。
+- 本轮验证：macOS 27 上另开的 `--fixture` 窗口中，long conversation 的按钮为 “gpt-5.5 · High”，贴在发送按钮左侧；popover 箭头朝下指向该按钮。Model 里 gpt-5.5 显示但不可点，Reasoning 的 Low、Medium、High 可点，High 有勾。选 Low 后按钮变为 “gpt-5.5 · Low” 并收起。review the PR 只有模型，Sonnet 与 Opus 都可点，选 Opus 后按钮变为 “Opus”。正式窗口当时在运行，所以没有跑会退出应用的 UI 测试。真实账号、Default Models 收藏列表与 macOS 26 尚未验证。
+
+## Mac 会话搜索面板（2026-10-09）
+
+- 打开搜索后只显示搜索框。空查询不再列出当前工作区的全部会话；输入后才按标题、预览、项目名和消息正文匹配，并显示 Sessions 列表。清空后结果收起。
+- 搜索框 18pt，结果标题 16pt，分组、摘要和行尾 Search 为 14pt。面板距窗口内容顶部 72pt。
+- 本轮验证：macOS 27 上另开的 `--fixture` 窗口中，空查询只有搜索框，输入 `long` 后只留下 long conversation。正式窗口当时在运行，所以没有跑会退出应用的 UI 测试。真实账号与 macOS 26 尚未验证。
+
 ## Mac 设置（2026-10-08）
 
 - 侧栏底部的退出图标改为 `gearshape`。点击或 Command-, 打开独立的设置窗口，不随主窗口启动。
-- 设置侧栏有 General 和 Account。General 的 Appearance 可在 Light、Dark、System 之间切换，并立刻作用于主窗口和设置窗口。Account 显示账号名称和邮箱，Sign out 沿用原来的确认后再调用 `model.signOut()`，并关闭设置窗口。工作区切换仍留在侧栏底部。
+- 设置窗口是左右分栏：左侧源列表放 General 和 Account，侧栏伸到红绿灯下面；右侧标题栏显示当前页名称。General 的 Appearance 可在 Light、Dark、System 之间切换，并立刻作用于主窗口和设置窗口。Account 显示账号名称和邮箱，Sign out 沿用原来的确认后再调用 `model.signOut()`，并关闭设置窗口。工作区切换仍留在侧栏底部。
 - 主题存在 Mac 自己的 `appTheme`。`--fixture` 使用独立的 UserDefaults suite，避免测试改到日常偏好；`--fixture-dark` 仍强制深色，保证已有截图用例。
-- 本轮验证：macOS 27 fixture UI 中，`testSettingsAppearanceAndAccount` 通过。设置窗口不随启动打开；Light、Dark、System 可切换，重启后仍保持 Dark，再恢复为 System；Account 显示 `demo@kurage.app`，主窗口不显示邮箱。`testDarkNewRootSessionAndSignOut` 从 Account 确认退出后回到登录页，并关闭设置窗口。`testSidebarSearchAndNewSession` 通过，齿轮入口还在，启动时没有设置窗口。已查看浅色与深色的 General、Account，以及深色主窗口。Command-, 这次没有在 UI 测试里操作。真实账号与 macOS 26 尚未验证。
+- 本轮验证：macOS 27 上另开的 `--fixture` 里看过浅色 General、深色 General（Dark 选中）和 Account。侧栏通到红绿灯下，页名在右侧标题栏，点 Account 会切过去。当时已有 Kurage 在跑，所以没有跑会退出应用的 UI 测试。真实账号与 macOS 26 尚未验证。
 
 ## Mac 新建会话关闭方式（2026-10-08）
 
