@@ -187,6 +187,31 @@ final class MacFlowTests: XCTestCase {
         dismissNewSessionByScrim(app)
     }
 
+    func testRunningTabStatusAndStableTabBar() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-running-tab"]
+        app.launch()
+        app.activate()
+        let session = app.staticTexts["session-session-long"].firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 15))
+        session.click()
+        let root = app.buttons["tab-session-long"]
+        let running = app.buttons["tab-fixture-running-tab"]
+        XCTAssertTrue(running.waitForExistence(timeout: 10))
+        XCTAssertEqual(running.value as? String, "Running")
+        // The first tab starts on the transcript's text edge.
+        let reply = app.staticTexts["Latest reply in long conversation"].firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        XCTAssertEqual(root.frame.minX, reply.frame.minX, accuracy: 2)
+        let tabTop = root.frame.minY
+        try await capture(app, name: "mac-tabs-running")
+        running.click()
+        XCTAssertTrue(app.staticTexts["Work in this tab"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(running.isSelected)
+        XCTAssertEqual(root.frame.minY, tabTop, accuracy: 1)
+    }
+
     func testReadReceiptRetriesTransientFailures() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-read-retry"]
@@ -216,8 +241,8 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["changes-inspector"].exists)
         try await capture(app, name: "mac-default")
-        let context = app.staticTexts["kurage · spike@mac"]
-        XCTAssertTrue(context.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["kurage"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["spike@mac"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["tab-session-long"].label, "long conversation")
         paste("Keep main draft", into: editor, app: app)
         app.buttons["toggle-changes"].click()

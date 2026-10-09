@@ -10,7 +10,7 @@ struct MacSessionView: View {
     var body: some View {
         let tabs = model.sessionTabs(rootID: root.id).filter { $0.isTabClosed != true }
         let sessionID = window.selectedTab(rootID: root.id)
-        VStack(spacing: 0) {
+        MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake) {
             MacSessionTabBar(
                 tabs: tabs,
                 rootID: root.id,
@@ -20,11 +20,10 @@ struct MacSessionView: View {
                 select: { window.selectTab($0, rootID: root.id) },
                 newTab: { window.newSession = NewSessionDestination(template: root, isTab: true) }
             )
-            MacConversationView(model: model, window: window, sessionID: sessionID, rootID: root.id, isAwake: isAwake)
-                .id(sessionID)
         }
-        .navigationTitle(MacSessionContextTitle.inlineTitle(
-            projectName: root.projectName, machineName: root.machineName))
+        .id(sessionID)
+        .navigationTitle(MacSessionContextTitle.title(projectName: root.projectName))
+        .navigationSubtitle(MacSessionContextTitle.subtitle(machineName: root.machineName))
         .toolbarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem {
@@ -39,11 +38,16 @@ struct MacSessionView: View {
     }
 }
 
-/// Project and machine share the toolbar title. The session name lives on its tab.
+/// The toolbar names the project and machine. The session name lives on its tab.
 private enum MacSessionContextTitle {
-    static func inlineTitle(projectName: String?, machineName: String?) -> String {
-        let parts = [projectName, machineName].compactMap(trimmed)
-        return parts.isEmpty ? "Conversation" : parts.joined(separator: " · ")
+    static func title(projectName: String?) -> String {
+        trimmed(projectName) ?? "Conversation"
+    }
+
+    /// Bonjour host names end in `.local`, which adds nothing to the machine name.
+    static func subtitle(machineName: String?) -> String {
+        guard let name = trimmed(machineName) else { return "" }
+        return name.hasSuffix(".local") ? String(name.dropLast(6)) : name
     }
 
     private static func trimmed(_ value: String?) -> String? {
@@ -53,7 +57,8 @@ private enum MacSessionContextTitle {
     }
 }
 
-/// Session tabs sit on a neutral track. The selected tab is a raised chip.
+/// Session tabs share the conversation background and are always shown, so the
+/// transcript does not move when a tab opens or closes. The selected tab is underlined.
 private struct MacSessionTabBar: View {
     let tabs: [SessionSummary]
     let rootID: String
@@ -61,94 +66,138 @@ private struct MacSessionTabBar: View {
     let canCreate: Bool
     let select: (String) -> Void
     let newTab: () -> Void
-    @Environment(\.colorScheme) private var colorScheme
+    @State private var overflow = MacTabOverflow()
+
+    /// Matches the transcript: an 800pt column with a 24pt gutter, so the first tab
+    /// starts on the conversation's text edge and the gutters hold the overflow fades.
+    private static let gutter: CGFloat = 24
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
-                HStack(spacing: 4) {
+                HStack(spacing: 20) {
                     ForEach(tabs) { tab in
-                        MacSessionTabButton(
-                            title: tab.title,
-                            selected: tab.id == selectedID
-                        ) { select(tab.id) }
-                        .accessibilityIdentifier("tab-\(tab.id)")
-                        .id(tab.id)
+                        MacSessionTabButton(tab: tab, selected: tab.id == selectedID) { select(tab.id) }
+                            .accessibilityIdentifier("tab-\(tab.id)")
+                            .id(tab.id)
                     }
-                    MacSessionTabButton(title: "New tab", systemImage: "plus", selected: false, iconOnly: true, action: newTab)
+                    MacNewTabButton(action: newTab)
                         .disabled(!canCreate)
                         .accessibilityIdentifier("new-tab")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, Self.gutter)
             }
             .scrollIndicators(.hidden)
+            .onScrollGeometryChange(for: MacTabOverflow.self) { geometry in
+                MacTabOverflow(
+                    leading: geometry.contentOffset.x > 1,
+                    trailing: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1)
+            } action: { _, value in
+                overflow = value
+            }
+            .mask { fade }
             .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
             .onChange(of: selectedID) { _, id in proxy.scrollTo(id, anchor: .center) }
         }
-        .background(colorScheme == .dark ? Color.white.opacity(0.04) : Color.black.opacity(0.045))
-        .overlay(alignment: .bottom) { Divider() }
+        .frame(height: 36)
+        .frame(maxWidth: 800 + Self.gutter * 2)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var fade: some View {
+        HStack(spacing: 0) {
+            LinearGradient(colors: [overflow.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: Self.gutter)
+            Color.black
+            LinearGradient(colors: [.black, overflow.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing)
+                .frame(width: Self.gutter)
+        }
     }
 }
 
+private struct MacTabOverflow: Equatable {
+    var leading = false
+    var trailing = false
+}
+
 private struct MacSessionTabButton: View {
-    let title: String
-    var systemImage: String? = nil
+    let tab: SessionSummary
     let selected: Bool
-    var iconOnly = false
     let action: () -> Void
     @State private var hovering = false
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                if !iconOnly {
-                    Text(title)
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                Text(tab.title)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                status
             }
-            .foregroundStyle(selected ? Color.primary : Color.secondary)
-            .padding(.horizontal, iconOnly ? 8 : 12)
-            .frame(maxWidth: iconOnly ? nil : 220)
-            .frame(height: 30)
-            .background { chrome }
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .foregroundStyle(selected || hovering ? Color.primary : Color.secondary)
+            .frame(maxWidth: 220)
+            .frame(maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                if selected { Capsule().fill(Color.primary).frame(height: 2) }
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .opacity(isEnabled ? 1 : 0.35)
-        .accessibilityLabel(title)
+        .accessibilityLabel(tab.title)
+        .accessibilityValue(statusDescription)
         .accessibilityAddTraits(selected ? .isSelected : [])
-        .help(title)
+        .help(tab.title)
     }
 
-    @ViewBuilder private var chrome: some View {
-        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
-        if selected {
-            shape
-                .fill(colorScheme == .dark ? Color.white.opacity(0.12) : Color.white)
-                .shadow(color: colorScheme == .dark ? .clear : .black.opacity(0.06), radius: 1.5, y: 0.5)
-                .overlay(shape.strokeBorder(colorScheme == .dark ? Color.white.opacity(0.14) : Color.black.opacity(0.08), lineWidth: 1))
-        } else if hovering, isEnabled {
-            shape.fill(Color.primary.opacity(0.06))
+    /// Running wins over unread. The open tab is being read, so it never shows a dot.
+    @ViewBuilder private var status: some View {
+        if tab.activity == .running {
+            ProgressView().controlSize(.mini).accessibilityHidden(true)
+        } else if tab.isUnread, !selected {
+            Circle().fill(Color.accentColor).frame(width: 6, height: 6).accessibilityHidden(true)
         }
+    }
+
+    private var statusDescription: String {
+        if tab.activity == .running { return "Running" }
+        return tab.isUnread && !selected ? "Unread" : ""
     }
 }
 
-private struct MacConversationView: View {
+private struct MacNewTabButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button("New tab", systemImage: "plus", action: action)
+            .labelStyle(.iconOnly)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(hovering && isEnabled ? Color.primary : Color.secondary)
+            .frame(width: 24, height: 24)
+            .background {
+                if hovering, isEnabled {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.06))
+                }
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .keyboardShortcut("t", modifiers: .command)
+            .onHover { hovering = $0 }
+            .opacity(isEnabled ? 1 : 0.35)
+            .help("New tab (⌘T)")
+    }
+}
+
+private struct MacConversationView<TabBar: View>: View {
     let model: AppModel
     @Bindable var window: MacWindowState
     let sessionID: String
     let rootID: String
     let isAwake: Bool
+    @ViewBuilder let tabBar: TabBar
     @State private var conversation: Conversation?
     @State private var activity: SessionActivity?
     @State private var observedGeneration: Int?
@@ -163,6 +212,7 @@ private struct MacConversationView: View {
     @State private var loadingRecentModels = false
     @State private var showsRunConfig = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
 
     private var recentModelsLoadID: String? {
         guard showsRunConfig, isAwake, scenePhase == .active,
@@ -186,11 +236,20 @@ private struct MacConversationView: View {
             saved: model.defaultModels(sessionID: rootID), recent: recentModels,
             agentConfigID: session?.agentConfigID, agentName: session?.agentName ?? "Agent")
         VStack(spacing: 0) {
+            // Inside the inspector so the tabs center on the transcript column. Kept out of
+            // the scroll view's safe area so bottom-follow geometry is unchanged.
+            tabBar
             if !connection.isEmpty {
                 Text(connection).font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
             }
             MacTranscript(model: model, sessionID: sessionID, turns: turns,
                           atBottom: $atBottom, scrollRequest: scrollRequest, isAwake: isAwake)
+                .overlay(alignment: .top) {
+                    let fill = MacChrome.main(colorScheme)
+                    LinearGradient(colors: [fill, fill.opacity(0)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                        .allowsHitTesting(false)
+                }
             if isRunning, let request = conversation?.questions?.first {
                 ConversationQuestionCard(
                     request: request,

@@ -12,8 +12,10 @@
 
 ## Mac 会话顶栏（2026-10-09）
 
-- 详情工具栏收成一行：项目名和机器名，用「 · 」连接。两者都没有时显示 Conversation。会话名放到根 tab 上，不再单独做大标题，也不再写 Main。tab 条上下间距从 8pt 收到 4pt。iOS 的 Main 标签未改。
-- 窗口标题跟着变成「项目 · 机器」。
+- 详情工具栏标题是项目名，副标题是机器名（去掉 `.local` 后缀）；没有项目时显示 Conversation。会话名只放在 tab 上，不再写 Main。iOS 的 Main 标签未改。
+- tab 栏常驻，tab 数量变化时对话不跳动。去掉灰色轨道、白色卡片和底部分隔线，与对话同底色；选中项是 primary 文字加 2pt 下划线。tab 栏位于 Changes inspector 内侧，与 transcript 共用 800pt 列和 24pt 边距，首个 tab 与正文左边缘对齐；溢出时两侧边距渐隐。运行中的 tab 显示小 spinner，未读的非当前 tab 显示强调色圆点，辅助功能值为 Running／Unread。新建 tab 支持 ⌘T。
+- tab 栏不放进 transcript 的 safe area：试过 `safeAreaBar` 和 `safeAreaInset`，前者的系统边缘效果在纯色背景上是一条硬白带，两者都会改变滚动几何，让延迟图片跟随底部和已读回执测试失败。现在 transcript 顶部叠一条 16pt 同色渐隐。
+- 2026-10-09 第二轮验证（macOS 27 fixture）：Mac UI 加原生测试 30 项中 28 项通过。`testSidebarSessionContextMenu` 失败，在未改动的 HEAD 上也失败；`testConversationChangesAndNewTab` 第 224 行 Changes 加载超时一次，单独重跑两次通过。`testActivityGroupRevealsToolTitles` 在第一轮及 HEAD 上失败、本轮通过，属于不稳定用例。新增 `testRunningTabStatusAndStableTabBar`。浅色、深色、单 tab、多 tab、运行中 tab 和打开 Changes 的截图已看过。真实账号、macOS 26 和大字号未验证。
 - 本轮验证：macOS 27 fixture 里打开 long conversation 后，标题是 `kurage · spike@mac`，根 tab 标签是 `long conversation`，浅色截图已看过。深色、真实账号和 macOS 26 未验证。同一用例在点击 Changes 后进程 SIGABRT（分栏约束循环）。把顶栏改回会话名加大标题副标题、根 tab 写 Main 后，打开 Changes 同样崩溃，因此这次顶栏改动没有引入该崩溃。工作区里未完成的 composer 与侧栏改动未动。
 
 ## Mac 欢迎页（2026-10-09）
