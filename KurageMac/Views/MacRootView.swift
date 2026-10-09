@@ -226,18 +226,25 @@ private final class MacColumnDividerView: NSView {
 private struct MacTitlebarSplit: NSViewRepresentable {
     func makeNSView(context: Context) -> MacTitlebarSplitView { MacTitlebarSplitView() }
     func updateNSView(_ view: MacTitlebarSplitView, context: Context) {}
+
+    static func dismantleNSView(_ view: MacTitlebarSplitView, coordinator: ()) {
+        view.uninstall()
+    }
 }
 
-private final class MacTitlebarSplitView: NSView {
+final class MacTitlebarSplitView: NSView {
     private var chrome: MacTitlebarChromeView?
+    private weak var installedWindow: NSWindow?
+    private var originalTitlebar: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
+    private var hiddenFills: [NSView] = []
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if installedWindow !== newWindow { uninstall() }
+        super.viewWillMove(toWindow: newWindow)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil {
-            chrome?.removeFromSuperview()
-            chrome = nil
-            return
-        }
         install()
     }
 
@@ -246,8 +253,26 @@ private final class MacTitlebarSplitView: NSView {
         install()
     }
 
+    func uninstall() {
+        chrome?.removeFromSuperview()
+        chrome = nil
+        for fill in hiddenFills { fill.isHidden = false }
+        hiddenFills = []
+        if let window = installedWindow, let originalTitlebar {
+            window.titlebarAppearsTransparent = originalTitlebar.transparent
+            window.titlebarSeparatorStyle = originalTitlebar.separator
+        }
+        installedWindow = nil
+        originalTitlebar = nil
+    }
+
     private func install() {
         guard let window, let titlebar = window.titlebarContainer() else { return }
+        if installedWindow !== window {
+            uninstall()
+            installedWindow = window
+            originalTitlebar = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
+        }
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         if chrome?.superview !== titlebar {
@@ -262,7 +287,7 @@ private final class MacTitlebarSplitView: NSView {
             titlebar.addSubview(chrome, positioned: .below, relativeTo: host)
         }
         chrome.frame = titlebar.bounds
-        titlebar.neutralizeTitlebarFill()
+        titlebar.neutralizeTitlebarFill(hiddenFills: &hiddenFills)
         chrome.needsDisplay = true
     }
 }
@@ -390,16 +415,17 @@ private extension NSView {
         return nil
     }
 
-    /// Full-width titlebar fills sit above the column colors. Leave buttons alone.
-    func neutralizeTitlebarFill() {
-        for subview in subviews where !(subview is MacTitlebarChromeView) {
+    /// Record only visible fills hidden by this installation, so teardown restores them.
+    func neutralizeTitlebarFill(hiddenFills: inout [NSView]) {
+        for subview in subviews where !(subview is MacTitlebarChromeView) && !subview.isHidden {
             let coversWidth = subview.frame.width > bounds.width * 0.8 && subview.frame.height > 12
             let name = String(describing: type(of: subview))
             let isFill = subview is NSVisualEffectView || name.contains("Decoration") || name.contains("Background")
             if coversWidth && isFill && !subview.containsControl() {
+                hiddenFills.append(subview)
                 subview.isHidden = true
             } else {
-                subview.neutralizeTitlebarFill()
+                subview.neutralizeTitlebarFill(hiddenFills: &hiddenFills)
             }
         }
     }

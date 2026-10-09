@@ -32,8 +32,6 @@ private struct MacSessionSearchPanel: View {
     @Bindable var window: MacWindowState
     let onClose: () -> Void
     @State private var query = ""
-    @State private var selection: SessionSummary.ID?
-    @FocusState private var queryFocused: Bool
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -57,7 +55,35 @@ private struct MacSessionSearchPanel: View {
     }
 
     var body: some View {
-        let hits = hits
+        // Matching observes the query and indexed bodies, independently of result navigation.
+        MacSessionSearchContent(model: model, window: window, query: $query, hits: hits, onClose: onClose)
+            .task(id: !trimmedQuery.isEmpty) {
+                if trimmedQuery.isEmpty {
+                    model.stopSessionSearch()
+                } else {
+                    await model.indexSessionsForSearch()
+                }
+            }
+            .onDisappear { model.stopSessionSearch() }
+    }
+}
+
+private struct MacSessionSearchContent: View {
+    let model: AppModel
+    let window: MacWindowState
+    @Binding var query: String
+    let hits: [SessionSearchHit]
+    let onClose: () -> Void
+    @State private var selection: SessionSummary.ID?
+    @State private var scrollRequest: SessionSearchScrollRequest?
+    @State private var keyboardPointerLocation: NSPoint?
+    @FocusState private var queryFocused: Bool
+
+    private var hasQuery: Bool {
+        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
@@ -74,7 +100,7 @@ private struct MacSessionSearchPanel: View {
                     .onKeyPress(.upArrow) { moveSelection(-1, in: hits); return .handled }
                     .onKeyPress(.downArrow) { moveSelection(1, in: hits); return .handled }
                     .onKeyPress(.escape) { onClose(); return .handled }
-                if model.isIndexingSessionSearch && !trimmedQuery.isEmpty {
+                if model.isIndexingSessionSearch && hasQuery {
                     ProgressView()
                         .controlSize(.regular)
                         .accessibilityLabel("Searching messages")
@@ -92,9 +118,9 @@ private struct MacSessionSearchPanel: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 16)
-            if !trimmedQuery.isEmpty {
+            if hasQuery {
                 Divider()
-                FittingScroll(maxHeight: 440, selection: selection) {
+                FittingScroll(maxHeight: 440, scrollRequest: scrollRequest) {
                     resultList(hits)
                 }
             }
@@ -119,14 +145,6 @@ private struct MacSessionSearchPanel: View {
         }
         .onExitCommand(perform: onClose)
         .task { queryFocused = true }
-        .task(id: trimmedQuery) {
-            if trimmedQuery.isEmpty {
-                model.stopSessionSearch()
-            } else {
-                await model.indexSessionsForSearch()
-            }
-        }
-        .onDisappear { model.stopSessionSearch() }
     }
 
     private func resultList(_ hits: [SessionSearchHit]) -> some View {
@@ -219,8 +237,13 @@ private struct MacSessionSearchPanel: View {
         .accessibilityIdentifier("session-search-result-\(hit.id)")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .id(hit.id)
-        .onHover { hovering in
-            if hovering { selection = hit.id }
+        .onContinuousHover { phase in
+            guard case .active = phase else { return }
+            // Scrolling a keyboard selection under a stationary pointer must not
+            // turn that newly hovered row into the next keyboard destination.
+            guard keyboardPointerLocation != NSEvent.mouseLocation else { return }
+            keyboardPointerLocation = nil
+            selection = hit.id
         }
     }
 
@@ -229,7 +252,11 @@ private struct MacSessionSearchPanel: View {
         guard !ids.isEmpty else { return }
         let current = selection.flatMap { ids.firstIndex(of: $0) } ?? (delta > 0 ? -1 : 0)
         let next = min(max(current + delta, 0), ids.count - 1)
+        keyboardPointerLocation = NSEvent.mouseLocation
         selection = ids[next]
+        // Hover only highlights. Keyboard navigation also reveals its destination,
+        // including when it returns to the same row after a mouse selection.
+        scrollRequest = SessionSearchScrollRequest(sessionID: ids[next])
     }
 
     private func openSelection(in hits: [SessionSearchHit]) {
@@ -250,6 +277,11 @@ private struct SessionSearchHit: Identifiable {
     var id: SessionSummary.ID { session.id }
 }
 
+private struct SessionSearchScrollRequest: Equatable {
+    let id = UUID()
+    let sessionID: SessionSummary.ID
+}
+
 private enum MacSessionSearchMetrics {
     static let cornerRadius: CGFloat = 14
     static let topInset: CGFloat = 72
@@ -261,13 +293,13 @@ private enum MacSessionSearchMetrics {
 /// Scrolls once the rows exceed `maxHeight`, and stays as short as the rows otherwise.
 private struct FittingScroll<Content: View>: View {
     let maxHeight: CGFloat
-    let selection: SessionSummary.ID?
+    let scrollRequest: SessionSearchScrollRequest?
     let content: Content
     @State private var contentHeight: CGFloat = 0
 
-    init(maxHeight: CGFloat, selection: SessionSummary.ID?, @ViewBuilder content: () -> Content) {
+    init(maxHeight: CGFloat, scrollRequest: SessionSearchScrollRequest?, @ViewBuilder content: () -> Content) {
         self.maxHeight = maxHeight
-        self.selection = selection
+        self.scrollRequest = scrollRequest
         self.content = content()
     }
 
@@ -282,9 +314,9 @@ private struct FittingScroll<Content: View>: View {
                     }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .onChange(of: selection) { _, id in
-                guard let id else { return }
-                proxy.scrollTo(id, anchor: .center)
+            .onChange(of: scrollRequest) { _, request in
+                guard let request else { return }
+                proxy.scrollTo(request.sessionID, anchor: .center)
             }
         }
         .onPreferenceChange(SessionSearchHeightKey.self) { contentHeight = $0 }

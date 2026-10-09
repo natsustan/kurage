@@ -256,7 +256,6 @@ private struct MacConversationView<TabBar: View>: View {
     let isAwake: Bool
     let tabsInToolbar: Bool
     @ViewBuilder let tabBar: TabBar
-    @State private var layoutRepin = 0
     @State private var conversation: Conversation?
     @State private var activity: SessionActivity?
     @State private var observedGeneration: Int?
@@ -302,7 +301,8 @@ private struct MacConversationView<TabBar: View>: View {
                 Text(connection).font(.caption).foregroundStyle(.secondary).padding(.vertical, 6)
             }
             MacTranscript(model: model, sessionID: sessionID, turns: turns,
-                          atBottom: $atBottom, scrollRequest: scrollRequest, isAwake: isAwake)
+                          atBottom: $atBottom, scrollRequest: scrollRequest, isAwake: isAwake,
+                          tabsInToolbar: tabsInToolbar)
                 .overlay(alignment: .top) {
                     let fill = MacChrome.main(colorScheme)
                     LinearGradient(colors: [fill, fill.opacity(0)], startPoint: .top, endPoint: .bottom)
@@ -414,17 +414,6 @@ private struct MacConversationView<TabBar: View>: View {
                     }
                 }
             }
-        }
-        // Moving the tabs changes the transcript's height, and the lazy rows re-measure for a
-        // few passes, which reads as an upward scroll. Re-pin once layout settles if the
-        // reader was following the bottom.
-        .onChange(of: tabsInToolbar) { _, _ in
-            if atBottom { layoutRepin += 1 }
-        }
-        .task(id: layoutRepin) {
-            guard layoutRepin > 0 else { return }
-            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-            scrollRequest += 1
         }
         .task(id: recentModelsLoadID) {
             recentModels = []

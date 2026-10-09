@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import MarkdownView
 import KurageCore
@@ -9,9 +10,11 @@ struct MacTranscript: View {
     @Binding var atBottom: Bool
     let scrollRequest: Int
     let isAwake: Bool
+    let tabsInToolbar: Bool
     @State private var hasOpened = false
     @State private var followsBottom = true
     @State private var userScrolling = false
+    @State private var layoutRecovery = MacTranscriptLayoutRecovery()
 
     private struct Layout: Equatable {
         let height: CGFloat
@@ -47,6 +50,11 @@ struct MacTranscript: View {
             .scrollContentBackground(.hidden)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
+            .background {
+                MacTranscriptScrollInput(enabled: layoutRecovery.requestID != nil) {
+                    layoutRecovery.cancel()
+                }
+            }
             .onScrollGeometryChange(for: Layout.self) { Layout($0) } action: { old, new in
                 if userScrolling || new.offset < old.offset - 1 {
                     followsBottom = new.isAtBottom
@@ -67,6 +75,7 @@ struct MacTranscript: View {
             .onScrollPhaseChange { _, phase, context in
                 let wasUserScrolling = userScrolling
                 userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                if userScrolling { layoutRecovery.cancel() }
                 if userScrolling || wasUserScrolling {
                     followsBottom = Layout(context.geometry).isAtBottom
                     atBottom = followsBottom
@@ -80,6 +89,19 @@ struct MacTranscript: View {
                 hasOpened = true
             }
             .onChange(of: scrollRequest) { _, _ in
+                layoutRecovery.cancel()
+                followsBottom = true
+                atBottom = true
+                proxy.scrollTo("transcript-bottom", anchor: .bottom)
+            }
+            .onChange(of: tabsInToolbar) { _, _ in
+                layoutRecovery.schedule(wasAtBottom: atBottom, userScrolling: userScrolling)
+            }
+            .task(id: layoutRecovery.requestID) {
+                guard let requestID = layoutRecovery.requestID else { return }
+                // Lazy rows can take several passes to settle after moving the tab bar.
+                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                guard !Task.isCancelled, layoutRecovery.complete(requestID) else { return }
                 followsBottom = true
                 atBottom = true
                 proxy.scrollTo("transcript-bottom", anchor: .bottom)
@@ -87,6 +109,7 @@ struct MacTranscript: View {
             .overlay(alignment: .bottomTrailing) {
                 if !atBottom {
                     Button("Latest", systemImage: "arrow.down") {
+                        layoutRecovery.cancel()
                         followsBottom = true
                         atBottom = true
                         proxy.scrollTo("transcript-bottom", anchor: .bottom)
@@ -96,6 +119,86 @@ struct MacTranscript: View {
                 }
             }
         }
+    }
+}
+
+/// Layout movement may clear the geometry's bottom flag. Only user input cancels
+/// the saved follow intent; a superseded or cancelled request cannot restore it.
+struct MacTranscriptLayoutRecovery {
+    private(set) var requestID: UUID?
+
+    mutating func schedule(wasAtBottom: Bool, userScrolling: Bool) {
+        requestID = !userScrolling && (wasAtBottom || requestID != nil) ? UUID() : nil
+    }
+
+    mutating func cancel() { requestID = nil }
+
+    mutating func complete(_ request: UUID) -> Bool {
+        guard requestID == request else { return false }
+        requestID = nil
+        return true
+    }
+}
+
+/// Scroll phases do not cover every keyboard or scrollbar operation. Observe the
+/// original input, without consuming it, only while layout recovery is pending.
+private struct MacTranscriptScrollInput: NSViewRepresentable {
+    let enabled: Bool
+    let onInput: () -> Void
+
+    func makeNSView(context: Context) -> MacTranscriptInputView { MacTranscriptInputView() }
+
+    func updateNSView(_ view: MacTranscriptInputView, context: Context) {
+        view.onInput = onInput
+        view.enabled = enabled
+    }
+
+    static func dismantleNSView(_ view: MacTranscriptInputView, coordinator: ()) {
+        view.enabled = false
+        view.onInput = nil
+    }
+}
+
+private final class MacTranscriptInputView: NSView {
+    var onInput: (() -> Void)?
+    var enabled = false { didSet { updateMonitor() } }
+    private var monitor: Any?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateMonitor()
+    }
+
+    private func updateMonitor() {
+        guard enabled, window != nil else {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            return
+        }
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .leftMouseDown, .keyDown]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, self.enabled, event.window === self.window else { return }
+                if event.type == .keyDown {
+                    guard let responder = self.window?.firstResponder as? NSView,
+                          self.bounds.intersects(self.convert(responder.bounds, from: responder)),
+                          let key = event.charactersIgnoringModifiers?.unicodeScalars.first else { return }
+                    let scrollKeys = [NSUpArrowFunctionKey, NSDownArrowFunctionKey,
+                                      NSPageUpFunctionKey, NSPageDownFunctionKey, NSHomeFunctionKey, NSEndFunctionKey]
+                    guard key == " " || scrollKeys.contains(Int(key.value)) else { return }
+                } else {
+                    guard self.bounds.contains(self.convert(event.locationInWindow, from: nil)) else { return }
+                }
+                self.onInput?()
+            }
+            return event
+        }
+    }
+
+    isolated deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
     }
 }
 

@@ -387,7 +387,8 @@ private struct MacPopoverAnchor<Content: View>: NSViewRepresentable {
         coordinator.anchor = view
         coordinator.isPresented = $isPresented
         coordinator.onClose = onClose
-        coordinator.install(content())
+        if isPresented { coordinator.install(content()) }
+        guard isPresented || coordinator.popover.isShown else { return }
         // Show after the click that opened the popover finishes. A semitransient
         // popover presented inside that click closes again immediately.
         coordinator.schedulePresentation()
@@ -435,17 +436,16 @@ private struct MacPopoverAnchor<Content: View>: NSViewRepresentable {
         }
 
         func applyPresentation() {
-            guard let anchor, let hosting else { return }
+            guard isPresented.wrappedValue else {
+                if popover.isShown { popover.performClose(nil) }
+                return
+            }
+            guard let anchor, anchor.window != nil, let hosting else { return }
             let fitted = hosting.sizeThatFits(in: CGSize(width: 228, height: 480))
             popover.contentSize = CGSize(width: 228, height: max(1, fitted.height))
-            guard anchor.window != nil else { return }
-            if isPresented.wrappedValue {
-                guard !popover.isShown else { return }
-                let rect = anchor.bounds.isEmpty ? CGRect(x: 0, y: 0, width: 1, height: 1) : anchor.bounds
-                popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
-            } else if popover.isShown {
-                popover.performClose(nil)
-            }
+            guard !popover.isShown else { return }
+            let rect = anchor.bounds.isEmpty ? CGRect(x: 0, y: 0, width: 1, height: 1) : anchor.bounds
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
         }
 
         func popoverDidClose(_ notification: Notification) {

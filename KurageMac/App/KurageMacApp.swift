@@ -15,6 +15,7 @@ struct KurageMacApp: App {
         preferences = defaults
         let records = arguments.contains("--fixture-questions")
             ? [SessionRecord.questionSample] + SessionRecord.samples
+            : arguments.contains("--fixture-long-session-list") ? SessionRecord.samplesWithLongSessionList
             : arguments.contains("--fixture-running-tab") ? SessionRecord.samplesWithRunningTab
             : arguments.contains("--fixture-slow-images") ? SessionRecord.samplesWithTrailingImage : SessionRecord.samples
         _model = State(initialValue: AppModel(

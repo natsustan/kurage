@@ -97,6 +97,43 @@ final class MacFlowTests: XCTestCase {
         XCTAssertFalse(app.textFields["session-search-field"].exists)
     }
 
+    func testSearchHoverDoesNotScrollAndKeyboardRevealsSelection() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-long-session-list", "-appTheme", "light"]
+        app.launch()
+        app.activate()
+        let search = app.buttons["session-search"]
+        XCTAssertTrue(search.waitForExistence(timeout: 15))
+        search.click()
+        let field = app.textFields["session-search-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        paste("kurage session", into: field, app: app)
+        let results = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "session-search-result-list-kurage-"))
+        XCTAssertTrue(results.firstMatch.waitForExistence(timeout: 10))
+        let ordered = results.allElementsBoundByIndex
+        let visible = ordered.filter(\.isHittable).sorted { $0.frame.minY < $1.frame.minY }
+        XCTAssertGreaterThan(visible.count, 3)
+        let hovered = visible[visible.count - 2]
+        let hoveredIndex = try XCTUnwrap(ordered.firstIndex { $0.identifier == hovered.identifier })
+        let expected = ordered[min(hoveredIndex + 3, ordered.count - 1)]
+        let before = hovered.frame
+        hovered.hover()
+        XCTAssertTrue(hovered.wait(for: \.isSelected, toEqual: true, timeout: 5))
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(hovered.frame.minY, before.minY, accuracy: 1)
+        // Move beyond the visible results; keyboard navigation must still reveal the selected row.
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(expected.wait(for: \.isSelected, toEqual: true, timeout: 5), results.debugDescription)
+        XCTAssertTrue(expected.isHittable)
+        try await capture(app, name: "mac-search-keyboard-selection")
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
+    }
+
     func testNewTabRequiresSessionCreationCapability() throws {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "--fixture-no-session-creation"]
@@ -277,6 +314,42 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
         let read = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Read"), object: session)
         XCTAssertEqual(XCTWaiter.wait(for: [read], timeout: 10), .completed)
+    }
+
+    func testRunConfigPopoverReopensWithSelectionAndPreservesDraft() async throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for dark in [false, true] {
+            let appearance = dark ? "dark" : "light"
+            app.launchArguments = ["--fixture", "-appTheme", appearance]
+            app.launch()
+            app.activate()
+            let session = app.staticTexts["session-session-long"].firstMatch
+            XCTAssertTrue(session.waitForExistence(timeout: 15))
+            session.click()
+            let editor = app.textViews["message-editor"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 10))
+            paste("Keep configuration draft", into: editor, app: app)
+            let config = app.buttons["run-config"]
+            XCTAssertTrue(config.waitForExistence(timeout: 10))
+            config.click()
+            let low = app.buttons["run-config-reasoning-low"]
+            XCTAssertTrue(low.waitForExistence(timeout: 5))
+            low.click()
+            XCTAssertTrue(low.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(config.label.contains("Low"))
+            XCTAssertEqual(editor.value as? String, "Keep configuration draft")
+            let main = app.windows.containing(.textView, identifier: "message-editor").firstMatch
+            try await captureWindow(main, name: "mac-run-config-closed-\(appearance)")
+            config.click()
+            XCTAssertTrue(low.waitForExistence(timeout: 5))
+            XCTAssertTrue(low.isSelected)
+            try await captureWindow(main, name: "mac-run-config-open-\(appearance)")
+            editor.click()
+            XCTAssertTrue(low.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(editor.value as? String, "Keep configuration draft")
+            app.terminate()
+        }
     }
 
     func testConversationChangesAndNewTab() async throws {
