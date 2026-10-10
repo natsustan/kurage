@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import KurageCore
 
@@ -17,6 +18,12 @@ struct MacNewSessionView: View {
     @State private var projects: [SessionSummary] = []
     @State private var importing = false
     @State private var restoredConfiguration = false
+    @State private var measuredHeight: CGFloat = 64
+
+    private var canStart: Bool {
+        pendingStart == nil && !loading && !draft.isLoadingAttachments && options != nil &&
+            (!draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.attachments.isEmpty)
+    }
 
     init(model: AppModel, destination: NewSessionDestination, isAwake: Bool, onStarted: @escaping (String) -> Void) {
         self.model = model
@@ -84,26 +91,10 @@ struct MacNewSessionView: View {
                     }
                     .labelsHidden().fixedSize().accessibilityIdentifier("new-agent")
                 }
-                Button("Cancel", systemImage: "xmark") { dismiss() }
-                    .labelStyle(.iconOnly).buttonStyle(.plain).keyboardShortcut(.cancelAction)
             }
             .padding(20)
             Divider()
-            VStack(alignment: .leading, spacing: 14) {
-                MacMessageEditor(text: $draft.text, accessibilityLabel: "First message",
-                    accessibilityIdentifier: "new-message", initiallyFocused: true) {
-                    draft.pendingAttachments.append(contentsOf: $0)
-                }
-                .frame(height: 150)
-                .overlay(alignment: .topLeading) {
-                    if draft.text.isEmpty {
-                        Text("What do you want to work on?").foregroundStyle(.tertiary)
-                            .padding(.horizontal, 9).padding(.top, 6)
-                            .allowsHitTesting(false).accessibilityHidden(true)
-                    }
-                }
-                MacAttachmentPicker(attachments: $draft.attachments, pending: $draft.pendingAttachments,
-                    importing: $importing, showsButton: false)
+            VStack(alignment: .leading, spacing: 12) {
                 if let pendingStart {
                     Button("Resume pending session") {
                         do {
@@ -130,26 +121,69 @@ struct MacNewSessionView: View {
                         }
                     }
                 }
-                HStack(spacing: 12) {
-                    if loading {
-                        ProgressView().controlSize(.small).accessibilityLabel("Loading configuration")
-                    } else {
-                        MacNewSessionConfiguration(options: $options)
+                MacComposerCard {
+                    VStack(alignment: .leading, spacing: 0) {
+                        MacMessageEditor(text: $draft.text, accessibilityLabel: "First message",
+                            accessibilityIdentifier: "new-message", initiallyFocused: true,
+                            onContentHeight: { measuredHeight = $0 }) {
+                            draft.pendingAttachments.append(contentsOf: $0)
+                        }
+                        .frame(height: min(200, max(64, measuredHeight)))
+                        .overlay(alignment: .topLeading) {
+                            if draft.text.isEmpty {
+                                Text("What do you want to work on?")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.tertiary)
+                                    .padding(.top, 1)
+                                    .allowsHitTesting(false)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+                        MacAttachmentPicker(attachments: $draft.attachments, pending: $draft.pendingAttachments,
+                            importing: $importing, showsButton: false)
+                            .padding(.horizontal, 10)
+                        HStack(spacing: 8) {
+                            Button { importing = true } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .frame(width: 32, height: 32)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Attach images or files, or paste with ⌘V")
+                            .disabled(draft.isLoadingAttachments)
+                            .accessibilityLabel("Attach files")
+                            .accessibilityIdentifier("attach-images")
+                            if loading {
+                                ProgressView().controlSize(.small).accessibilityLabel("Loading configuration")
+                            } else {
+                                MacNewSessionConfiguration(options: $options)
+                            }
+                            Spacer(minLength: 8)
+                            Button(action: start) {
+                                MacComposerSendMark(enabled: canStart)
+                            }
+                            .buttonStyle(.plain)
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .disabled(!canStart)
+                            .accessibilityLabel("Create")
+                            .help("Create session (⌘Return)")
+                            .accessibilityIdentifier("start-session")
+                        }
+                        .padding(.leading, 6)
+                        .padding(.trailing, 8)
+                        .padding(.bottom, 8)
                     }
-                    Spacer(minLength: 12)
-                    Button("Attach files", systemImage: "plus") { importing = true }
-                        .labelStyle(.iconOnly).buttonStyle(.plain)
-                        .help("Attach images or files, or paste with ⌘V")
-                        .disabled(draft.isLoadingAttachments).accessibilityIdentifier("attach-images")
-                    Button("Create", systemImage: "return", action: start)
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
-                        .disabled(pendingStart != nil || loading || draft.isLoadingAttachments || options == nil || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.attachments.isEmpty)
-                        .accessibilityIdentifier("start-session")
                 }
             }
             .padding(20)
         }
         .frame(width: 720)
+        .onExitCommand { dismiss() }
+        .background { SheetScrimDismiss() }
         .onChange(of: model.sessions, initial: true) { _, sessions in
             projects = NewSessionDestination.projectTemplates(in: sessions)
         }
@@ -234,7 +268,99 @@ private struct MacNewSessionConfiguration: View {
                 Text("This agent's configuration is read-only.").foregroundStyle(.secondary)
             }
         }
+        .controlSize(.small)
         .labelsHidden()
         .fixedSize()
     }
+}
+
+/// macOS sheets ignore clicks on the dimmed parent window. This consumes those clicks.
+private struct SheetScrimDismiss: NSViewRepresentable {
+    @Environment(\.dismiss) private var dismiss
+
+    func makeNSView(context: Context) -> SheetScrimMonitor {
+        let view = SheetScrimMonitor()
+        view.onDismiss = { dismiss() }
+        return view
+    }
+
+    func updateNSView(_ view: SheetScrimMonitor, context: Context) {
+        view.onDismiss = { dismiss() }
+    }
+}
+
+private final class SheetScrimMonitor: NSView {
+    var onDismiss: (() -> Void)?
+    private var monitor: Any?
+    private let box = SheetScrimBox()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        box.owner = self
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeMonitor()
+        guard window != nil else { return }
+        let box = box
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+            let consume = MainActor.assumeIsolated { box.owner?.consumeScrimClick(event) ?? false }
+            return consume ? nil : event
+        }
+    }
+
+    override func removeFromSuperview() {
+        removeMonitor()
+        super.removeFromSuperview()
+    }
+
+    private func removeMonitor() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+    }
+
+    deinit { removeMonitor() }
+
+    fileprivate func consumeScrimClick(_ event: NSEvent) -> Bool {
+        guard event.buttonNumber == 0, let sheet = window, let source = event.window else { return false }
+        if let modal = NSApp.modalWindow, modal !== sheet, modal !== (sheet.sheetParent ?? sheet.parent) { return false }
+        if sheet.attachedSheet != nil || source is NSOpenPanel || source is NSSavePanel { return false }
+        if source.level >= .popUpMenu || source === sheet { return false }
+
+        guard let parent = sheet.sheetParent ?? sheet.parent else { return false }
+        if source === parent, isTrafficLight(parent, windowPoint: event.locationInWindow) { return false }
+        let screenPoint = source.convertPoint(toScreen: event.locationInWindow)
+        guard parent.frame.contains(screenPoint), !sheet.frame.contains(screenPoint) else { return false }
+        let scrim = source === parent || isScrimWindow(source, parent: parent)
+        guard scrim else { return false }
+        scheduleDismiss()
+        return true
+    }
+
+    private func scheduleDismiss() {
+        let action = onDismiss
+        DispatchQueue.main.async { action?() }
+    }
+
+    private func isScrimWindow(_ window: NSWindow, parent: NSWindow) -> Bool {
+        guard window !== parent, !window.styleMask.contains(.titled), !window.styleMask.contains(.utilityWindow) else { return false }
+        return window.frame.width >= parent.frame.width * 0.8 && window.frame.height >= parent.frame.height * 0.8
+    }
+
+    private func isTrafficLight(_ window: NSWindow, windowPoint: NSPoint) -> Bool {
+        let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        return buttons.contains { type in
+            guard let button = window.standardWindowButton(type) else { return false }
+            return button.convert(button.bounds, to: nil).contains(windowPoint)
+        }
+    }
+}
+
+private final class SheetScrimBox: @unchecked Sendable {
+    weak var owner: SheetScrimMonitor?
 }

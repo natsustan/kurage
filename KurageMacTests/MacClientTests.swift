@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import Synchronization
@@ -7,6 +8,77 @@ import WebKit
 
 @MainActor
 struct MacClientTests {
+    @Test func titlebarRestoresHostStateWhenMovingBetweenWindows() throws {
+        let first = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
+                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let second = NSWindow(contentRect: first.frame, styleMask: [.titled, .closable],
+                              backing: .buffered, defer: false)
+        first.titlebarAppearsTransparent = false
+        first.titlebarSeparatorStyle = .shadow
+        second.titlebarAppearsTransparent = true
+        second.titlebarSeparatorStyle = .line
+        let titlebar = try #require(first.standardWindowButton(.closeButton)?.superview)
+        let visibleFill = NSVisualEffectView(frame: titlebar.bounds)
+        let hiddenFill = NSVisualEffectView(frame: titlebar.bounds)
+        hiddenFill.isHidden = true
+        titlebar.addSubview(visibleFill)
+        titlebar.addSubview(hiddenFill)
+        let bridge = MacTitlebarSplitView(frame: .zero)
+        defer { bridge.removeFromSuperview() }
+
+        try #require(first.contentView).addSubview(bridge)
+        #expect(first.titlebarAppearsTransparent)
+        #expect(first.titlebarSeparatorStyle == .none)
+        #expect(visibleFill.isHidden)
+        #expect(hiddenFill.isHidden)
+        bridge.needsLayout = true
+        bridge.layoutSubtreeIfNeeded()
+
+        try #require(second.contentView).addSubview(bridge)
+        #expect(!first.titlebarAppearsTransparent)
+        #expect(first.titlebarSeparatorStyle == .shadow)
+        #expect(!visibleFill.isHidden)
+        #expect(hiddenFill.isHidden)
+        #expect(second.titlebarSeparatorStyle == .none)
+        bridge.removeFromSuperview()
+        #expect(second.titlebarAppearsTransparent)
+        #expect(second.titlebarSeparatorStyle == .line)
+    }
+
+    @Test func transcriptLayoutRecoveryPreservesFollowIntentAcrossRepeatedLayoutChanges() throws {
+        var recovery = MacTranscriptLayoutRecovery()
+        recovery.schedule(wasAtBottom: true, userScrolling: false)
+        let first = try #require(recovery.requestID)
+        // Reflow may report away from bottom before the next layout switch.
+        recovery.schedule(wasAtBottom: false, userScrolling: false)
+        let latest = try #require(recovery.requestID)
+        let completedSuperseded = recovery.complete(first)
+        let completedLatest = recovery.complete(latest)
+        #expect(!completedSuperseded)
+        #expect(completedLatest)
+        #expect(recovery.requestID == nil)
+        let completedTwice = recovery.complete(latest)
+        #expect(!completedTwice)
+    }
+
+    @Test func userScrollCancelsPendingTranscriptLayoutRecovery() throws {
+        var recovery = MacTranscriptLayoutRecovery()
+        recovery.schedule(wasAtBottom: true, userScrolling: false)
+        let pending = try #require(recovery.requestID)
+        recovery.cancel()
+        let completedCancelled = recovery.complete(pending)
+        #expect(!completedCancelled)
+        recovery.schedule(wasAtBottom: false, userScrolling: false)
+        #expect(recovery.requestID == nil)
+        recovery.schedule(wasAtBottom: true, userScrolling: true)
+        #expect(recovery.requestID == nil)
+        // Explicitly returning to the bottom allows a future layout recovery.
+        recovery.schedule(wasAtBottom: true, userScrolling: false)
+        let next = try #require(recovery.requestID)
+        let completedNext = recovery.complete(next)
+        #expect(completedNext)
+    }
+
     @Test func windowSelectionAndDraftsAreIndependent() {
         let first = MacWindowState()
         let second = MacWindowState()

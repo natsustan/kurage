@@ -1,5 +1,82 @@
 # Kurage 会话功能
 
+## Mac 搜索与贴底审查修复（2026-10-09）
+
+- 搜索索引任务以查询是否非空为标识；继续输入只匹配已有正文，不再取消并重新发起索引读取。全文匹配留在父视图，高亮、焦点和键盘滚动请求放到子视图，移动选择不再触发全文扫描。
+- 搜索悬停只改变高亮，方向键单独发出滚动请求。键盘滚动时记录指针位置，避免静止指针下的新行覆盖键盘选择；鼠标实际移动后恢复悬停选择。
+- 标签布局切换后的延迟贴底由 Transcript 管理。恢复请求带独立 ID，连续重排保留原来的跟随意图；真实滚动阶段、Transcript 内的滚轮／滚动条点击／滚动键输入会取消待执行恢复。输入监听只在恢复等待期间启用，离窗和移除时清理。
+- 新增 `--fixture-long-session-list`，复用已有长列表数据。新增搜索悬停／方向键 UI 回归，以及布局恢复取消、旧请求失效和连续重排的原生测试。
+- 本轮在 macOS 27 使用独立 bundle ID 的 fixture 验证应用，正式 KurageMac 进程保持运行。构建、13 项 Mac 原生测试、新增长列表搜索回归、Compact 切换、延迟图片贴底及已读重试回归通过；已查看浅色长列表搜索与深色搜索、Compact 和延迟图片截图。键盘回归改为向应用发送按键，保持搜索框焦点与指针位置，验证悬停行不移动、三次 Down 精确选中后第三项并由 Return 打开。
+- 两项既有 UI 用例 `testProjectHeadersCollapseAndOpenNewSession` 与 `testSidebarSearchAndNewSession` 在后续新建会话弹窗步骤出现间歇性超时，本轮均有通过和失败记录；未将整组 UI 测试报告为稳定通过。未修改新建弹窗行为。真实账号与 macOS 26 未验证。
+
+## Mac 侧栏与主区域底色（2026-10-09）
+
+- 主窗口侧栏 light `#F7F7F7`、dark `#111111`，会话区 light `#FCFCFC`、dark `#070707`。顶栏按同一条分栏切开：红绿灯和侧栏按钮在侧栏色上，标题在会话区色上。两栏之间是 1pt 分割线，light `#E4E4E4`、dark `#2A2A2A`，一直通到窗口顶。侧栏收起后顶栏整条回到会话区色，不再留下一块侧栏色。脚注底板跟侧栏同色。
+- 本轮验证：macOS 27 另开的浅色 fixture 和 `--fixture --fixture-dark` 都量过像素，空状态和 long conversation 的底色、分割线与上面一致。正式窗口当时在运行，没有跑会退出应用的 UI 测试。真实账号的持续会话和 macOS 26 未验证。
+
+## Mac 侧栏脚注（2026-10-09）
+
+- 侧栏底部的工作区菜单和设置按钮不再透出会话标题。脚注改成不透明底板，盖住滚到它下面的列表，底色与侧栏填充一致。
+- 本轮验证：macOS 27 另开的浅色长列表 fixture 滚到最后一行，标题停在脚注上方；深色 fixture 的脚注与侧栏同色，没有透字。正式窗口当时在运行，没有跑会退出应用的 UI 测试。
+
+## Mac 会话顶栏（2026-10-09）
+
+- 详情工具栏标题是项目名，副标题是机器名（去掉 `.local` 后缀）；没有项目时显示 Conversation。会话名只放在 tab 上，不再写 Main。iOS 的 Main 标签未改。
+- tab 栏常驻，tab 数量变化时对话不跳动。去掉灰色轨道、白色卡片和底部分隔线，与对话同底色；选中项是 primary 文字加 2pt 下划线。tab 栏位于 Changes inspector 内侧，与 transcript 共用 800pt 列和 24pt 边距，首个 tab 与正文左边缘对齐；溢出时两侧边距渐隐。运行中的 tab 显示小 spinner，未读的非当前 tab 显示强调色圆点，辅助功能值为 Running／Unread。新建 tab 支持 ⌘T。
+- tab 栏不放进 transcript 的 safe area：试过 `safeAreaBar` 和 `safeAreaInset`，前者的系统边缘效果在纯色背景上是一条硬白带，两者都会改变滚动几何，让延迟图片跟随底部和已读回执测试失败。现在 transcript 顶部叠一条 16pt 同色渐隐。
+- Settings > General > Tabs 新增 Tab layout：Separate（默认，上述独立 tab 行）和 Compact（类似 Safari 紧凑标签页）。偏好存于 `@AppStorage("tabLayout")`，与主题一样随 Mac 偏好走，fixture 使用独立 suite。Compact 把 tab 放进工具栏标题右侧、Changes 按钮左边，不使用共享玻璃底；选中项是淡色胶囊，状态点、spinner、⌘T、辅助功能标识与 Separate 相同。
+- Compact 的工具栏项按内容宽度汇报尺寸，flexible frame 或 `idealWidth` 会让 NSToolbar 把 tab 和 Changes 一起收进 “more toolbar items” 溢出菜单。因此宽度上限为详情宽度减 320pt（标题、按钮及侧栏收起时的窗口按钮），超出时横向滚动并两端渐隐；详情宽度低于 600pt 时自动退回 Separate 行。两种样式的 New Tab 都在滚动区外，tab 溢出时仍然可见；滚动区宽度不超过内容，tab 少时加号紧跟最后一个 tab。
+- 切换 Separate／Compact（包括窄窗口自动回退）会改变 transcript 高度，lazy 行重排几轮后被读成向上滚动，导致停止跟随底部并出现 Latest。若切换前在底部，布局稳定 250ms 后用现有 `scrollRequest` 重新贴底。曾尝试在 `MacTranscript` 中只屏蔽 resize 后的第一次偏移回退，但重排会持续多轮，已放弃。
+- 窗口标题随 `navigationTitle`／`navigationSubtitle` 变为「项目 – 机器」，UI 测试按 `toggle-changes` 定位主窗口而不是标题 `Kurage`。
+- 2026-10-09 Compact 验证（macOS 27 fixture）：Mac UI 加原生测试 31 项中 29 项通过，失败的 `testActivityGroupRevealsToolTitles`、`testSidebarSessionContextMenu` 与改动前 HEAD 相同。新增 `testCompactTabLayoutMovesTabsIntoToolbar`，覆盖设置切换、tab 与 Changes 同行且无溢出菜单、运行状态、切换 tab、打开 Changes，以及切回 Separate。临时把预留宽度调大后确认了宽度上限下的滚动与渐隐（之后已恢复为 320）。浅色截图已看过。
+- 2026-10-09 Compact 跟进验证：全量 31 项中 29 项通过，失败的两项与 HEAD 相同；Compact 用例新增“切换后不出现 Latest”断言。临时测试看过 Compact 深色、侧栏收起后 Compact（标题移到窗口按钮旁，无溢出菜单），以及 tab 溢出时加号仍可见。窄窗口回退通过临时把阈值调到 2000 验证了渲染和贴底，常量已恢复；XCUITest 拖动窗口边缘无法改变窗口大小，实际拖窄过程未验证。另观察到：Compact 状态不变时收起侧栏也会出现 Latest，属于 transcript 宽度重排，与 tab 布局无关，未处理。真实账号和 macOS 26 未验证。
+- 2026-10-09 第二轮验证（macOS 27 fixture）：Mac UI 加原生测试 30 项中 28 项通过。`testSidebarSessionContextMenu` 失败，在未改动的 HEAD 上也失败；`testConversationChangesAndNewTab` 第 224 行 Changes 加载超时一次，单独重跑两次通过。`testActivityGroupRevealsToolTitles` 在第一轮及 HEAD 上失败、本轮通过，属于不稳定用例。新增 `testRunningTabStatusAndStableTabBar`。浅色、深色、单 tab、多 tab、运行中 tab 和打开 Changes 的截图已看过。真实账号、macOS 26 和大字号未验证。
+- 本轮验证：macOS 27 fixture 里打开 long conversation 后，标题是 `kurage · spike@mac`，根 tab 标签是 `long conversation`，浅色截图已看过。深色、真实账号和 macOS 26 未验证。同一用例在点击 Changes 后进程 SIGABRT（分栏约束循环）。把顶栏改回会话名加大标题副标题、根 tab 写 Main 后，打开 Changes 同样崩溃，因此这次顶栏改动没有引入该崩溃。工作区里未完成的 composer 与侧栏改动未动。
+
+## Mac 欢迎页（2026-10-09）
+
+- 未登录窗口改成与 iPad 欢迎页同一套版式：圆角 Welcome Icon、点阵背景、居中的 “Welcome to Kurage”，底部胶囊 “Get Started”。设备码和授权链接只在连接时出现，取消走 `cancelConnect`。
+- `--fixture-signed-out` 让 fixture 直接停在这页。已登录的 `--fixture` 不变。
+- 本轮验证：macOS 27 上另开 `--fixture --fixture-signed-out` 与 `--fixture-dark --fixture-signed-out`，浅色和深色窗口都是圆角图标、点阵背景和底部 Get Started。没有退出用户正在运行的 KurageMac，也没有跑会抢走焦点的 UI 测试。真实账号授权和 macOS 26 尚未验证。
+
+## Mac 会话模型菜单（2026-10-09）
+
+- 已有会话的输入区不再弹出只有 reasoning 档位的系统菜单。按钮贴在发送按钮左侧，打开一个锚在按钮上方的 popover：上面是 Default Models（没有收藏时用最近模型），下面是 reasoning。`XHigh` 显示为 Extra High。
+- 能力带 reasoning 时，模型行只显示当前项和同 Agent 的快捷项，不能切换，避免中途换模型丢掉上下文缓存；reasoning 可以改，并写回该收藏模型的记忆。没有 reasoning 档位时才能改模型。没有可改项时只显示摘要。
+- 本轮验证：macOS 27 上另开的 `--fixture` 窗口中，long conversation 的按钮为 “gpt-5.5 · High”，贴在发送按钮左侧；popover 箭头朝下指向该按钮。Model 里 gpt-5.5 显示但不可点，Reasoning 的 Low、Medium、High 可点，High 有勾。选 Low 后按钮变为 “gpt-5.5 · Low” 并收起。review the PR 只有模型，Sonnet 与 Opus 都可点，选 Opus 后按钮变为 “Opus”。正式窗口当时在运行，所以没有跑会退出应用的 UI 测试。真实账号、Default Models 收藏列表与 macOS 26 尚未验证。
+
+## Mac 会话搜索面板（2026-10-09）
+
+- 打开搜索后只显示搜索框。空查询不再列出当前工作区的全部会话；输入后才按标题、预览、项目名和消息正文匹配，并显示 Sessions 列表。清空后结果收起。
+- 搜索框 18pt，结果标题 16pt，分组、摘要和行尾 Search 为 14pt。面板距窗口内容顶部 72pt。
+- 本轮验证：macOS 27 上另开的 `--fixture` 窗口中，空查询只有搜索框，输入 `long` 后只留下 long conversation。正式窗口当时在运行，所以没有跑会退出应用的 UI 测试。真实账号与 macOS 26 尚未验证。
+
+## Mac 设置（2026-10-08）
+
+- 侧栏底部的退出图标改为 `gearshape`。点击或 Command-, 打开独立的设置窗口，不随主窗口启动。
+- 设置窗口是左右分栏：左侧源列表放 General 和 Account，侧栏伸到红绿灯下面；右侧标题栏显示当前页名称。General 的 Appearance 可在 Light、Dark、System 之间切换，并立刻作用于主窗口和设置窗口。Account 显示账号名称和邮箱，Sign out 沿用原来的确认后再调用 `model.signOut()`，并关闭设置窗口。工作区切换仍留在侧栏底部。
+- 主题存在 Mac 自己的 `appTheme`。`--fixture` 使用独立的 UserDefaults suite，避免测试改到日常偏好；`--fixture-dark` 仍强制深色，保证已有截图用例。
+- 本轮验证：macOS 27 上另开的 `--fixture` 里看过浅色 General、深色 General（Dark 选中）和 Account。侧栏通到红绿灯下，页名在右侧标题栏，点 Account 会切过去。当时已有 Kurage 在跑，所以没有跑会退出应用的 UI 测试。真实账号与 macOS 26 尚未验证。
+
+## Mac 新建会话关闭方式（2026-10-08）
+
+- 新建会话和新建标签页弹窗去掉右上角关闭按钮。点击窗口中变暗的遮罩会关闭弹窗；Esc 仍然关闭。弹窗内的项目、Agent、模型和输入区点击不会关闭。
+- 本轮验证：macOS 27 fixture UI 中，`testProjectHeadersCollapseAndOpenNewSession` 确认没有 Cancel 按钮，点击遮罩后弹窗关闭；`testDarkNewRootSessionAndSignOut` 在弹窗内切换项目、Agent 和模型并创建会话。真实账号与 macOS 26 尚未验证。
+
+## Mac 会话搜索面板（2026-10-08）
+
+- 侧栏「Search sessions」改为与 New Session 同排版的按钮，放大镜仍用 16pt 槽，左缘与 New Session、文件夹对齐。Command-F 或点击按钮打开搜索，再按一次或按 Esc、点击面板外关闭。
+- 面板停在窗口上方：顶部是搜索框，其下按 Sessions 列出当前工作区会话。空查询列出全部会话。输入后立即匹配标题、预览和项目名；消息正文沿用 `SessionSearch`，标题未命中时在标题下显示一行摘要。方向键移动高亮，Return 或点击打开该会话。
+- 打开结果会先展开它所在的项目，侧栏选中行仍然存在。侧栏折叠不再因为输入关键字而临时展开。
+- 本轮验证：macOS 27 fixture UI 中，`testSidebarSearchAndNewSession` 与 `testProjectHeadersCollapseAndOpenNewSession` 通过。覆盖按钮与 New Session 左缘对齐、正文「Question 7」命中 long conversation、项目名「PrIsM」只留下 review the PR、点击结果打开该会话、无命中时空状态、Esc 关闭后面板不挡工作区菜单，以及折叠中的 prism 在打开搜索结果后展开。已查看侧栏初始与搜索面板截图。真实账号、深色模式、方向键移动高亮和 macOS 26 尚未验证。
+
+## Mac 项目分组图标与折叠（2026-10-08）
+
+- Mac 侧栏项目名使用与 iOS 相同的文件夹图标：展开为 `folder-open`，折叠为 `folder-closed`；没有项目的会话使用气泡图标。点击项目名折叠或展开该组会话。搜索改到独立面板后，折叠不再随关键字临时展开；从搜索打开会话时会展开它所在的项目。
+- 可新建会话的本地项目在名称右侧显示 `pencil-square`，打开该项目的新建会话。不能新建时不显示按钮，点击名称仍可折叠。
+- 会话标题与项目名共用左缘：文件夹 16pt，间距 6pt，会话行从这之后起排。New Session 与搜索图标使用同一个 16pt 槽和 6pt 间距，左缘在侧栏 20pt 处，与文件夹字形、底部工作区菜单对齐。
+- 本轮验证：macOS 27 fixture UI 中，项目头折叠后再展开、搜索期间临时展开并在清空后恢复、右侧按钮打开 prism 新建会话，以及关闭新建能力后的折叠，均已通过。2026-10-08 复查截图像素：New Session、搜索、文件夹图标左缘同在 20pt，「New Session」「Search sessions」与「kurage」及会话标题左缘相差不超过 1.5pt。侧栏搜索与新建两项回归通过。真实账号与 macOS 26 尚未验证。
+
 ## macOS 分支审查修复（2026-10-08）
 
 - 明确失败的消息提供 Edit，恢复正文和附件；已有新草稿时先确认替换。首条消息失败会返回创建界面，保留原 Agent、仍有效的模型／推理选择与附件。投递未确认时继续沿用原 session/turn ID 重试，不开放编辑。
@@ -11,6 +88,7 @@
 ## Native macOS client and shared core (2026-10-08)
 
 - Added a native macOS 26+ SwiftUI app in this repository, not Catalyst. The initial app uses one window with a project/session sidebar, conversation tabs and a default-closed Changes inspector. It does not execute local agents or provide a terminal. Notifications, Quick Actions and additional settings remain deferred on Mac.
+- The Mac app icon reuses the iOS `AppIcon.png`. The 1024 image is copied as the 512pt @2x slot, and the smaller Mac slots are scaled from that same image until a Mac-specific icon exists. macOS applies its own rounded mask.
 - Sidebar controls: New Session is a left-aligned button at the top of the sidebar, with a search field directly below it. It opens the composer directly (also via Command-N), defaulting to the most recently active local root project's template, independently of pinning and search. The sheet contains a project menu, Agent, Model and Reasoning choices, a multiline editor and Create (Command-Return); Return inserts a newline. Switching projects preserves text and attachments, cancels the previous configuration load and disables creation until the new configuration is ready. New Tab shares the composer but keeps its parent's project fixed. The left-aligned workspace selector is pinned to the sidebar bottom beside Sign out; the account email is hidden. Existing automatic session-list refresh remains unchanged.
 - Mac attachment input: both first-message and conversation editors accept Command-V for clipboard PNG/TIFF images and Finder file URLs, preferring file URLs over Finder's image/text representations. Ordinary text uses the native text system. The plus button also accepts files, not only images. Imports run off the main actor, retain security-scoped access while reading, support cancellation, and keep draft data only in memory. Up to 8 attachments are allowed; files are limited to 16 MiB and image payloads to 5 MiB. TIFF/HEIC and oversized images are converted to JPEG with a maximum edge of 2048 pixels; valid supported images retain their original data. Previews and removable file chips use the existing shared attachment/outbox upload protocol.
 - Composer validation: the Mac build, all 6 native tests and all 5 fixture UI tests passed. Native coverage includes recent local-root selection independent of list order, file URL precedence, plain-text fallback, TIFF conversion, original PNG preservation, the 16 MiB file boundary, invalid inputs and cancellation. UI coverage includes multiline input, image/file paste, project switching with draft preservation, creation and existing-session attachments, plus existing tab/send/search/preview flows. After guarding repeated Agent selection, the dark creation test passed again with Agent round trips, repeated selection, Command-N and Command-Return. Final light/dark, empty, attached, New Tab and conversation-composer screenshots were inspected. The initial menu-to-button alignment regression was corrected and its existing assertion passed. No shared protocol or iOS source changed; real-account upload/dispatch, slow iCloud imports, macOS 26 and Intel remain unverified.
@@ -1183,3 +1261,9 @@
 - Mac 已读回执与 iOS 一致，最多尝试三次、失败后间隔两秒重试；使用视图捕获的工作区 generation，保持底部、前台和视图任务的取消约束。侧栏通过无障碍值提供 Read/Unread 状态。
 - 新增无创建能力和前两次回执失败的 fixture，UI 回归覆盖禁用 New tab、无需重新进入会话即可恢复已读，以及原有创建标签页流程。
 - 本轮验证：macOS 27 上上述三项 UI 回归通过，`git diff --check` 通过。真实账号的缺少 user ID 和断网恢复场景尚未实测。
+
+### Mac 分支审查：标题栏生命周期与浮层布局（2026-10-09）
+
+- 标题栏 bridge 在卸载或移动到另一窗口时恢复原始透明度、分隔线，以及本次安装实际隐藏的系统背景视图；原先已隐藏的视图保持不变，重复布局不覆盖原始状态。保留现有分栏配色与标题栏背景探测，不扩大本轮重构范围。
+- 配置浮层关闭时不构建／更新托管内容，也不进行尺寸测量；打开时加载最新内容，展示期间仍随配置更新尺寸。关闭既有浮层的路径保持可用。
+- 本轮 Mac 构建及 14 项 `KurageMacTests` 通过，新增回归覆盖窗口间移动、卸载恢复、重复布局和原先已隐藏的背景。新增浅／深色浮层 UI 回归覆盖选择后关闭、重新打开时保留选择及草稿；UI 检查因当前 Mac 锁屏而无法激活应用，尚未完成界面断言和截图检查，解锁后需重跑。真实账号与 macOS 26 未实测。
