@@ -205,7 +205,8 @@ extension SessionRunConfig {
         let reasoningLabel = reasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
         let parts = [model?.label, reasoningLabel].compactMap { $0 }
         guard !parts.isEmpty || fastMode != nil else { return nil }
-        let accessibility = [model.map { "Model \($0.label)" }, reasoningLabel.map { "reasoning \($0)" }]
+        let accessibility = [model.map { "Model \($0.label)" }, reasoningLabel.map { "reasoning \($0)" },
+                             fastMode.map { "Fast mode \($0.value)" }]
             .compactMap { $0 }.joined(separator: ", ")
         var sections: [RunConfigMenu.Section] = []
         if let editable {
@@ -273,7 +274,8 @@ extension NewSessionOptions {
         return RunConfigMenu(
             modelLabel: model, reasoningLabel: reasoning, providerLabel: provider,
             accessibilitySummary: [provider.map { "Provider \($0)" }, model.map { "model \($0)" },
-                                   reasoning.map { "reasoning \($0)" }]
+                                   reasoning.map { "reasoning \($0)" },
+                                   runConfig?.fastMode.map { "Fast mode \($0.value)" }]
                 .compactMap { $0 }.joined(separator: ", "),
             sections: sections
         )

@@ -1410,6 +1410,43 @@ struct ReasoningPresentationTests {
 }
 
 struct FastModeRunConfigTests {
+    @Test(arguments: ["on", "off", nil] as [String?], [true, false])
+    func sessionMenuAnnouncesFastState(value: String?, hasModelAndReasoning: Bool) {
+        let config = SessionRunConfig(
+            model: hasModelAndReasoning ? .init(value: "big", label: "Big") : nil,
+            reasoning: hasModelAndReasoning ? .init(value: "high", label: "High") : nil,
+            editable: nil,
+            fastMode: value.map { .init(configOptionID: "fast-mode", value: $0, isBoolean: true) }
+        )
+        let expected = switch (hasModelAndReasoning, value) {
+        case (true, .some(let value)): "Model Big, reasoning High, Fast mode \(value)"
+        case (true, .none): "Model Big, reasoning High"
+        case (false, .some(let value)): "Fast mode \(value)"
+        case (false, .none): nil as String?
+        }
+        #expect(config.menu?.accessibilitySummary == expected)
+    }
+
+    @Test(arguments: ["on", "off", nil] as [String?], [true, false])
+    func newSessionMenuAnnouncesFastState(value: String?, hasModelAndReasoning: Bool) {
+        let config = NewSessionRunConfig(
+            fastMode: value.map { .init(configOptionID: "fast-mode", value: $0, isBoolean: true) },
+            model: hasModelAndReasoning ? .init(configOptionID: nil, value: "big", options: [
+                .init(value: "big", label: "Big", reasoning: [.init(value: "high", label: "High")])
+            ]) : nil,
+            reasoning: hasModelAndReasoning ? .init(configOptionID: "reasoning_effort", value: "high", options: []) : nil
+        )
+        let options = NewSessionOptions(machineName: "Mac", agentConfigID: "codex",
+            providers: [.init(value: "codex", label: "Codex")], runConfig: config)
+        let expected = switch (hasModelAndReasoning, value) {
+        case (true, .some(let value)): "Provider Codex, model Big, reasoning High, Fast mode \(value)"
+        case (true, .none): "Provider Codex, model Big, reasoning High"
+        case (false, .some(let value)): "Provider Codex, Fast mode \(value)"
+        case (false, .none): "Provider Codex"
+        }
+        #expect(options.menu(config).accessibilitySummary == expected)
+    }
+
     @Test func combinedChoiceKeepsNewFastSelectionAfterRetry() throws {
         var state = ConversationRunConfigState()
         state.receive(.fixtureReasoning)
