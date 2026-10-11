@@ -1471,7 +1471,7 @@ final class ShellFlowTests: XCTestCase {
         tap(field)
         XCTAssertGreaterThan(menu.frame.minY, field.frame.minY)
         XCTAssertGreaterThan(app.buttons["send-follow-up"].frame.minY, field.frame.minY)
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High, Fast mode off")
         attachScreen(app, name: "run-config-row")
 
         tap(menu)
@@ -1511,13 +1511,13 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["run-config-done"])
         tap(field)
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low, Fast mode on")
 
         tap(field)
         field.typeText("go faster")
         tap(app.buttons["send-follow-up"])
         XCTAssertTrue(app.staticTexts["go faster"].waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low, Fast mode on")
     }
 
     @MainActor
@@ -1812,7 +1812,7 @@ final class ShellFlowTests: XCTestCase {
         tap(app.buttons["run-config-done"])
         tap(field)
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Provider Codex, model gpt-5.5, reasoning Medium")
+        XCTAssertEqual(menu.label, "Provider Codex, model gpt-5.5, reasoning Medium, Fast mode on")
         attachScreen(app, name: "new-session")
 
         tap(field)

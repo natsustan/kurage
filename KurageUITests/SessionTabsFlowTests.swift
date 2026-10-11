@@ -281,7 +281,8 @@ final class SessionTabsFlowTests: XCTestCase {
         tap(app.buttons["run-config-model"])
         tap(app.buttons["gpt-5.4-mini"])
         tap(app.buttons["run-config-reasoning"])
-        tap(app.buttons["Low"])
+        tap(app.buttons.matching(NSPredicate(format:
+            "label == %@ AND identifier != %@", "Low", "run-config-reasoning")).element)
         attachScreen(name: "New tab chosen model and reasoning")
         tap(app.buttons["run-config-done"])
         XCTAssertTrue(configuration.label.contains("gpt-5.4-mini"))
@@ -297,7 +298,7 @@ final class SessionTabsFlowTests: XCTestCase {
         XCTAssertTrue(child.isSelected)
         XCTAssertTrue(main.exists)
         XCTAssertTrue(app.descendants(matching: .any)["session-tab-bar"].exists)
-        XCTAssertTrue(configuration.wait(for: \.label, toEqual: "Model gpt-5.4-mini, reasoning Low", timeout: 5))
+        XCTAssertTrue(configuration.wait(for: \.label, toEqual: "Model gpt-5.4-mini, reasoning Low, Fast mode off", timeout: 5))
         XCTAssertTrue(app.staticTexts["Independent tab conversation"].firstMatch.exists)
         XCTAssertNotEqual(composer.value as? String, "Main draft remains here")
         tap(composer)

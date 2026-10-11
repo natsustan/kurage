@@ -357,9 +357,9 @@ final class MacFlowTests: XCTestCase {
             XCTAssertTrue(low.waitForNonExistence(timeout: 5))
             XCTAssertEqual(editor.value as? String, "Keep configuration draft")
             editor.typeKey(.upArrow, modifierFlags: [.command, .option])
-            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Medium", timeout: 5))
+            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Medium, Fast mode on", timeout: 5))
             editor.typeKey(.downArrow, modifierFlags: [.command, .option])
-            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Low", timeout: 5))
+            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Low, Fast mode on", timeout: 5))
             XCTAssertEqual(editor.value as? String, "Keep configuration draft")
             app.terminate()
         }
