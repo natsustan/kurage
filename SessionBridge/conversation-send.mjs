@@ -164,7 +164,13 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         return 'rejected';
       }
       const fast = projection?.fastMode;
-      if (fast && config.configOptionValues?.[fast.configOptionID] !== undefined) {
+      if (fast && inheritsFast) {
+        // Fast IDs may migrate as well as their wire types. Keep only the
+        // current capability's ID, without mutating the inherited snapshot.
+        const values = { ...config.configOptionValues };
+        delete values.fast;
+        delete values['fast-mode'];
+        config = { ...config, configOptionValues: values };
         config = applyRunConfigChoice(config, { configOptionID: fast.configOptionID,
           value: fast.isBoolean ? fast.value === 'on' : fast.value });
       }

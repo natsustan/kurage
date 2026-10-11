@@ -736,6 +736,47 @@ for (const id of ['fast-mode', 'fast']) {
   }
 }
 
+for (const [oldID, newID] of [['fast', 'fast-mode'], ['fast-mode', 'fast']]) {
+  for (const type of ['boolean', 'select']) {
+    for (const source of ['history', 'runtime', 'both keys']) {
+      for (const explicit of [false, true]) {
+        test(`Fast ID ${oldID} migrates to ${newID}/${type} from ${source}, explicit=${explicit}`, async () => {
+          const { repo, doc, meta } = fixture();
+          Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+          const enabled = type === 'boolean' ? true : 'on';
+          const disabled = type === 'boolean' ? false : 'off';
+          const values = { [oldID]: 'on', reasoning_effort: 'high' };
+          if (source === 'both keys') values[newID] = disabled;
+          doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: values } });
+          if (source === 'runtime') {
+            doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+            doc.getMap('acpRuntimeConfig').set('configOptionValues', values);
+          }
+          const capability = { cliType: 'codex', agentType: 'codex', configOptions: [
+            { id: newID, type, currentValue: enabled, options: [{ value: 'on' }, { value: 'off' }] },
+          ] };
+          repo.openFlockDoc = async () => ({ flock: { get: () => capability } });
+          const choice = explicit ? { configOptionID: newID, value: disabled } : undefined;
+          let docSyncs = 0;
+          repo.sync = async options => ({ outcome: options.docIds && ++docSyncs === 2 ? 'failed' : 'synced' });
+          const send = () => sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', choice, [], undefined, 'workspace');
+          assert.equal(await send(), 'unconfirmed');
+          const written = doc.getList('history').toJSON()[1].inputConfig;
+          // A complete runtime snapshot omitting the new key projects off;
+          // otherwise the new key, then capability default, determines the value.
+          const expected = explicit || source !== 'history' ? disabled : enabled;
+          assert.deepEqual(written.configOptionValues, { [newID]: expected, reasoning_effort: 'high' });
+          assert.deepEqual(doc.getList('history').toJSON()[0].inputConfig.configOptionValues, values);
+          repo.openFlockDoc = async () => assert.fail('Retry must retain its authored configuration');
+          assert.equal(await send(), 'sent');
+          assert.equal(doc.getList('history').length, 2);
+          assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig, written);
+        });
+      }
+    }
+  }
+}
+
 test('a complete runtime snapshot does not restore inherited Fast from history', async () => {
   const { repo, doc, meta } = fixture();
   Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
