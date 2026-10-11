@@ -174,8 +174,12 @@ struct MacRunConfigButton: View {
     let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
     @State private var suppressOpen = false
 
-    private var summary: String {
-        [menu.modelLabel, menu.reasoningLabel].compactMap { $0 }.joined(separator: " · ")
+    var summary: String {
+        let title = [menu.modelLabel, menu.reasoningLabel].compactMap { $0 }.joined(separator: " · ")
+        if title.isEmpty, let fast = menu.sections.first(where: { $0.kind == .fastMode }) {
+            return fast.selection == "on" ? "Fast mode on" : "Fast mode off"
+        }
+        return title
     }
 
     private var reasoning: RunConfigMenu.Section? {

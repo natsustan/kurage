@@ -8,6 +8,21 @@ import WebKit
 
 @MainActor
 struct MacClientTests {
+    @Test(arguments: ["on", "off"])
+    func fastOnlyConfigurationShowsItsStateInTheVisibleTitle(value: String) {
+        var menu = RunConfigMenu(accessibilitySummary: "Fast mode \(value)", sections: [
+            .init(kind: .fastMode, options: [.init(value: "off", label: "Off"), .init(value: "on", label: "On")],
+                  selection: value)
+        ])
+        let fastOnly = MacRunConfigButton(menu: menu, isPresented: .constant(false)) { _, _ in }
+        #expect(fastOnly.summary == "Fast mode \(value)")
+
+        menu.modelLabel = "gpt-5.5"
+        menu.reasoningLabel = "High"
+        let full = MacRunConfigButton(menu: menu, isPresented: .constant(false)) { _, _ in }
+        #expect(full.summary == "gpt-5.5 · High")
+    }
+
     @Test func titlebarRestoresHostStateWhenMovingBetweenWindows() throws {
         let first = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)

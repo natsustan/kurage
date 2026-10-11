@@ -1286,6 +1286,7 @@
 
 ### Fast mode 分支审查修复（2026-10-11）
 
+- PR #50 第三轮审查：macOS 配置按钮在 model/reasoning 标题为空且 Fast 可用时显示 `Fast mode on/off`，不再回退到误导性的模型选择提示；已有模型与 reasoning 标题保持原样。本轮 Mac 构建通过，针对性参数化测试的 on/off 两种情况通过，同时检查原有标题保留。首次测试筛选未命中用例，修正为完整 Swift Testing 方法签名后实际执行通过；本轮未运行 UI 测试。
 - PR #50 第二轮审查：同步更新 iOS/macOS UI 回归中的 10 处精确标签期望，覆盖 Fast 关闭、开启、发送后保留、新会话、收藏模型与 New Tab。iOS 首轮 4 项用例中 3 项通过；New Tab 因 `Low` 同时匹配菜单项与 reasoning 入口而失败，收窄测试选择器后单独重跑通过。macOS 目标编译成功，但 UI 用例在初始 fixture 会话列表等待超时，尚未执行到标签断言；随后测试进程异常退出，截图附件未完成，原因未确定，不能视为 Mac UI 验证通过。
 - PR #50 辅助功能审查：已有会话与新会话的配置摘要在 Fast 可用时包含 `Fast mode on/off`，避免仅有 Fast 时出现空标签或错误的模型选择提示。本轮 iPhone 17／iOS 27 上 5 项 `FastModeRunConfigTests` 通过，其中新增两项参数化测试覆盖 12 种摘要组合；macOS 关闭签名的构建通过。未运行 UI 测试或手动验证 VoiceOver 朗读。
 - 已有会话的 Fast capability 缺失或类型变化时，写入前校验返回明确的 `rejected`，原生 outbox 按确定未送达处理并开放编辑，避免保留失效选择反复重试。同步异常仍走原有错误路径；已写入 turn 的重试继续保留原配置。
