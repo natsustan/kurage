@@ -1407,6 +1407,34 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFastOnlyPanelHasNoModelEntrypoints() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-fast-only"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        tap(app.descendants(matching: .any)["follow-up-field"])
+        let menu = app.buttons["run-config-menu"]
+        tap(menu)
+        XCTAssertFalse(app.buttons["run-config-choose-model"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model-shortcut-")).firstMatch.exists)
+        let advanced = app.buttons["run-config-advanced"]
+        XCTAssertEqual(advanced.label, "Advanced")
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
+        attachScreen(app, name: "fast-only-panel")
+        tap(advanced)
+        XCTAssertFalse(app.buttons["run-config-model"].exists)
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        XCTAssertEqual(fast.value as? String, "1")
+        tap(app.buttons["run-config-done"])
+        tap(app.descendants(matching: .any)["follow-up-field"])
+        XCTAssertEqual(menu.label, "Fast mode on")
+    }
+
+    @MainActor
     func testFastModePanelPreservesSelectionInDarkLargeText() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture", "-appTheme", "dark",

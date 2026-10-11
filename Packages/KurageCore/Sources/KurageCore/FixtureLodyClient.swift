@@ -955,6 +955,15 @@ public final class FixtureLodyClient: LodyClient {
 }
 
 public struct SessionRecord: Equatable, Sendable {
+    public static var samplesWithFastOnly: [SessionRecord] {
+        samples.map { sample in
+            var record = sample
+            record.runConfig = SessionRunConfig(model: nil, reasoning: nil, editable: nil,
+                fastMode: .init(configOptionID: "fast-mode", value: "off", isBoolean: true))
+            return record
+        }
+    }
+
     public var summary: SessionSummary
     public var turns: [ConversationTurn]
     public var permission: PermissionPrompt?

@@ -139,7 +139,12 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     for (const key of INHERITED_TURN_CONFIG_KEYS) {
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];
     }
-    if (hasFastModeChoice(runConfig)) {
+    const inheritsFast = ['fast-mode', 'fast'].some(id => config.configOptionValues?.[id] !== undefined);
+    // Legacy sessions without a machine capability retain their opaque baseline.
+    // Whenever a capability can be resolved, inherited Fast needs the same wire
+    // type as the picker even when the user did not touch its switch.
+    if (hasFastModeChoice(runConfig) ||
+        (inheritsFast && workspaceID && row.meta.machineId && row.meta.agentConfigId)) {
       const { machineId, agentConfigId } = row.meta;
       if (!workspaceID || !machineId || !agentConfigId) return 'rejected';
       const flockDocID = `${workspaceID}:mf:${machineId}`;
@@ -157,6 +162,11 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         // No turn has been authored: let the native outbox release this choice
         // for editing instead of retrying an invalid configuration forever.
         return 'rejected';
+      }
+      const fast = projection?.fastMode;
+      if (fast && config.configOptionValues?.[fast.configOptionID] !== undefined) {
+        config = applyRunConfigChoice(config, { configOptionID: fast.configOptionID,
+          value: fast.isBoolean ? fast.value === 'on' : fast.value });
       }
     }
     config = applyRunConfigChoice(config, runConfig);

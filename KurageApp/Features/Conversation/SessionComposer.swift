@@ -685,6 +685,12 @@ private struct RunConfigPanel: View {
     let onAdvanced: () -> Void
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
+    private var hasModelConfiguration: Bool {
+        runConfig.modelLabel != nil || runConfig.modelShortcuts.contains(where: \.isEnabled) ||
+            runConfig.sections.contains(where: { $0.kind == .model }) ||
+            runConfig.isLoading || runConfig.loadFailed
+    }
+
     private var groupBackground: Color {
         Color(uiColor: reduceTransparency ? .secondarySystemGroupedBackground : .secondarySystemFill)
     }
@@ -706,7 +712,7 @@ private struct RunConfigPanel: View {
                 Spacer(minLength: 0)
                 Button(action: onAdvanced) {
                     HStack(spacing: 6) {
-                        Text("Select model").fontWeight(.semibold)
+                        Text(hasModelConfiguration ? "Select model" : "Advanced").fontWeight(.semibold)
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
@@ -718,7 +724,7 @@ private struct RunConfigPanel: View {
                 Color.clear.frame(width: 44, height: 44)
                     .accessibilityHidden(true)
             }
-            if !runConfig.modelShortcuts.isEmpty {
+            if hasModelConfiguration && !runConfig.modelShortcuts.isEmpty {
                 VStack(spacing: 0) {
                     ForEach(runConfig.modelShortcuts) { shortcut in
                         RunConfigModelRow(shortcut: shortcut) {
@@ -731,7 +737,7 @@ private struct RunConfigPanel: View {
                     }
                 }
                 .background(groupBackground, in: .rect(cornerRadius: 20))
-            } else {
+            } else if hasModelConfiguration {
                 Button(action: onAdvanced) {
                     HStack {
                         Text("Choose a model…")

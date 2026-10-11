@@ -700,6 +700,64 @@ for (const kind of ['missing capability', 'changed type', 'missing agent']) {
   });
 }
 
+for (const id of ['fast-mode', 'fast']) {
+  for (const [type, oldValue, currentValue] of [['boolean', 'on', false], ['select', true, 'off']]) {
+    for (const runtime of [false, true]) {
+      test(`inherited ${id} migrates to ${type} from ${runtime ? 'runtime' : 'history'} without a choice`, async () => {
+        const { repo, doc, meta } = fixture();
+        Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+        doc.getList('history').push({ id: 'old', role: 'user', inputConfig: {
+          configOptionValues: { [id]: oldValue, reasoning_effort: 'high' },
+        } });
+        if (runtime) {
+          doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+          doc.getMap('acpRuntimeConfig').set('configOptionValues', { [id]: oldValue, reasoning_effort: 'low' });
+        }
+        const capability = { cliType: 'codex', agentType: 'codex', configOptions: [
+          { id, type, currentValue, options: [{ value: 'on' }, { value: 'off' }] },
+        ] };
+        repo.openFlockDoc = async key => {
+          assert.equal(key, 'workspace:mf:machine');
+          return { flock: { get: () => capability } };
+        };
+        let docSyncs = 0;
+        repo.sync = async options => ({ outcome: options.docIds && ++docSyncs === 2 ? 'failed' : 'synced' });
+        const send = () => sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace');
+        assert.equal(await send(), 'unconfirmed');
+        const written = doc.getList('history').toJSON()[1].inputConfig;
+        assert.deepEqual(written.configOptionValues,
+          { [id]: currentValue, reasoning_effort: runtime ? 'low' : 'high' });
+        repo.openFlockDoc = async () => assert.fail('An authored retry must not reread capability');
+        assert.equal(await send(), 'sent');
+        assert.equal(doc.getList('history').length, 2);
+        assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig, written);
+      });
+    }
+  }
+}
+
+test('a complete runtime snapshot does not restore inherited Fast from history', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: { 'fast-mode': 'on' } } });
+  doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  doc.getMap('acpRuntimeConfig').set('configOptionValues', {});
+  repo.openFlockDoc = async () => assert.fail('No inherited Fast to normalize');
+  assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace'), 'sent');
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig.configOptionValues, {});
+});
+
+test('inherited Fast waits for capability sync before authoring', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: { 'fast-mode': 'on' } } });
+  repo.openFlockDoc = async () => ({ flock: { get: () => undefined } });
+  repo.sync = async options => ({ outcome: options.flockDocIds ? 'failed' : 'synced' });
+  await assert.rejects(sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace'), /capability sync failed/);
+  assert.equal(doc.getList('history').length, 1);
+  assert.equal(meta.latestUserMsgId, undefined);
+});
+
 test('a failed Fast capability sync is not mistaken for a definite rejection', async () => {
   const { repo, doc, meta } = fixture();
   Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
