@@ -674,6 +674,38 @@ test('Fast is checked before authoring and retries retain the original typed con
   assert.deepEqual(doc.getList('history').toJSON()[0].inputConfig.configOptionValues,
     { reasoning_effort: 'low', 'fast-mode': true });
   meta.lastHandledUserMsgId = 'fast-turn';
-  await assert.rejects(sendText(repo, 'chat', 'second', 'user', 'Next', 'now', choice, [], undefined, 'workspace'), /Fast mode/);
+  assert.equal(await sendText(repo, 'chat', 'second', 'user', 'Next', 'now', choice, [], undefined, 'workspace'), 'rejected');
   assert.equal(doc.getList('history').toJSON().length, 1);
+});
+
+for (const kind of ['missing capability', 'changed type', 'missing agent']) {
+  test(`Fast ${kind} rejects an unauthored turn and allows a corrected send`, async () => {
+    const { repo, doc, meta } = fixture();
+    Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+    const capability = kind === 'missing capability' ? undefined : {
+      cliType: 'codex', agentType: 'codex', configOptions: [
+        { id: 'fast-mode', type: 'select', currentValue: 'off', options: [{ value: 'on' }, { value: 'off' }] },
+      ],
+    };
+    if (kind === 'missing agent') delete meta.agentConfigId;
+    repo.openFlockDoc = async () => ({ flock: { get: () => capability } });
+    const choice = { configOptionID: 'fast-mode', value: true };
+    assert.equal(await sendText(repo, 'chat', 'rejected-turn', 'user', 'Hello', 'now',
+      choice, [], undefined, 'workspace'), 'rejected');
+    assert.equal(doc.getList('history').length, 0);
+    assert.equal(meta.latestUserMsgId, undefined);
+    assert.equal(await sendText(repo, 'chat', 'corrected-turn', 'user', 'Edited', 'now'), 'sent');
+    assert.equal(doc.getList('history').length, 1);
+    assert.equal(meta.latestUserMsgId, 'corrected-turn');
+  });
+}
+
+test('a failed Fast capability sync is not mistaken for a definite rejection', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  repo.openFlockDoc = async () => ({ flock: { get: () => undefined } });
+  repo.sync = async options => ({ outcome: options.flockDocIds ? 'failed' : 'synced' });
+  await assert.rejects(sendText(repo, 'chat', 'turn', 'user', 'Hello', 'now',
+    { configOptionID: 'fast-mode', value: true }, [], undefined, 'workspace'), /capability sync failed/);
+  assert.equal(doc.getList('history').length, 0);
 });

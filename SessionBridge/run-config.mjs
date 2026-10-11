@@ -91,7 +91,11 @@ function projectFastMode(usable, values, allowDefault = true) {
       (option.type === 'select' && Array.isArray(option.options) && ['on', 'off'].every(value =>
         option.options.some(choice => choice.value === value)))));
   if (!option) return undefined;
-  const raw = values[option.id] ?? (allowDefault ? option.currentValue : undefined);
+  const stored = values[option.id];
+  const valid = option.type === 'boolean' ? typeof stored === 'boolean' : ['on', 'off'].includes(stored);
+  // Old turns may carry the previous wire type. Fall back to the capability,
+  // while preserving an omitted key in a complete runtime snapshot as off.
+  const raw = valid ? stored : (stored !== undefined || allowDefault ? option.currentValue : undefined);
   return { configOptionID: option.id, isBoolean: option.type === 'boolean',
     value: (option.type === 'boolean' ? raw === true : raw === 'on') ? 'on' : 'off',
     description: text(option.description) ?? null };

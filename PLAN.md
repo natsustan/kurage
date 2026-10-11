@@ -1283,3 +1283,9 @@
 - 协议以 Lody `packages/shared/src/acp-run-config.ts`、`components/shared/acp-selector-options.ts`、`packages/acp-extension-codex/src/FastModeConfig.ts` 为准；支持 boolean 与旧式 `on/off` select，布尔值原样写入 `inputConfig.configOptionValues`。新会话及已有会话写入前校验 capability；缺失或类型变化时拒绝新的 Fast 选择。未确认重试沿用原 turn 和配置，不受后续 capability 变化影响。
 - 共享选择状态可同时携带 reasoning 与 Fast，发送完成逐项消费；重试期间新选择的 Fast/reasoning 保留。新会话 provider 切换时按 provider 保存选择，工作区隔离和 outbox 恢复沿用既有机制。fixture 同步支持 Fast。
 - 本轮 frozen lockfile 安装、367 项 JS 测试及 bundle 重建通过；Swift 核心包编译通过。iOS 首轮 330 项单元测试仅旧配置项数断言失败（Fast 加入后由 2 项变 3 项），修正后 17 项相关 Swift 测试通过。已有会话、新会话、深色 Accessibility XXXL 的 3 项 UI 测试通过并检查截图，覆盖开关切换和重开保留；首次 UI 测试点击了开关整行中部，改为命中实际滑块后通过。Mac 最终构建通过；默认签名遇到 errSecInternalComponent，临时 ad-hoc 签名后测试宿主卡在系统 App Sandbox 初始化，已停止，未取得本轮 Mac 单元/UI 测试通过结果。真实账号中 CLI 应用 Fast、提速和使用量变化尚未实测。上文“Fast 未接入”的描述为历史状态，以本节为准。
+
+### Fast mode 分支审查修复（2026-10-11）
+
+- 已有会话的 Fast capability 缺失或类型变化时，写入前校验返回明确的 `rejected`，原生 outbox 按确定未送达处理并开放编辑，避免保留失效选择反复重试。同步异常仍走原有错误路径；已写入 turn 的重试继续保留原配置。
+- Fast 投影先验证保存值是否匹配当前 capability 的类型；旧 `on/off` 与 boolean 格式切换时，失配值回退到 capability 当前值，避免把开启状态误判为关闭。完整 runtime 快照省略该 key 时仍显示关闭，不恢复旧 turn 的值。
+- 本轮新增回归先复现原问题，修复后 frozen lockfile 安装、373 项 JavaScript 测试与 bundle 重建通过。iPhone 17／iOS 27 模拟器构建及 57 项 `HTTPLodyClientTests`／`OutgoingMessageTests`／`FastModeRunConfigTests` 通过，覆盖原生 pending 清理、编辑恢复及 Fast 选择消费。本轮未跑 UI 或 Mac 测试；真实账号 capability 迁移与网络恢复尚未实测。

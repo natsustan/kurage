@@ -151,3 +151,24 @@ test('malformed Fast options do not prevent conversation projection', () => {
     assert.equal(result.fastMode, undefined);
   }
 });
+
+for (const [type, oldValue, currentValue] of [['boolean', 'on', true], ['select', true, 'on']]) {
+  test(`Fast falls back to the current capability when stored values predate ${type} support`, async () => {
+    const { projectNewSessionRunConfig, applyNewSessionChoices } = await import('./run-config.mjs');
+    const capability = { ...codexCapability, configOptions: [...codexCapability.configOptions,
+      { id: 'fast-mode', type, currentValue, options: [{ value: 'on' }, { value: 'off' }] }] };
+    const baseline = { configOptionValues: { 'fast-mode': oldValue } };
+    const args = { cliType: 'builtin', agentType: 'codex', capability,
+      turn: { id: 'u', inputConfig: baseline } };
+    assert.equal(projectRunConfig(args).fastMode.value, 'on');
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: {
+      basedOnUserTurnId: 'u', configOptionValues: baseline.configOptionValues,
+    } }).fastMode.value, 'on');
+    const initial = projectNewSessionRunConfig({ ...args, baseline });
+    assert.equal(initial.fastMode.value, 'on');
+    const selectedValue = initial.fastMode.isBoolean ? initial.fastMode.value === 'on' : initial.fastMode.value;
+    assert.equal(applyNewSessionChoices(baseline, initial, [
+      { configOptionID: 'fast-mode', value: selectedValue },
+    ]).configOptionValues['fast-mode'], currentValue);
+  });
+}

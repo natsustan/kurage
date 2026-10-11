@@ -141,16 +141,23 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     }
     if (hasFastModeChoice(runConfig)) {
       const { machineId, agentConfigId } = row.meta;
-      if (!workspaceID || !machineId || !agentConfigId) throw new Error('Fast mode is unavailable');
+      if (!workspaceID || !machineId || !agentConfigId) return 'rejected';
       const flockDocID = `${workspaceID}:mf:${machineId}`;
       const machine = await repo.openFlockDoc(flockDocID);
       const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID],
         requireTransports: ['cloud'], signal: steering?.signal });
       steering?.signal?.throwIfAborted();
       if (!report.ok && !synced(report)) throw new Error('Machine capability sync failed');
-      validateFastModeChoice(runConfig, projectRunConfig({ cliType, agentType,
+      const projection = projectRunConfig({ cliType, agentType,
         capability: machine.flock.get(['acpCapability', agentConfigId]),
-        turn: latestUserTurn(entries), runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON() }));
+        turn: latestUserTurn(entries), runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON() });
+      try {
+        validateFastModeChoice(runConfig, projection);
+      } catch {
+        // No turn has been authored: let the native outbox release this choice
+        // for editing instead of retrying an invalid configuration forever.
+        return 'rejected';
+      }
     }
     config = applyRunConfigChoice(config, runConfig);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {
