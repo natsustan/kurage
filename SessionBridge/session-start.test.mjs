@@ -872,3 +872,39 @@ test('new sessions validate Fast and preserve its boolean through first-turn ret
   assert.equal(next.docs.get('session-new').getList('history').toJSON().length, 0);
   assert.equal(next.rows.has('session-new'), false);
 });
+
+for (const parentSessionID of [undefined, 'template']) {
+  for (const [oldID, newID] of [['fast', 'fast-mode'], ['fast-mode', 'fast']]) {
+    for (const type of ['boolean', 'select']) {
+      for (const explicit of [false, true]) {
+        test(`first turn migrates ${oldID} to ${newID}/${type}, tab=${Boolean(parentSessionID)}, explicit=${explicit}`, async () => {
+          const { repo, flock, docs, rows } = fixture();
+          const enabled = type === 'boolean' ? true : 'on';
+          const disabled = type === 'boolean' ? false : 'off';
+          const baseline = { configOptionValues: { [oldID]: 'on', reasoning_effort: 'high', unrelated: 'keep' } };
+          docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: baseline });
+          flock.set('acpCapability/cfg', { ...capability, configOptions: [...capability.configOptions,
+            { id: newID, type, currentValue: disabled, options: [{ value: 'on' }, { value: 'off' }] }] });
+          const selections = explicit ? [{ configOptionID: newID, value: enabled }] : [];
+          const sync = repo.sync;
+          repo.sync = async options => options.docIds?.includes('session-new') &&
+            docs.get('session-new')?.getList('history').length > 0
+            ? { ok: false, outcome: 'failed' } : sync(options);
+          assert.equal(await start(repo, { parentSessionID, selections }), 'unconfirmed');
+          assert.equal(rows.has('session-new'), false);
+          const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+          assert.deepEqual(written.configOptionValues,
+            { [newID]: explicit ? enabled : disabled, reasoning_effort: 'high', unrelated: 'keep' });
+          assert.deepEqual(docs.get('session-template').getList('history').toJSON().at(-1).inputConfig, baseline);
+          // A capability change after authoring must not rewrite or duplicate the first turn.
+          flock.set('acpCapability/cfg', capability);
+          repo.sync = sync;
+          assert.equal(await start(repo, { parentSessionID, selections: [] }), 'sent');
+          assert.equal(docs.get('session-new').getList('history').length, 1);
+          assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, written);
+          assert.equal(rows.get('session-new').parentSessionId, parentSessionID);
+        });
+      }
+    }
+  }
+}

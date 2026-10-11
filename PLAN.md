@@ -1286,6 +1286,7 @@
 
 ### Fast mode 分支审查修复（2026-10-11）
 
+- PR #50 第六轮审查：新会话与 New Tab 首轮在应用显式选择前，复用已有会话的 Fast 归一化逻辑，清除基线旧别名并写入当前 capability 的 ID、类型及投影值；显式选择优先，源模板与已写入首轮的重试配置不变。新增 16 个场景覆盖两种创建路径、双向 ID 迁移、boolean/select、有无显式选择及未确认重试，修复前全部复现失败，修复后 frozen-lockfile 安装、423 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，真实账号迁移尚未实测。
 - PR #50 第五轮审查：新 turn 继承 Fast 且匹配到当前 capability 时，同时归一化 Fast ID 与 wire type；复制配置后清除旧 Fast 键，再以当前 capability 的 ID 写入投影值，显式选择仍优先。保留完整 runtime 快照语义、非 Fast 配置、历史 turn 与已写入 turn 的重试配置。新增 24 个迁移场景先复现失败，修复后 frozen-lockfile 安装、407 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，未验证真实账号 ID 迁移。
 - PR #50 第四轮审查：已有会话创建新 turn 时，若继承 Fast 且可定位机器 capability，即使没有显式 Fast 选择也同步 capability，并按投影值归一化继承值的 wire type；完整 runtime 快照省略的键不恢复，已写入 turn 的重试不重新校验或改写。没有机器关联或匹配 Fast capability 的旧会话保留原有继承行为。iOS Fast-only 面板隐藏无效模型入口及不可用的收藏模型，保留通用 Advanced 入口与模型加载/失败恢复路径；新增 `--fixture-fast-only` 回归数据。
 - 本轮 frozen-lockfile 安装、383 项 JS 测试与 bundle 重建通过；5 项 Fast 配置 Swift 测试通过，Mac 无签名构建通过。iOS 首轮 Fast-only UI 回归发现不可用收藏模型仍触发模型标题，修正后 Fast-only 与深色 Accessibility XXXL 两项 UI 测试通过，已检查截图。首轮失败测试的 xcodebuild 收尾停滞，后续独立重跑成功后停止了残留进程。未验证真实账号 capability 迁移或 Mac UI。

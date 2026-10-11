@@ -1,5 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
-import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, projectRunConfig, validateFastModeChoice } from './run-config.mjs';
+import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, normalizeInheritedFastMode, projectRunConfig, validateFastModeChoice } from './run-config.mjs';
 import { isSessionTab } from './session-tabs.mjs';
 import { deliveryOutcome } from './conversation-delivery.mjs';
 
@@ -163,17 +163,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         // for editing instead of retrying an invalid configuration forever.
         return 'rejected';
       }
-      const fast = projection?.fastMode;
-      if (fast && inheritsFast) {
-        // Fast IDs may migrate as well as their wire types. Keep only the
-        // current capability's ID, without mutating the inherited snapshot.
-        const values = { ...config.configOptionValues };
-        delete values.fast;
-        delete values['fast-mode'];
-        config = { ...config, configOptionValues: values };
-        config = applyRunConfigChoice(config, { configOptionID: fast.configOptionID,
-          value: fast.isBoolean ? fast.value === 'on' : fast.value });
-      }
+      config = normalizeInheritedFastMode(config, projection);
     }
     config = applyRunConfigChoice(config, runConfig);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {

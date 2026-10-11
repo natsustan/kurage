@@ -177,7 +177,7 @@ export function applyNewSessionChoices(config, projection, selections) {
   const model = projection?.model;
   const reasoning = projection?.reasoning;
   let modelValue = model?.value;
-  let result = config;
+  let result = normalizeInheritedFastMode(config, projection);
   for (const choice of (selections ?? []).flatMap(individualChoices)) {
     const id = choice?.configOptionID ?? null;
     const offers = options => options.some(option => option.value === choice?.value);
@@ -211,6 +211,21 @@ export function applyNewSessionChoices(config, projection, selections) {
     }
   }
   return result;
+}
+
+// Both send paths use the current capability's Fast ID and wire type. Copy
+// before removing aliases so the source turn/runtime snapshot stays unchanged.
+export function normalizeInheritedFastMode(config, projection) {
+  const fast = projection?.fastMode;
+  const inherited = record(config.configOptionValues);
+  if (!fast || !['fast-mode', 'fast'].some(id => inherited?.[id] !== undefined)) return config;
+  const values = { ...inherited };
+  delete values.fast;
+  delete values['fast-mode'];
+  return applyRunConfigChoice({ ...config, configOptionValues: values }, {
+    configOptionID: fast.configOptionID,
+    value: fast.isBoolean ? fast.value === 'on' : fast.value,
+  });
 }
 
 function individualChoices(choice) {
