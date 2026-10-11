@@ -653,3 +653,27 @@ test('losing an unconfirmed steer target never guesses from concurrent history',
   assert.equal(await state.send(), 'unconfirmed');
   assert.equal(state.meta.latestUserMsgId, 'active-user');
 });
+
+test('Fast is checked before authoring and retries retain the original typed configuration', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  let capability = { cliType: 'codex', agentType: 'codex', configOptions: [
+    { id: 'fast-mode', type: 'boolean', currentValue: false },
+  ] };
+  repo.openFlockDoc = async id => {
+    assert.equal(id, 'workspace:mf:machine');
+    return { flock: { get: () => capability } };
+  };
+  const choice = { configOptionID: 'reasoning_effort', value: 'low',
+    additionalChoices: [{ configOptionID: 'fast-mode', value: true }] };
+  assert.equal(await sendText(repo, 'chat', 'fast-turn', 'user', 'Hello', 'now', choice, [], undefined, 'workspace'), 'sent');
+  capability = undefined;
+  assert.equal(await sendText(repo, 'chat', 'fast-turn', 'user', 'Hello', 'now',
+    { configOptionID: 'fast-mode', value: false }, [], undefined, 'workspace'), 'sent');
+  assert.equal(doc.getList('history').toJSON().length, 1);
+  assert.deepEqual(doc.getList('history').toJSON()[0].inputConfig.configOptionValues,
+    { reasoning_effort: 'low', 'fast-mode': true });
+  meta.lastHandledUserMsgId = 'fast-turn';
+  await assert.rejects(sendText(repo, 'chat', 'second', 'user', 'Next', 'now', choice, [], undefined, 'workspace'), /Fast mode/);
+  assert.equal(doc.getList('history').toJSON().length, 1);
+});

@@ -116,3 +116,38 @@ test('an empty global reasoning list does not enable model switching', () => {
     turn: { id: 'u1', inputConfig: { modelId: 'gpt-5.5' } } });
   assert.equal(projected.editable, null);
 });
+
+for (const [id, type, enabled] of [['fast-mode', 'boolean', true], ['fast', 'select', 'on']]) {
+  test(`Fast projects and writes ${id} as ${type} alongside reasoning`, async () => {
+    const { projectNewSessionRunConfig, applyNewSessionChoices, validateFastModeChoice } = await import('./run-config.mjs');
+    const capability = { ...codexCapability, configOptions: [...codexCapability.configOptions,
+      { id, type, currentValue: enabled, options: [{ value: 'on' }, { value: 'off' }] }] };
+    const args = { cliType: 'builtin', agentType: 'codex', capability,
+      turn: { id: 'u', inputConfig: { modelId: 'gpt-5.5', configOptionValues: {} } } };
+    const projected = projectRunConfig(args);
+    assert.equal(projected.fastMode.value, 'on');
+    assert.equal(projected.fastMode.isBoolean, type === 'boolean');
+    const off = type === 'boolean' ? false : 'off';
+    const choice = { configOptionID: 'reasoning_effort', value: 'low',
+      additionalChoices: [{ configOptionID: id, value: off }] };
+    validateFastModeChoice(choice, projected);
+    assert.deepEqual(applyRunConfigChoice({}, choice).configOptionValues, { reasoning_effort: 'low', [id]: off });
+    const initial = projectNewSessionRunConfig({ ...args, baseline: {} });
+    assert.equal(applyNewSessionChoices({}, initial, [choice]).configOptionValues[id], off);
+    assert.throws(() => validateFastModeChoice(choice, { ...projected, fastMode: undefined }));
+    assert.throws(() => applyNewSessionChoices({}, initial, [{ configOptionID: id, value: type === 'boolean' ? 'on' : true }]));
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: { basedOnUserTurnId: 'u', configOptionValues: { [id]: off } } }).fastMode.value, 'off');
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: { basedOnUserTurnId: 'u', configOptionValues: {} } }).fastMode.value, 'off');
+    assert.equal(projectRunConfig({ ...args, capability: { ...capability, agentType: 'different' } }).fastMode, undefined);
+  });
+}
+
+
+test('malformed Fast options do not prevent conversation projection', () => {
+  for (const configOptions of [{}, [null], [{ id: 'fast', type: 'select', options: {} }]]) {
+    const result = projectRunConfig({ cliType: 'builtin', agentType: 'codex',
+      capability: { ...codexCapability, configOptions }, turn: { inputConfig: { modelId: 'gpt-5.5' } } });
+    assert.equal(result.model.value, 'gpt-5.5');
+    assert.equal(result.fastMode, undefined);
+  }
+});

@@ -11,37 +11,6 @@ struct NewSessionRoute: Hashable {
     var parentSessionID: String? = nil
 }
 
-extension NewSessionOptions {
-    /// Provider, model and reasoning for the first turn, in the composer's run-config menu.
-    func menu(_ runConfig: NewSessionRunConfig?) -> RunConfigMenu {
-        var sections: [RunConfigMenu.Section] = []
-        if providers.count > 1 {
-            sections.append(.init(kind: .provider, options: providers, selection: agentConfigID))
-        }
-        if let model = runConfig?.model {
-            sections.append(.init(
-                kind: .model,
-                options: model.options.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
-                selection: model.value
-            ))
-        }
-        if let runConfig, !runConfig.reasoningOptions.isEmpty {
-            sections.append(.init(kind: .reasoning, options: runConfig.reasoningOptions,
-                                  selection: runConfig.selectedReasoning?.value ?? ""))
-        }
-        let provider = provider?.label
-        let model = runConfig?.selectedModel?.label
-        let reasoning = runConfig?.selectedReasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
-        return RunConfigMenu(
-            modelLabel: model, reasoningLabel: reasoning, providerLabel: provider,
-            accessibilitySummary: [provider.map { "Provider \($0)" }, model.map { "model \($0)" },
-                                   reasoning.map { "reasoning \($0)" }]
-                .compactMap { $0 }.joined(separator: ", "),
-            sections: sections
-        )
-    }
-}
-
 /// Starts a session in a local project from its first message.
 struct NewSessionView: View {
     let route: NewSessionRoute
@@ -306,6 +275,8 @@ struct NewSessionView: View {
         guard isCurrentWorkspace, !isStarting else { return }
         if kind != .reasoning { rememberCurrentReasoning(onlyIfMissing: true) }
         switch kind {
+        case .fastMode:
+            configuration.selectFastMode(value)
         case .provider:
             guard configuration.selectProvider(value) else { return }
             request = LoadRequest(agentConfigID: value, attempt: request.attempt + 1)
@@ -488,6 +459,12 @@ final class NewSessionConfiguration {
         rememberSelection()
     }
 
+    func selectFastMode(_ value: String) {
+        guard !isLoading, !loadFailed else { return }
+        runConfig?.selectFastMode(value)
+        rememberSelection()
+    }
+
     func selectReasoning(_ value: String) {
         guard !isLoading, !loadFailed else { return }
         runConfig?.selectReasoning(value)
@@ -600,6 +577,8 @@ final class NewSessionConfiguration {
             if let value = selected.model?.value { current?.selectModel(value) }
             current?.reasoning?.value = nil
             if let value = selected.reasoning?.value { current?.selectReasoning(value) }
+            if selected.fastMode?.configOptionID == current?.fastMode?.configOptionID,
+               let value = selected.fastMode?.value { current?.selectFastMode(value) }
             selections[loaded.agentConfigID] = current
         }
         runConfig = current

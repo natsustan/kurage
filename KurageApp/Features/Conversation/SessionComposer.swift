@@ -747,6 +747,15 @@ private struct RunConfigPanel: View {
                 .background(groupBackground, in: .rect(cornerRadius: 20))
                 .accessibilityIdentifier("run-config-choose-model")
             }
+            if let fast = runConfig.sections.first(where: { $0.kind == .fastMode }) {
+                Toggle("Fast mode", isOn: Binding(
+                    get: { fast.selection == "on" },
+                    set: { onChoose(.fastMode, $0 ? "on" : "off") }
+                ))
+                .padding(16)
+                .background(groupBackground, in: .rect(cornerRadius: 20))
+                .accessibilityIdentifier("run-config-fast-mode")
+            }
             if let reasoning = runConfig.sections.first(where: { $0.kind == .reasoning }),
                !reasoning.options.isEmpty {
                 VStack(spacing: 12) {
@@ -909,12 +918,12 @@ private struct RunConfigAdvanced: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Section {
-                    LabeledContent("Speed", value: "Unavailable")
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("run-config-speed")
-                } footer: {
-                    Text("Fast mode is not supported yet.")
+                if let fast = runConfig?.sections.first(where: { $0.kind == .fastMode }) {
+                    Section {
+                        fastModeToggle(fast)
+                    } footer: {
+                        Text("Faster responses may increase usage.")
+                    }
                 }
             }
             .navigationTitle("Advanced")
@@ -927,6 +936,14 @@ private struct RunConfigAdvanced: View {
             }
         }
         .sensoryFeedback(.selection, trigger: selectionFeedbackID) { _, _ in hapticsEnabled }
+    }
+
+    private func fastModeToggle(_ section: RunConfigMenu.Section) -> some View {
+        Toggle("Fast mode", isOn: Binding(
+            get: { section.selection == "on" },
+            set: { onChoose(.fastMode, $0 ? "on" : "off") }
+        ))
+        .accessibilityIdentifier("run-config-fast-mode")
     }
 
     @ViewBuilder

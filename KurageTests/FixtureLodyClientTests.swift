@@ -1408,3 +1408,55 @@ struct ReasoningPresentationTests {
         #expect(models.options.map(\.value) == ["max", "opaque-high", "low", "custom"])
     }
 }
+
+struct FastModeRunConfigTests {
+    @Test func combinedChoiceKeepsNewFastSelectionAfterRetry() throws {
+        var state = ConversationRunConfigState()
+        state.receive(.fixtureReasoning)
+        state.choose("low")
+        state.chooseFastMode("on")
+        let sent = try #require(state.choice)
+        #expect(sent.individualChoices.count == 2)
+        let payload = sent.bridgeValue()
+        let additional = try #require(payload["additionalChoices"] as? [[String: Any]])
+        #expect(additional.first?["value"] as? Bool == true)
+        state.chooseFastMode("off")
+        state.didSend(sent)
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.config?.fastMode?.value == "on")
+        #expect(state.displayed?.fastMode?.value == "off")
+        #expect(state.choice?.individualChoices.count == 1)
+        state.didSend(state.choice)
+        #expect(state.choice == nil)
+        #expect(state.config?.fastMode?.value == "off")
+    }
+
+    @Test func capabilityLossDropsOnlyFastAndLegacyValueStaysString() throws {
+        var state = ConversationRunConfigState()
+        var config = SessionRunConfig.fixtureReasoning
+        state.receive(config)
+        state.chooseFastMode("on")
+        state.choose("low")
+        config.fastMode = nil
+        state.receive(config)
+        #expect(state.choice == config.choosing("low"))
+        config.fastMode = .init(configOptionID: "fast", value: "off", isBoolean: false)
+        state.receive(config)
+        state.chooseFastMode("on")
+        let fast = try #require(state.choice?.individualChoices.last)
+        #expect(fast.bridgeValue()["value"] as? String == "on")
+        state.receive(nil)
+        #expect(state.choice == nil)
+    }
+
+    @Test func firstTurnIncludesFastAndDecodesBooleanCapability() throws {
+        var config = NewSessionRunConfig.fixture
+        config.fastMode = .init(configOptionID: "fast-mode", value: "off", isBoolean: true)
+        config.selectReasoning("low")
+        config.selectFastMode("on")
+        #expect(config.selections.count == 3)
+        #expect(config.selections.last?.bridgeValue()["value"] as? Bool == true)
+        let decoded = try JSONDecoder().decode(NewSessionRunConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded == config)
+    }
+}

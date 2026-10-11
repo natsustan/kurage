@@ -1,5 +1,13 @@
 # Kurage 会话功能
 
+## Mac 模型与 Reasoning 选择优化（2026-10-10）
+
+- 对话输入区和 New Session／New Tab 共用 `MacRunConfigButton`：发送按钮左侧的 “模型 · 档位” 按钮，点开是同一个 popover。新建页不再使用系统 Model／Reasoning Picker，Agent Picker 保留；模型为空时按钮显示 `Choose a model…`。`NewSessionOptions.menu(_:)` 从 iOS 移到 KurageCore，两端共用。
+- 模型被 reasoning 锁定时（已有会话），面板顶部只显示一行当前模型（provider 图标、名称、锁形图标，`run-config-model`），不再列出灰掉的快捷模型行。可换模型时仍列出 Default Models／最近模型及其余选项。
+- Reasoning 改成分段按钮，一次点击即可切换，放不下时自动回到竖排列表；面板宽度 280pt。输入框有焦点时 ⌥⌘↑／⌥⌘↓ 不打开面板直接升降一档，到头时提示音；没有可调档位时按键照常交给文本视图。快捷键由 `MacPasteTextView.performKeyEquivalent` 处理：放在不可见 SwiftUI 按钮上的 `keyboardShortcut` 实测不触发。按钮 tooltip 写明快捷键。选择回调带上 kind（model／reasoning），新建页据此分别写入，已有会话仍只有一种可改项。
+- 新建页切换项目或 Agent 进入加载时收起面板。会话的 workspace／代次校验、收藏模型 reasoning 记忆与首轮重试语义不变。
+- 本轮验证（macOS 27 fixture）：Mac 与 iOS Simulator 构建通过，iOS `DefaultModelTests` 11 项通过。`testRunConfigPopoverReopensWithSelectionAndPreservesDraft`（新增锁定模型单行、无模型行、⌥⌘↑／↓ 断言）、`testDarkNewRootSessionAndSignOut`、`testRejectedRootReturnsToCreationEditor` 最终都通过；前两项各有一次在打开会话等前置步骤失败，重跑通过。`testConversationChangesAndNewTab` 点击 Changes 后进程断开，未改动的 HEAD 上同样失败。一次全量 Mac 测试有 12 项失败，大多是连接丢失、点击失效等与本改动无关的位置，没有逐项复核。浅色、深色截图已看过；分段按钮的焦点环已去掉，但去掉后没有再看截图。窗口截图截不到伸出窗口的 popover 部分。真实账号、macOS 26、大字号以及 4 个以上档位回退为列表的情况尚未验证。
+
 ## Mac 搜索与贴底审查修复（2026-10-09）
 
 - 搜索索引任务以查询是否非空为标识；继续输入只匹配已有正文，不再取消并重新发起索引读取。全文匹配留在父视图，高亮、焦点和键盘滚动请求放到子视图，移动选择不再触发全文扫描。
@@ -179,7 +187,7 @@
 ## Default Models（2026-10-07）
 
 - Settings 增加 Default Models，按账号、workspace、机器在本机保存最多 5 个 provider＋model；按模型记住上次 reasoning（见上文），不自动修改新会话或 Quick Actions 的默认配置。支持搜索、按 provider 分组添加、删除、Edit 拖动排序及重启恢复；目录刷新失败保留收藏，确认失效的项显示 Unavailable。
-- Composer 模型面板采用单行小 provider 图标＋模型名，当前项为裸勾号；标题 `Select model ›` 打开原 Advanced，不展示 All Models、管理入口、下一轮提示或 Fast mode。Reasoning 复用现有拨盘。新会话／新 tab 按收藏顺序快捷选择 provider 和 model；已有会话仅使用自身 provider 且遵守 capability 的 model／reasoning 编辑限制。当前模型不在收藏中时补充显示，空收藏使用最多 5 个最近模型（见上文）。
+- Composer 模型面板采用单行小 provider 图标＋模型名，当前项为裸勾号；标题 `Select model ›` 打开原 Advanced，不展示 All Models、管理入口或下一轮提示。Fast mode 按 capability 独立展示开关。Reasoning 复用现有拨盘。新会话／新 tab 按收藏顺序快捷选择 provider 和 model；已有会话仅使用自身 provider 且遵守 capability 的 model／reasoning 编辑限制。当前模型不在收藏中时补充显示，空收藏使用最多 5 个最近模型（见上文）。
 - 会话列表与 tab 投影新增可选 `agentConfigID`，使用真实配置 ID 隔离同名模型，旧缓存仍可解码。Provider 选项只投影公开品牌 key，优先识别 Lody `brandId`、兼容旧内置配置的已知服务域名，再匹配 Agent 类型；不把环境变量或凭据传到原生侧。
 - 图标按 LobeHub skills 文档使用固定 `@lobehub/icons-static-svg` 1.95.1 的 15 个必要品牌资源，不引入 React 或整套图标库。有彩色版本时保留品牌色，否则使用随外观变化的模板单色；未知／自定义 provider 回退为通用图标，不限制其模型选择。来源与 MIT 许可随 App bundle 分发。Lody 参考为本机 `agent-icon.tsx`、`agent-brand.ts` 及 agent 配置创建界面。
 - 本轮验证：JavaScript 351 项与 Swift 310 项测试通过，bridge bundle 已重建。iPhone 17 模拟器 4 项 fixture UI 回归通过，覆盖添加／删除、拖动排序及重启恢复、跨 provider 选择、reasoning 保留、空收藏和 Advanced；已检查深色与浅色大字号截图并修正面板底部对齐。首轮大字号 UI 测试因焦点时序无法定位按钮，显式聚焦 composer 并等待键盘后复测通过。真实账号、真机及 iOS 26 尚未验证。
@@ -799,7 +807,7 @@
 - 页面离开或进入后台释放订阅，回到前台重新同步；工作区和账号切换丢弃迟到更新。底部阅读时跟随同一条回复增长，上翻阅读时停止自动跟随。
 - 真实客户端现可向空闲会话发送普通文本：独立的短生命周期 Streams 副本先确认正文同步，再写入 `latestUserMsgId` 并确认 metadata 同步。写前重新同步并检查派发指针，写后确认指针仍指向本次 turn；现有 LoroRepo metadata 写入没有 CAS，跨客户端同时写入时仍不能保证绝对互斥。未确认的发送保留 turn ID；改发文本前须先重试旧消息，防止留下未派发的历史记录。旧 turn 已被较新的派发取代时会废弃旧重试 ID。发送成功后会话列表立即更新最近排序，并从服务端刷新。普通工具权限响应仍只在 fixture 中可用；问答请求已单独接入真实写入链路（见问答支持）。
 - 运行中的会话在输入区以空草稿显示停止按钮，有有效文字或附件时切为 Send，清空后恢复停止；live 与 fixture 均支持，live 默认按 `session/steer` 发送，不弹出 queue 确认。停止仍从已同步的原始 history 找出最新未完成的 assistant turn，将其 ID 写入 `lastCanceledTurn` 并确认 metadata 同步；若 turn 尚未出现或已经结束，会提示重试。真实机器的 steer 与停止响应仍待实测。
-- 会话内 model/reasoning：输入区第一行输入文字，第二行放置操作按钮；带刻度的仪表盘图标随 reasoning 档位变化。点击后打开无箭头浮层，model/reasoning 标签位于玻璃刻度胶囊外；离散 reasoning 刻度支持点选、拖动及 VoiceOver 调整，点击模型进入 Advanced 表单。浮层打开时使用仅内存中的页面快照做渐变模糊，关闭即释放，系统键盘保留清晰显示。新建会话的 provider/model/reasoning 共用此入口，选项仍遵循代理能力；Fast 暂不可用，尚未接入真实协议。观察器从机器 Flock 文档 `${workspace}:mf:${machineId}` 的 `['acpCapability', agentConfigId]` 读取能力（cliType/agentType 须与会话一致），当前值依次取与最新用户 turn 对应的 `acpRuntimeConfig`、该 turn 的 `inputConfig`、能力的 `currentValue`。能力含 reasoning 选项（`reasoning_effort` 或 `thought_level` 类别）时只允许改 reasoning（若有 `modelReasoningEfforts` 则按当前模型过滤），以免中途换模型破坏上下文缓存；否则允许改 model（builtin 写 `modelId`，registry/custom 写对应 config option）。无能力记录时只读显示。界面和新 turn 发送共用与最新用户 turn 匹配的运行时配置基线，运行时 configOptionValues 作为完整快照替换旧值。选择仅作用于下一条新 turn，页面离开即丢弃；未确认发送的重试沿用首次发送时的选择；发送层返回实际沿用的选择，界面仅清除已发送的选择，重试时新选的配置保留给下一轮，包括明确选回原基线的值；普通发送与“Retry earlier message”入口均更新实际配置基线。运行中可预选。尚未用真实账号验证 CLI 对切换值的实际应用。
+- 会话内 model/reasoning：输入区第一行输入文字，第二行放置操作按钮；带刻度的仪表盘图标随 reasoning 档位变化。点击后打开无箭头浮层，model/reasoning 标签位于玻璃刻度胶囊外；离散 reasoning 刻度支持点选、拖动及 VoiceOver 调整，点击模型进入 Advanced 表单。浮层打开时使用仅内存中的页面快照做渐变模糊，关闭即释放，系统键盘保留清晰显示。新建会话的 provider/model/reasoning 共用此入口，选项仍遵循代理能力；Fast 已接入 capability 驱动的独立开关，详见下方 Fast mode。观察器从机器 Flock 文档 `${workspace}:mf:${machineId}` 的 `['acpCapability', agentConfigId]` 读取能力（cliType/agentType 须与会话一致），当前值依次取与最新用户 turn 对应的 `acpRuntimeConfig`、该 turn 的 `inputConfig`、能力的 `currentValue`。能力含 reasoning 选项（`reasoning_effort` 或 `thought_level` 类别）时只允许改 reasoning（若有 `modelReasoningEfforts` 则按当前模型过滤），以免中途换模型破坏上下文缓存；否则允许改 model（builtin 写 `modelId`，registry/custom 写对应 config option）。无能力记录时只读显示。界面和新 turn 发送共用与最新用户 turn 匹配的运行时配置基线，运行时 configOptionValues 作为完整快照替换旧值。选择仅作用于下一条新 turn，页面离开即丢弃；未确认发送的重试沿用首次发送时的选择；发送层返回实际沿用的选择，界面仅清除已发送的选择，重试时新选的配置保留给下一轮，包括明确选回原基线的值；普通发送与“Retry earlier message”入口均更新实际配置基线。运行中可预选。尚未用真实账号验证 CLI 对切换值的实际应用。
 - 新建会话：列表底部搜索框右侧提供 New chat，本地项目行右侧也保留新建按钮（未分组与 GitHub 项目不显示），进入独立页面后以第一条消息创建会话。机器与默认 Agent 取自本地根会话模板；项目可切换为同机器的已登记项目，或浏览机器目录并选择其它本地文件夹，项目引用只保留 `localProjectId` / `githubRepoFullName`，不带 worktree 和分支，即直接在项目目录工作。第一条 turn 继承同工作区、同机器和同 Agent 配置最近活动的未归档根会话（跨项目）最新用户 turn 的有效配置中的 `modeId`、`modelId`、`configOptionValues`、`mcpServerIds`（不继承 Agent Role 与 `resume`），model 与 reasoning 都可在页面上选择：选项来自机器 Flock 的 `acpCapability`，reasoning 按所选模型的 `modelReasoningEfforts` 过滤，切到不支持当前 reasoning 的模型时不写 reasoning，由 Agent 默认值决定；桥在写入时重新投影并拒绝未提供的选项。写入使用独立短生命周期副本，只有它开启 `createStreamIfMissing` 以创建新 Session 文档流（对应 Lody 的 `ensureDocStream`）：先同步第一条 turn，再一次写入 metadata（`status: idle`、`title` 取前 50 字且 `titleSource: 'draft'`、`latestUserMsgId`）并确认同步，因此机器看到会话时正文已就绪。未确认时按项目在进程内保留会话 ID 与 turn ID，重试沿用首次的选择；改了文本须先重发原文。成功后替换为会话详情页，列表乐观插入后在后台刷新。Lody 桌面端创建会话前会在客户端检查免费会话额度，Kurage 没有这一步，需在 issue 中跟进。真实账号的新建、机器派发与首轮 model/reasoning 生效尚未验证。
 - 新建会话配置在页面内预取并缓存各 provider 的选项，共享同一 provider 的在途请求；已缓存 provider 切换及 model/reasoning 选择立即更新本地状态，往返切换保留各自选择。尚未加载的 provider 立即显示新名称和加载状态，不展示旧模型，不允许发送；迟到结果不会覆盖新选择，页面离开或进入后台取消请求。缓存随页面释放，写入时仍由桥重新校验能力。真实账号首次加载耗时尚未测量。
 - 输入区提及：已有会话与新建会话输入 `$` 显示当前 Agent 可用的本地项目、全局和系统 skills，输入 `@` 同时显示这些 skills 与当前项目的会话（含子会话，排除自身和已归档）；候选位于输入框上方，滚动视口最多展示三行。选择后保留短 token，退格或选区删除触及 token 时整段删除并移除绑定，发送时按 Lody 规则展开为 `use /token [Skill Path](path)` 或 `[@Title](session://id)`，插入或替换 token 内文字会移除绑定，失败恢复保留绑定。技能列表经当前工作区机器的 `local-project/list-skills`、`local-project/list-global-skills` RPC 获取，使用所选 provider 的目录过滤；请求可取消，不持久化令牌。GitHub 项目当前仅有机器全局/系统 skills，尚未接入 Lody 的 GitHub skill 扫描。本次 168 项 JS 测试、bundle 重建、5 项 Swift 提及单元测试、已有会话浅色/深色 fixture UI 用例及新建会话浅色 fixture UI 用例通过。真实账号的机器技能发现、跨端会话提及解析和弱网取消仍待验证。
@@ -1267,3 +1275,11 @@
 - 标题栏 bridge 在卸载或移动到另一窗口时恢复原始透明度、分隔线，以及本次安装实际隐藏的系统背景视图；原先已隐藏的视图保持不变，重复布局不覆盖原始状态。保留现有分栏配色与标题栏背景探测，不扩大本轮重构范围。
 - 配置浮层关闭时不构建／更新托管内容，也不进行尺寸测量；打开时加载最新内容，展示期间仍随配置更新尺寸。关闭既有浮层的路径保持可用。
 - 本轮 Mac 构建及 14 项 `KurageMacTests` 通过，新增回归覆盖窗口间移动、卸载恢复、重复布局和原先已隐藏的背景。新增浅／深色浮层 UI 回归覆盖选择后关闭、重新打开时保留选择及草稿；UI 检查因当前 Mac 锁屏而无法激活应用，尚未完成界面断言和截图检查，解锁后需重跑。真实账号与 macOS 26 未实测。
+
+
+## Fast mode（2026-10-11）
+
+- iOS/macOS 已有会话、新建会话与 New Tab 的运行配置入口加入 Fast mode；仅匹配机器 Agent capability 提供 `fast-mode` / `fast` 时展示。与 reasoning 独立选择，作用于下一条新 turn，运行中可预选；保留原有 model/reasoning 编辑限制。
+- 协议以 Lody `packages/shared/src/acp-run-config.ts`、`components/shared/acp-selector-options.ts`、`packages/acp-extension-codex/src/FastModeConfig.ts` 为准；支持 boolean 与旧式 `on/off` select，布尔值原样写入 `inputConfig.configOptionValues`。新会话及已有会话写入前校验 capability；缺失或类型变化时拒绝新的 Fast 选择。未确认重试沿用原 turn 和配置，不受后续 capability 变化影响。
+- 共享选择状态可同时携带 reasoning 与 Fast，发送完成逐项消费；重试期间新选择的 Fast/reasoning 保留。新会话 provider 切换时按 provider 保存选择，工作区隔离和 outbox 恢复沿用既有机制。fixture 同步支持 Fast。
+- 本轮 frozen lockfile 安装、367 项 JS 测试及 bundle 重建通过；Swift 核心包编译通过。iOS 首轮 330 项单元测试仅旧配置项数断言失败（Fast 加入后由 2 项变 3 项），修正后 17 项相关 Swift 测试通过。已有会话、新会话、深色 Accessibility XXXL 的 3 项 UI 测试通过并检查截图，覆盖开关切换和重开保留；首次 UI 测试点击了开关整行中部，改为命中实际滑块后通过。Mac 最终构建通过；默认签名遇到 errSecInternalComponent，临时 ad-hoc 签名后测试宿主卡在系统 App Sandbox 初始化，已停止，未取得本轮 Mac 单元/UI 测试通过结果。真实账号中 CLI 应用 Fast、提速和使用量变化尚未实测。上文“Fast 未接入”的描述为历史状态，以本节为准。

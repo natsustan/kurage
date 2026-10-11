@@ -1407,6 +1407,40 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFastModePanelPreservesSelectionInDarkLargeText() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "-appTheme", "dark",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        let menu = app.buttons["run-config-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        tap(menu)
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        let panel = app.scrollViews["run-config-scroll"]
+        for _ in 0..<4 where !fast.isHittable { panel.swipeUp() }
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
+        attachScreen(app, name: "fast-mode-panel-dark-large")
+        let close = app.buttons["run-config-close"]
+        for _ in 0..<4 where !close.isHittable { panel.swipeDown() }
+        tap(close)
+        tap(menu)
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        XCTAssertEqual(fast.value as? String, "1")
+        for _ in 0..<4 where !fast.isHittable { panel.swipeUp() }
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "0")
+    }
+
+    @MainActor
     func testFocusedComposerShowsRunConfigAndChangesReasoning() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -1467,10 +1501,12 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "run-config-menu")
         tap(low)
         XCTAssertTrue(app.keyboards.firstMatch.wait(for: \.exists, toEqual: false, timeout: 5))
-        let speed = app.descendants(matching: .any)["run-config-speed"]
+        let speed = app.switches["run-config-fast-mode"]
         XCTAssertTrue(speed.exists)
         XCTAssertFalse(speed.frame.isEmpty)
         XCTAssertTrue(app.frame.contains(speed.frame))
+        speed.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(speed.value as? String, "1")
         attachScreen(app, name: "run-config-advanced")
         tap(app.buttons["run-config-done"])
         tap(field)
@@ -1768,6 +1804,10 @@ final class ShellFlowTests: XCTestCase {
         let medium = app.buttons["Medium"]
         XCTAssertTrue(medium.waitForExistence(timeout: 5))
         tap(medium)
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.exists)
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
         attachScreen(app, name: "new-session-advanced-neutral")
         tap(app.buttons["run-config-done"])
         tap(field)

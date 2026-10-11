@@ -135,7 +135,8 @@ struct DefaultModelTests {
             try await fixture.newSessionOptions(templateSessionID: "session-pr", agentConfigID: id, workspaceID: "ws-demo")
         }
         #expect(configuration.runConfig?.selectedReasoning?.value == "low")
-        #expect(configuration.runConfig?.selections.count == 2)
+        #expect(configuration.runConfig?.selections.count == 3)
+        #expect(configuration.runConfig?.selections.last?.configOptionID == "fast-mode")
         #expect(configuration.selectDefaultModel(full, saved: saved))
         #expect(configuration.runConfig?.selectedReasoning?.value == "high")
     }

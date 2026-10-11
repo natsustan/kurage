@@ -436,7 +436,12 @@ private struct MacConversationView<TabBar: View>: View {
         }
     }
 
-    private func chooseRunConfig(_ value: String) {
+    /// Fast is independent of the session's model/reasoning selection.
+    private func chooseRunConfig(_ kind: RunConfigMenu.Section.Kind, _ value: String) {
+        if kind == .fastMode {
+            window[draft: sessionID].runConfig.chooseFastMode(value)
+            return
+        }
         window[draft: sessionID].runConfig.choose(value)
         guard let config = window[draft: sessionID].runConfig.displayed,
               let editable = config.editable, editable.kind == .reasoning,

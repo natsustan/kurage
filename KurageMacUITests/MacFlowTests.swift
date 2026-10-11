@@ -83,7 +83,7 @@ final class MacFlowTests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         newSession.click()
         XCTAssertTrue(app.textViews["new-message"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
         try await capture(app, name: "mac-new-session-empty")
         app.menuButtons["new-project"].click()
         XCTAssertTrue(app.menuItems["kurage"].waitForExistence(timeout: 5))
@@ -344,9 +344,22 @@ final class MacFlowTests: XCTestCase {
             config.click()
             XCTAssertTrue(low.waitForExistence(timeout: 5))
             XCTAssertTrue(low.isSelected)
+            let fast = app.switches["run-config-fast-mode"]
+            XCTAssertTrue(fast.exists)
+            fast.click()
+            if !fast.exists { config.click() }
+            XCTAssertEqual(app.switches["run-config-fast-mode"].value as? String, "1")
+            // A model locked by reasoning is one caption, not a list of disabled rows.
+            XCTAssertTrue(app.descendants(matching: .any)["run-config-model"].exists)
+            XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model-")).firstMatch.exists)
             try await captureWindow(main, name: "mac-run-config-open-\(appearance)")
             editor.click()
             XCTAssertTrue(low.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(editor.value as? String, "Keep configuration draft")
+            editor.typeKey(.upArrow, modifierFlags: [.command, .option])
+            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Medium", timeout: 5))
+            editor.typeKey(.downArrow, modifierFlags: [.command, .option])
+            XCTAssertTrue(config.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning Low", timeout: 5))
             XCTAssertEqual(editor.value as? String, "Keep configuration draft")
             app.terminate()
         }
@@ -381,7 +394,7 @@ final class MacFlowTests: XCTestCase {
         app.buttons["new-tab"].click()
         let firstMessage = app.textViews["new-message"]
         XCTAssertTrue(firstMessage.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
         paste("Mac new tab integration", into: firstMessage, app: app)
         try await capture(app, name: "mac-new-session")
         app.buttons["start-session"].click()
@@ -409,7 +422,7 @@ final class MacFlowTests: XCTestCase {
         app.menuItems["kurage"].click()
         let editor = app.textViews["new-message"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        let model = app.popUpButtons["new-model"]
+        let model = app.sheets.buttons["run-config"]
         XCTAssertTrue(model.waitForExistence(timeout: 10))
         let agent = app.popUpButtons["new-agent"]
         for name in ["Claude Code", "Codex", "Codex"] {
@@ -418,8 +431,8 @@ final class MacFlowTests: XCTestCase {
             XCTAssertTrue(model.waitForExistence(timeout: 10))
         }
         model.click()
-        app.menuItems["gpt-5.4-mini"].click()
-        XCTAssertTrue((model.value as? String ?? "").contains("gpt-5.4-mini"))
+        app.buttons["model-option-gpt-5.4-mini"].click()
+        XCTAssertTrue(model.label.contains("gpt-5.4-mini"))
         paste("Mac root integration", into: editor, app: app)
         try await capture(app, name: "mac-new-root-dark")
         editor.typeKey(.return, modifierFlags: .command)
@@ -543,7 +556,7 @@ final class MacFlowTests: XCTestCase {
         XCTAssertEqual(editor.value as? String, draft)
         XCTAssertTrue(app.buttons["Remove Pasted image.jpg"].exists)
         XCTAssertTrue(app.buttons["Remove \(file.lastPathComponent)"].exists)
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
         try await capture(app, name: "mac-new-session-attachments")
         app.buttons["start-session"].click()
         XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
@@ -603,7 +616,7 @@ final class MacFlowTests: XCTestCase {
         app.buttons["new-session"].click()
         let editor = app.textViews["new-message"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
         paste("Recover pending root", into: editor, app: app)
         app.buttons["start-session"].click()
         XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 15))
@@ -632,17 +645,17 @@ final class MacFlowTests: XCTestCase {
         app.buttons["new-session"].click()
         let editor = app.textViews["new-message"]
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
-        app.popUpButtons["new-model"].click()
-        app.menuItems["gpt-5.4-mini"].click()
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
+        app.sheets.buttons["run-config"].click()
+        app.buttons["model-option-gpt-5.4-mini"].click()
         paste("Edit rejected first turn", into: editor, app: app)
         app.buttons["start-session"].click()
         XCTAssertTrue(app.buttons["edit-failed-message"].waitForExistence(timeout: 15))
         app.buttons["edit-failed-message"].click()
         XCTAssertTrue(editor.waitForExistence(timeout: 10))
         XCTAssertEqual(editor.value as? String, "Edit rejected first turn")
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
-        XCTAssertTrue((app.popUpButtons["new-model"].value as? String ?? "").contains("gpt-5.4-mini"))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].label.contains("gpt-5.4-mini"))
         try await capture(app, name: "mac-recovered-first-turn")
         app.buttons["start-session"].click()
         XCTAssertTrue(app.textViews["message-editor"].waitForExistence(timeout: 10))
@@ -681,7 +694,7 @@ final class MacFlowTests: XCTestCase {
         XCTAssertTrue(app.popUpButtons["new-agent"].waitForExistence(timeout: 10))
         app.popUpButtons["new-agent"].click()
         app.menuItems["Claude Code"].click()
-        XCTAssertTrue(app.popUpButtons["new-model"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.sheets.buttons["run-config"].waitForExistence(timeout: 10))
         paste("Recover removed agent", into: editor, app: app)
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("recovery-\(UUID()).txt")
         try Data("Keep this attachment".utf8).write(to: file)

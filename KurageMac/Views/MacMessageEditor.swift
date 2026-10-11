@@ -8,6 +8,8 @@ struct MacMessageEditor: NSViewRepresentable {
     let accessibilityIdentifier: String
     var initiallyFocused = false
     var onContentHeight: ((CGFloat) -> Void)? = nil
+    /// Option-Command-Up/Down while editing; returns whether the step was handled.
+    var onStepReasoning: ((Int) -> Bool)? = nil
     let onPasteAttachments: ([MacAttachmentSource]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -37,6 +39,7 @@ struct MacMessageEditor: NSViewRepresentable {
         editor.delegate = context.coordinator
         editor.string = text
         editor.onPasteAttachments = onPasteAttachments
+        editor.onStepReasoning = onStepReasoning
         editor.focusOnAttach = initiallyFocused
         editor.setAccessibilityLabel(accessibilityLabel)
         editor.setAccessibilityIdentifier(accessibilityIdentifier)
@@ -53,6 +56,7 @@ struct MacMessageEditor: NSViewRepresentable {
         context.coordinator.scrollView = scroll
         guard let editor = scroll.documentView as? MacPasteTextView else { return }
         editor.onPasteAttachments = onPasteAttachments
+        editor.onStepReasoning = onStepReasoning
         if editor.string != text {
             editor.string = text
             editor.undoManager?.removeAllActions()
@@ -102,7 +106,20 @@ final class MacEditorScrollView: NSScrollView {
 
 final class MacPasteTextView: NSTextView {
     var onPasteAttachments: (([MacAttachmentSource]) -> Void)?
+    var onStepReasoning: ((Int) -> Bool)?
     var focusOnAttach = false
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function])
+        if flags == [.command, .option], window?.firstResponder === self, let onStepReasoning {
+            switch event.specialKey {
+            case .upArrow?: if onStepReasoning(1) { return true }
+            case .downArrow?: if onStepReasoning(-1) { return true }
+            default: break
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

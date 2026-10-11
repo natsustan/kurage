@@ -12,10 +12,9 @@ struct MacComposer: View {
     let canStop: Bool
     let onSend: () -> Void
     let onStop: () -> Void
-    let onChoose: (String) -> Void
+    let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
     @State private var importing = false
     @State private var measuredHeight: CGFloat = 22
-    @State private var suppressRunConfigOpen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var editorHeight: CGFloat { min(160, max(22, measuredHeight)) }
@@ -42,7 +41,8 @@ struct MacComposer: View {
                     .padding(.horizontal, 10)
                     .padding(.top, draft.attachments.isEmpty && draft.pendingAttachments.isEmpty ? 0 : 10)
                 MacMessageEditor(text: $draft.text, accessibilityLabel: "Message",
-                                 accessibilityIdentifier: "message-editor", onContentHeight: { measuredHeight = $0 }) {
+                                 accessibilityIdentifier: "message-editor", onContentHeight: { measuredHeight = $0 },
+                                 onStepReasoning: runConfig?.reasoningStepper(onChoose)) {
                     draft.pendingAttachments.append(contentsOf: $0)
                 }
                 .frame(height: editorHeight)
@@ -107,52 +107,10 @@ struct MacComposer: View {
     }
 
     @ViewBuilder private var runConfigControl: some View {
-        if let menu = runConfig {
-            let summary = [menu.modelLabel, menu.reasoningLabel].compactMap { $0 }.joined(separator: " · ")
-            if !summary.isEmpty, canAdjust(menu) {
-                Button {
-                    if showsRunConfig {
-                        showsRunConfig = false
-                    } else if !suppressRunConfigOpen {
-                        showsRunConfig = true
-                    }
-                } label: {
-                    MacComposerMenuLabel(title: summary, active: showsRunConfig)
-                }
-                .buttonStyle(.plain)
-                .fixedSize(horizontal: true, vertical: false)
-                .layoutPriority(-1)
-                .accessibilityLabel(menu.accessibilitySummary)
-                .accessibilityIdentifier("run-config")
-                .help("Applies to the next message")
-                .background {
-                    MacPopoverAnchor(isPresented: $showsRunConfig, onClose: {
-                        suppressRunConfigOpen = true
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(200))
-                            suppressRunConfigOpen = false
-                        }
-                    }) {
-                        MacRunConfigPopover(menu: menu, isLoadingModels: isLoadingModels) { value in
-                            onChoose(value)
-                            showsRunConfig = false
-                        }
-                    }
-                }
-            } else if !summary.isEmpty {
-                Text(summary)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-            }
+        if let runConfig {
+            MacRunConfigButton(menu: runConfig, isPresented: $showsRunConfig, isLoadingModels: isLoadingModels,
+                               onChoose: onChoose)
         }
-    }
-
-    private func canAdjust(_ menu: RunConfigMenu) -> Bool {
-        if menu.sections.contains(where: { $0.kind == .reasoning && $0.options.count > 1 }) { return true }
-        if menu.sections.contains(where: { $0.kind == .model && $0.options.count > 1 }) { return true }
-        return menu.modelShortcuts.contains(where: \.isEnabled)
     }
 }
 
@@ -207,12 +165,99 @@ private struct MacComposerMenuLabel: View {
     }
 }
 
-/// Model shortcuts sit above the reasoning choices. An existing session keeps
-/// its model locked when the agent exposes reasoning, matching the iOS panel.
+/// Model and reasoning for the next turn, shared by the conversation and creation composers.
+/// The composers' editors step reasoning with Option-Command-Up/Down without opening the popover.
+struct MacRunConfigButton: View {
+    let menu: RunConfigMenu
+    @Binding var isPresented: Bool
+    var isLoadingModels = false
+    let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
+    @State private var suppressOpen = false
+
+    private var summary: String {
+        [menu.modelLabel, menu.reasoningLabel].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var reasoning: RunConfigMenu.Section? {
+        menu.sections.first { $0.kind == .reasoning && $0.options.count > 1 }
+    }
+
+    private var canAdjust: Bool {
+        if reasoning != nil || menu.sections.contains(where: { $0.kind == .fastMode }) { return true }
+        if menu.sections.contains(where: { $0.kind == .model && $0.options.count > 1 }) { return true }
+        return menu.modelShortcuts.contains(where: \.isEnabled)
+    }
+
+    var body: some View {
+        if canAdjust {
+            Button {
+                if isPresented {
+                    isPresented = false
+                } else if !suppressOpen {
+                    isPresented = true
+                }
+            } label: {
+                MacComposerMenuLabel(title: summary.isEmpty ? "Choose a model…" : summary, active: isPresented)
+            }
+            .buttonStyle(.plain)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(-1)
+            .accessibilityLabel(menu.accessibilitySummary.isEmpty ? "Choose a model" : menu.accessibilitySummary)
+            .accessibilityIdentifier("run-config")
+            .help(reasoning == nil ? "Applies to the next message"
+                : "Applies to the next message. ⌥⌘↑ or ⌥⌘↓ changes reasoning.")
+            .background {
+                MacPopoverAnchor(isPresented: $isPresented, onClose: {
+                    suppressOpen = true
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(200))
+                        suppressOpen = false
+                    }
+                }) {
+                    MacRunConfigPopover(menu: menu, isLoadingModels: isLoadingModels) { kind, value in
+                        onChoose(kind, value)
+                        isPresented = false
+                    }
+                }
+            }
+        } else if !summary.isEmpty {
+            Text(summary)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+        }
+    }
+}
+
+extension RunConfigMenu {
+    /// The adjacent reasoning level for Option-Command-Up/Down, or nil at either end or without levels.
+    func steppedReasoning(by offset: Int) -> String? {
+        guard let section = sections.first(where: { $0.kind == .reasoning && $0.options.count > 1 }) else { return nil }
+        // Without a known level, start from the end the user is moving away from.
+        let target = section.options.firstIndex { $0.value == section.selection }.map { $0 + offset }
+            ?? (offset > 0 ? 0 : section.options.count - 1)
+        return section.options.indices.contains(target) ? section.options[target].value : nil
+    }
+
+    /// Editor handler: applies the step, beeps at either end, and passes the key on without levels.
+    func reasoningStepper(_ choose: @escaping (Section.Kind, String) -> Void) -> ((Int) -> Bool)? {
+        guard sections.contains(where: { $0.kind == .reasoning && $0.options.count > 1 }) else { return nil }
+        return { offset in
+            if let value = steppedReasoning(by: offset) { choose(.reasoning, value) } else { NSSound.beep() }
+            return true
+        }
+    }
+}
+
+/// Editable models are listed above the reasoning levels. When the agent exposes
+/// reasoning, an existing session keeps its model, so only its name is shown.
 private struct MacRunConfigPopover: View {
+    static let width: CGFloat = 280
+
     let menu: RunConfigMenu
     var isLoadingModels: Bool
-    let onChoose: (String) -> Void
+    let onChoose: (RunConfigMenu.Section.Kind, String) -> Void
 
     private struct Row: Identifiable {
         let id: String
@@ -224,8 +269,12 @@ private struct MacRunConfigPopover: View {
         let identifier: String
     }
 
+    private var modelSection: RunConfigMenu.Section? {
+        menu.sections.first { $0.kind == .model }
+    }
+
     private var modelRows: [Row] {
-        let section = menu.sections.first { $0.kind == .model }
+        let section = modelSection
         let editable = Set(section?.options.map(\.value) ?? [])
         var rows: [Row] = []
         for shortcut in menu.modelShortcuts {
@@ -250,30 +299,44 @@ private struct MacRunConfigPopover: View {
         return rows
     }
 
+    /// A list only when at least one model can be chosen; a locked model is a single caption.
+    private var modelsSelectable: Bool { modelRows.contains(where: \.enabled) }
+
     private var reasoning: RunConfigMenu.Section? {
         menu.sections.first { $0.kind == .reasoning && !$0.options.isEmpty }
     }
 
     var body: some View {
         let rows = VStack(alignment: .leading, spacing: 1) {
-            if !modelRows.isEmpty {
+            if modelsSelectable {
                 sectionTitle("Model")
                 ForEach(modelRows) { row in
                     choiceRow(title: row.title, icon: row.icon, reserveIcon: false, selected: row.selected,
-                              enabled: row.enabled, identifier: row.identifier) { onChoose(row.value) }
+                              enabled: row.enabled, identifier: row.identifier) { onChoose(.model, row.value) }
                 }
+            } else if let modelLabel = menu.modelLabel {
+                lockedModel(modelLabel)
             }
             if let reasoning {
-                if !modelRows.isEmpty { Divider().padding(.vertical, 4).padding(.horizontal, 8) }
+                if modelsSelectable { Divider().padding(.vertical, 4).padding(.horizontal, 8) }
                 sectionTitle("Reasoning")
-                ForEach(reasoning.options) { option in
-                    choiceRow(title: option.label, icon: nil, reserveIcon: modelRows.contains { $0.icon != nil },
-                              selected: option.value == reasoning.selection,
-                              enabled: reasoning.options.count > 1,
-                              identifier: "run-config-reasoning-\(option.value)") { onChoose(option.value) }
+                ViewThatFits(in: .horizontal) {
+                    reasoningSegments(reasoning)
+                    reasoningList(reasoning)
                 }
             }
-            if isLoadingModels {
+            if let fast = menu.sections.first(where: { $0.kind == .fastMode }) {
+                Toggle("Fast mode", isOn: Binding(
+                    get: { fast.selection == "on" },
+                    set: { onChoose(.fastMode, $0 ? "on" : "off") }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .padding(8)
+                .help("Faster responses may increase usage.")
+                .accessibilityIdentifier("run-config-fast-mode")
+            }
+            if isLoadingModels, modelsSelectable || reasoning == nil {
                 ProgressView()
                     .controlSize(.small)
                     .frame(maxWidth: .infinity)
@@ -282,12 +345,79 @@ private struct MacRunConfigPopover: View {
             }
         }
         .padding(4)
-        .frame(width: 228)
+        .frame(width: Self.width)
         Group {
-            if modelRows.count + (reasoning?.options.count ?? 0) > 12 {
+            if (modelsSelectable ? modelRows.count : 0) + (reasoning?.options.count ?? 0) > 12 {
                 ScrollView { rows }.frame(height: 420)
             } else {
                 rows.fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func lockedModel(_ title: String) -> some View {
+        HStack(spacing: 8) {
+            MacProviderIcon(icon: menu.modelShortcuts.first { $0.isSelected }?.model.icon)
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "lock")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tertiary)
+        }
+        .font(.system(size: 13, weight: .medium))
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .help("The model stays fixed in this session to keep the provider's context cache.")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Model \(title), fixed for this session")
+        .accessibilityIdentifier("run-config-model")
+    }
+
+    /// One click per level. Falls back to the list when the levels do not fit.
+    private func reasoningSegments(_ section: RunConfigMenu.Section) -> some View {
+        HStack(spacing: 2) {
+            ForEach(section.options) { option in
+                let selected = option.value == section.selection
+                Button { onChoose(.reasoning, option.value) } label: {
+                    Text(option.label)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 8)
+                        .frame(maxWidth: .infinity, minHeight: 24)
+                        .background {
+                            if selected {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .shadow(color: .black.opacity(0.12), radius: 1, y: 0.5)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? .primary : .secondary)
+                .disabled(section.options.count < 2)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("run-config-reasoning-\(option.value)")
+            }
+        }
+        .padding(2)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 6)
+        .padding(.bottom, 4)
+    }
+
+    private func reasoningList(_ section: RunConfigMenu.Section) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            ForEach(section.options) { option in
+                choiceRow(title: option.label, icon: nil, reserveIcon: false,
+                          selected: option.value == section.selection,
+                          enabled: section.options.count > 1,
+                          identifier: "run-config-reasoning-\(option.value)") { onChoose(.reasoning, option.value) }
             }
         }
     }
@@ -441,8 +571,9 @@ private struct MacPopoverAnchor<Content: View>: NSViewRepresentable {
                 return
             }
             guard let anchor, anchor.window != nil, let hosting else { return }
-            let fitted = hosting.sizeThatFits(in: CGSize(width: 228, height: 480))
-            popover.contentSize = CGSize(width: 228, height: max(1, fitted.height))
+            let width = MacRunConfigPopover.width
+            let fitted = hosting.sizeThatFits(in: CGSize(width: width, height: 480))
+            popover.contentSize = CGSize(width: width, height: max(1, fitted.height))
             guard !popover.isShown else { return }
             let rect = anchor.bounds.isEmpty ? CGRect(x: 0, y: 0, width: 1, height: 1) : anchor.bounds
             popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)

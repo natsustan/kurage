@@ -1,5 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
-import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn } from './run-config.mjs';
+import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, projectRunConfig, validateFastModeChoice } from './run-config.mjs';
 import { isSessionTab } from './session-tabs.mjs';
 import { deliveryOutcome } from './conversation-delivery.mjs';
 
@@ -63,8 +63,8 @@ function competingActivation(meta, entries, turnID, followUp = false) {
 // A retry keeps its user turn, configuration, and original steer target.
 // Steer offers its payload while history uploads; ordinary activation follows
 // durable history. An ephemeral writer stays alive until its upload settles.
-// `runConfig` changes one model or reasoning value, and only for a new turn.
-export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = [], steering) {
+// `runConfig` changes model/reasoning and Fast independently, only for a new turn.
+export async function sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments = [], steering, workspaceID) {
   const docID = `session-${sessionID}`;
   const rows = await repo.listDoc();
   const row = rows.find(entry => entry.docId === docID && !entry.deleted);
@@ -138,6 +138,19 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     };
     for (const key of INHERITED_TURN_CONFIG_KEYS) {
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];
+    }
+    if (hasFastModeChoice(runConfig)) {
+      const { machineId, agentConfigId } = row.meta;
+      if (!workspaceID || !machineId || !agentConfigId) throw new Error('Fast mode is unavailable');
+      const flockDocID = `${workspaceID}:mf:${machineId}`;
+      const machine = await repo.openFlockDoc(flockDocID);
+      const report = await repo.sync({ scope: 'doc', flockDocIds: [flockDocID],
+        requireTransports: ['cloud'], signal: steering?.signal });
+      steering?.signal?.throwIfAborted();
+      if (!report.ok && !synced(report)) throw new Error('Machine capability sync failed');
+      validateFastModeChoice(runConfig, projectRunConfig({ cliType, agentType,
+        capability: machine.flock.get(['acpCapability', agentConfigId]),
+        turn: latestUserTurn(entries), runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON() }));
     }
     config = applyRunConfigChoice(config, runConfig);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {

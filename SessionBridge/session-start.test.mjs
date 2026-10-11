@@ -852,3 +852,23 @@ test('tab writes revalidate choices and never substitute the parent project', as
   assert.equal(rows.has('session-new'), false);
   await assert.rejects(newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:other', true), /inherits/);
 });
+
+test('new sessions validate Fast and preserve its boolean through first-turn retry', async () => {
+  const { repo, flock, docs } = fixture();
+  flock.set('acpCapability/cfg', { ...capability, configOptions: [...capability.configOptions,
+    { id: 'fast-mode', type: 'boolean', currentValue: false }] });
+  const selections = [{ configOptionID: null, value: 'gpt-5.5' },
+    { configOptionID: 'reasoning_effort', value: 'low' }, { configOptionID: 'fast-mode', value: true }];
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.runConfig.fastMode.value, 'off');
+  assert.equal(await start(repo, { selections }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues['fast-mode'], true);
+  flock.set('acpCapability/cfg', capability);
+  assert.equal(await start(repo, { selections: [] }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').toJSON().length, 1);
+  assert.equal(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues['fast-mode'], true);
+  const next = fixture();
+  assert.equal(await start(next.repo, { selections }), 'rejected');
+  assert.equal(next.docs.get('session-new').getList('history').toJSON().length, 0);
+  assert.equal(next.rows.has('session-new'), false);
+});

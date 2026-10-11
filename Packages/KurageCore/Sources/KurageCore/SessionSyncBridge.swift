@@ -880,6 +880,8 @@ extension SessionTabStart {
 
 extension RunConfigChoice {
     public func bridgeValue() -> [String: Any] {
-        ["configOptionID": configOptionID ?? NSNull(), "value": value]
+        ["configOptionID": configOptionID ?? NSNull(),
+         "value": isBoolean ? (value == "on") : value,
+         "additionalChoices": additionalChoices.map { $0.bridgeValue() }]
     }
 }
