@@ -1,7 +1,7 @@
 import { activityTime, canRestoreArchivedSession, readLocalProjectState } from './session-archive.mjs';
 import { appendUserTurn, assertSameTurn, sendText, synced } from './conversation-send.mjs';
 import {
-  applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig,
+  applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig, resolveFastModeConfig,
 } from './run-config.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 ? value : undefined;
@@ -207,7 +207,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   const inheritsAgent = !text(agentConfigID) || agentConfigID === meta.agentConfigId;
   // A confirmed retry only needs the meta/agent halves; the baseline doc sync
   // serves the first turn's inherited configuration and can be skipped.
-  const baseline = !includeBaseline ? {}
+  const inherited = !includeBaseline ? {}
     : !tab
     ? (text(agent.id)
         ? await readBaseline(repo, rows, meta, agent.id, signal, cache)
@@ -218,11 +218,11 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
   const capability = flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined;
+  const baseline = resolveFastModeConfig(inherited, { cliType: agent.cliType, agentType: agent.agentType, capability });
   return {
     meta: targetMeta,
     agent,
     baseline,
-    capability,
     machineName: machineName ?? meta.machineId,
     providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name, icon: provider.icon })),
     runConfig: projectNewSessionRunConfig({
@@ -290,7 +290,7 @@ export async function startSession(repo, workspaceID, {
     if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }, ...attachments],
       cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,
-    }, template.runConfig, selections, template.capability);
+    }, template.runConfig, selections);
   } catch (error) {
     // A synced empty document proves there is no first turn to preserve.
     // Once authored, any error must retain the original retry IDs/configuration.

@@ -874,103 +874,42 @@ test('new sessions validate Fast and preserve its boolean through first-turn ret
 });
 
 for (const parentSessionID of [undefined, 'template']) {
-  for (const [oldID, newID] of [['fast', 'fast-mode'], ['fast-mode', 'fast']]) {
-    for (const type of ['boolean', 'select']) {
-      for (const explicit of [false, true]) {
-        test(`first turn migrates ${oldID} to ${newID}/${type}, tab=${Boolean(parentSessionID)}, explicit=${explicit}`, async () => {
-          const { repo, flock, docs, rows } = fixture();
-          const enabled = type === 'boolean' ? true : 'on';
-          const disabled = type === 'boolean' ? false : 'off';
-          const baseline = { configOptionValues: { [oldID]: 'on', reasoning_effort: 'high', unrelated: 'keep' } };
-          docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: baseline });
-          flock.set('acpCapability/cfg', { ...capability, configOptions: [...capability.configOptions,
-            { id: newID, type, currentValue: disabled, options: [{ value: 'on' }, { value: 'off' }] }] });
-          const selections = explicit ? [{ configOptionID: newID, value: enabled }] : [];
-          const sync = repo.sync;
-          repo.sync = async options => options.docIds?.includes('session-new') &&
-            docs.get('session-new')?.getList('history').length > 0
-            ? { ok: false, outcome: 'failed' } : sync(options);
-          assert.equal(await start(repo, { parentSessionID, selections }), 'unconfirmed');
-          assert.equal(rows.has('session-new'), false);
-          const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
-          assert.deepEqual(written.configOptionValues,
-            { [newID]: explicit ? enabled : disabled, reasoning_effort: 'high', unrelated: 'keep' });
-          assert.deepEqual(docs.get('session-template').getList('history').toJSON().at(-1).inputConfig, baseline);
-          // A capability change after authoring must not rewrite or duplicate the first turn.
-          flock.set('acpCapability/cfg', capability);
-          repo.sync = sync;
-          assert.equal(await start(repo, { parentSessionID, selections: [] }), 'sent');
-          assert.equal(docs.get('session-new').getList('history').length, 1);
-          assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, written);
-          assert.equal(rows.get('session-new').parentSessionId, parentSessionID);
-        });
-      }
-    }
-  }
-}
-
-for (const parentSessionID of [undefined, 'template']) {
-  test(`first turn clears removed Fast, tab=${Boolean(parentSessionID)}, and retry preserves the result`, async () => {
-    const { repo, docs, rows, flock } = fixture();
-    const baseline = { modelId: 'gpt-5.5',
-      configOptionValues: { fast: 'on', 'fast-mode': true, reasoning_effort: 'high', unrelated: 'keep' } };
-    docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: baseline });
-    const sync = repo.sync;
-    repo.sync = async options => options.docIds?.includes('session-new') &&
-      docs.get('session-new')?.getList('history').length > 0
-      ? { ok: false, outcome: 'failed' } : sync(options);
-    assert.equal(await start(repo, { parentSessionID }), 'unconfirmed');
-    assert.equal(rows.has('session-new'), false);
-    const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
-    assert.deepEqual(written.configOptionValues, { reasoning_effort: 'high', unrelated: 'keep' });
-    assert.deepEqual(docs.get('session-template').getList('history').toJSON().at(-1).inputConfig, baseline);
-    flock.set('acpCapability/cfg', { ...capability, configOptions: [...capability.configOptions,
-      { id: 'fast-mode', type: 'boolean', currentValue: true }] });
-    repo.sync = sync;
-    assert.equal(await start(repo, { parentSessionID }), 'sent');
-    assert.equal(docs.get('session-new').getList('history').length, 1);
-    assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, written);
-  });
-
-  test(`missing or mismatched capabilities preserve first-turn Fast, tab=${Boolean(parentSessionID)}`, async () => {
-    for (const snapshot of [undefined, { ...capability, agentType: 'claude' },
-      { ...capability, configOptions: undefined }]) {
+  for (const provenance of ['runtime', undefined]) {
+    test(`first-turn Fast follows ${provenance ?? 'provisional'} authority across model changes, tab=${Boolean(parentSessionID)}`, async () => {
       const { repo, docs, flock } = fixture();
-      const baseline = { modelId: 'gpt-5.5', configOptionValues: { fast: 'on', 'fast-mode': true } };
-      docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: baseline });
-      flock.set('acpCapability/cfg', snapshot);
-      assert.equal(await start(repo, { parentSessionID }), 'sent');
-      assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues,
-        baseline.configOptionValues);
-    }
-  });
-
-  test(`an option table with no selectors clears first-turn Fast, tab=${Boolean(parentSessionID)}`, async () => {
-    const { repo, docs, flock } = fixture();
-    docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: {
-      configOptionValues: { fast: 'on', 'fast-mode': true, unrelated: 'keep' },
-    } });
-    flock.set('acpCapability/cfg', { ...capability, configOptions: [] });
-    const options = await newSessionOptions(repo, 'ws', 'template', undefined, undefined, undefined, Boolean(parentSessionID));
-    assert.equal(options.runConfig, null);
-    assert.equal(await start(repo, { parentSessionID }), 'sent');
-    assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues,
-      { unrelated: 'keep' });
-  });
-
-  for (const selectedModel of ['gpt-5.5', 'gpt-5.4-mini']) {
-    test(`first turn only removes Fast for the probed model ${selectedModel}, tab=${Boolean(parentSessionID)}`, async () => {
-      const { repo, docs } = fixture();
       docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: {
-        modelId: selectedModel === 'gpt-5.5' ? 'gpt-5.4-mini' : 'gpt-5.5',
-        configOptionValues: { fast: 'on', unrelated: 'keep' },
+        modelId: 'gpt-5.5', configOptionValues: { fast: 'on', unrelated: 'keep' },
       } });
+      flock.set('acpCapability/cfg', { ...capability, provenance });
       assert.equal(await start(repo, { parentSessionID,
-        selections: [{ configOptionID: null, value: selectedModel }] }), 'sent');
+        selections: [{ configOptionID: null, value: 'gpt-5.4-mini' }] }), 'sent');
       const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
-      assert.equal(written.modelId, selectedModel);
-      assert.deepEqual(written.configOptionValues, selectedModel === 'gpt-5.5'
+      assert.deepEqual(written.configOptionValues, provenance === 'runtime'
         ? { unrelated: 'keep' } : { fast: 'on', unrelated: 'keep' });
+    });
+
+    test(`first-turn Fast remains selectable across models with ${provenance ?? 'provisional'} capability, tab=${Boolean(parentSessionID)}`, async () => {
+      const { repo, docs, flock, rows } = fixture();
+      flock.set('acpCapability/cfg', { ...capability, provenance, configOptions: [...capability.configOptions,
+        { id: 'fast-mode', type: 'boolean', currentValue: true }] });
+      const options = await newSessionOptions(repo, 'ws', 'template');
+      // NewSessionRunConfig.selections includes the displayed Fast preference.
+      const selections = [{ configOptionID: null, value: 'gpt-5.4-mini' },
+        { configOptionID: 'fast-mode', value: options.runConfig.fastMode.value === 'on' }];
+      const sync = repo.sync;
+      repo.sync = async request => request.docIds?.includes('session-new') &&
+        docs.get('session-new')?.getList('history').length > 0
+        ? { outcome: 'failed' } : sync(request);
+      assert.equal(await start(repo, { parentSessionID, selections }), 'unconfirmed');
+      assert.equal(rows.has('session-new'), false);
+      const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+      assert.equal(written.modelId, 'gpt-5.4-mini');
+      assert.equal(written.configOptionValues['fast-mode'], true);
+      flock.set('acpCapability/cfg', capability);
+      repo.sync = sync;
+      assert.equal(await start(repo, { parentSessionID, selections: [] }), 'sent');
+      assert.equal(docs.get('session-new').getList('history').length, 1);
+      assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, written);
     });
   }
 }

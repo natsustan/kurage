@@ -1,5 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
-import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, normalizeInheritedFastMode, projectRunConfig, removeUnsupportedFastMode, validateFastModeChoice } from './run-config.mjs';
+import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, projectRunConfig, resolveFastModeConfig, validateFastModeChoice } from './run-config.mjs';
 import { isSessionTab } from './session-tabs.mjs';
 import { deliveryOutcome } from './conversation-delivery.mjs';
 
@@ -139,13 +139,9 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
     for (const key of INHERITED_TURN_CONFIG_KEYS) {
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];
     }
-    const inheritsFast = ['fast-mode', 'fast'].some(id => config.configOptionValues?.[id] !== undefined);
-    let capability;
-    // Legacy sessions without a machine capability retain their opaque baseline.
-    // Whenever a capability can be resolved, inherited Fast needs the same wire
-    // type as the picker even when the user did not touch its switch.
-    if (hasFastModeChoice(runConfig) ||
-        (inheritsFast && workspaceID && row.meta.machineId && row.meta.agentConfigId)) {
+    // Only an explicit Fast edit needs write-time capability validation.
+    // Inherited preferences come from the effective runtime/turn baseline.
+    if (hasFastModeChoice(runConfig)) {
       const { machineId, agentConfigId } = row.meta;
       if (!workspaceID || !machineId || !agentConfigId) return 'rejected';
       const flockDocID = `${workspaceID}:mf:${machineId}`;
@@ -154,7 +150,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         requireTransports: ['cloud'], signal: steering?.signal });
       steering?.signal?.throwIfAborted();
       if (!report.ok && !synced(report)) throw new Error('Machine capability sync failed');
-      capability = machine.flock.get(['acpCapability', agentConfigId]);
+      const capability = machine.flock.get(['acpCapability', agentConfigId]);
       const projection = projectRunConfig({ cliType, agentType, capability,
         turn: latestUserTurn(entries), runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON() });
       try {
@@ -164,9 +160,9 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         // for editing instead of retrying an invalid configuration forever.
         return 'rejected';
       }
-      config = normalizeInheritedFastMode(config, projection);
+      config = resolveFastModeConfig(config, { cliType, agentType, capability });
     }
-    config = removeUnsupportedFastMode(applyRunConfigChoice(config, runConfig), capability);
+    config = applyRunConfigChoice(config, runConfig);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {
       config.resume = row.meta.acpSessionId;
     }

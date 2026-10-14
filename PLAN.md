@@ -1277,24 +1277,10 @@
 - 本轮 Mac 构建及 14 项 `KurageMacTests` 通过，新增回归覆盖窗口间移动、卸载恢复、重复布局和原先已隐藏的背景。新增浅／深色浮层 UI 回归覆盖选择后关闭、重新打开时保留选择及草稿；UI 检查因当前 Mac 锁屏而无法激活应用，尚未完成界面断言和截图检查，解锁后需重跑。真实账号与 macOS 26 未实测。
 
 
-## Fast mode（2026-10-11）
+## Fast mode（2026-10-14）
 
-- iOS/macOS 已有会话、新建会话与 New Tab 的运行配置入口加入 Fast mode；仅匹配机器 Agent capability 提供 `fast-mode` / `fast` 时展示。与 reasoning 独立选择，作用于下一条新 turn，运行中可预选；保留原有 model/reasoning 编辑限制。
-- 协议以 Lody `packages/shared/src/acp-run-config.ts`、`components/shared/acp-selector-options.ts`、`packages/acp-extension-codex/src/FastModeConfig.ts` 为准；支持 boolean 与旧式 `on/off` select，布尔值原样写入 `inputConfig.configOptionValues`。新会话及已有会话写入前校验 capability；缺失或类型变化时拒绝新的 Fast 选择。未确认重试沿用原 turn 和配置，不受后续 capability 变化影响。
-- 共享选择状态可同时携带 reasoning 与 Fast，发送完成逐项消费；重试期间新选择的 Fast/reasoning 保留。新会话 provider 切换时按 provider 保存选择，工作区隔离和 outbox 恢复沿用既有机制。fixture 同步支持 Fast。
-- 本轮 frozen lockfile 安装、367 项 JS 测试及 bundle 重建通过；Swift 核心包编译通过。iOS 首轮 330 项单元测试仅旧配置项数断言失败（Fast 加入后由 2 项变 3 项），修正后 17 项相关 Swift 测试通过。已有会话、新会话、深色 Accessibility XXXL 的 3 项 UI 测试通过并检查截图，覆盖开关切换和重开保留；首次 UI 测试点击了开关整行中部，改为命中实际滑块后通过。Mac 最终构建通过；默认签名遇到 errSecInternalComponent，临时 ad-hoc 签名后测试宿主卡在系统 App Sandbox 初始化，已停止，未取得本轮 Mac 单元/UI 测试通过结果。真实账号中 CLI 应用 Fast、提速和使用量变化尚未实测。上文“Fast 未接入”的描述为历史状态，以本节为准。
-
-### Fast mode 分支审查修复（2026-10-11）
-
-- PR #50 最新审查修复（2026-10-14）：已有会话、新会话与 New Tab 在应用模型选择后，若同步 capability 与 Agent 匹配、显式配置表不含两个 Fast ID，且目标模型与探测模型一致，则删除继承的 `fast` / `fast-mode`；明确没有模型控件与模型值的配置表同样清理。Lody `packages/shared/src/acp-run-config.ts` 明确 Fast 能力仅描述探测时的模型，因此能力缺失、失配、配置表缺失或损坏、旧式模型列表及不同／无法确认的目标模型仍保留原配置。非 Fast 值、源历史/runtime 快照与已写入 turn 的重试配置不变，未修改原生消息契约。
-- 本轮新增 20 项回归，覆盖历史/runtime 来源、boolean/select 遗留值、builtin/registry/custom 模型值、两种创建路径、模型双向切换、空投影、能力不确定及未确认重试；其中 7 项清理场景在修复前复现失败。修复后 frozen-lockfile 安装、443 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，真实账号 capability 移除与模型切换尚未实测。
-- PR #50 第六轮审查：新会话与 New Tab 首轮在应用显式选择前，复用已有会话的 Fast 归一化逻辑，清除基线旧别名并写入当前 capability 的 ID、类型及投影值；显式选择优先，源模板与已写入首轮的重试配置不变。新增 16 个场景覆盖两种创建路径、双向 ID 迁移、boolean/select、有无显式选择及未确认重试，修复前全部复现失败，修复后 frozen-lockfile 安装、423 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，真实账号迁移尚未实测。
-- PR #50 第五轮审查：新 turn 继承 Fast 且匹配到当前 capability 时，同时归一化 Fast ID 与 wire type；复制配置后清除旧 Fast 键，再以当前 capability 的 ID 写入投影值，显式选择仍优先。保留完整 runtime 快照语义、非 Fast 配置、历史 turn 与已写入 turn 的重试配置。新增 24 个迁移场景先复现失败，修复后 frozen-lockfile 安装、407 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，未验证真实账号 ID 迁移。
-- PR #50 第四轮审查：已有会话创建新 turn 时，若继承 Fast 且可定位机器 capability，即使没有显式 Fast 选择也同步 capability，并按投影值归一化继承值的 wire type；完整 runtime 快照省略的键不恢复，已写入 turn 的重试不重新校验或改写。没有机器关联或匹配 Fast capability 的旧会话保留原有继承行为。iOS Fast-only 面板隐藏无效模型入口及不可用的收藏模型，保留通用 Advanced 入口与模型加载/失败恢复路径；新增 `--fixture-fast-only` 回归数据。
-- 本轮 frozen-lockfile 安装、383 项 JS 测试与 bundle 重建通过；5 项 Fast 配置 Swift 测试通过，Mac 无签名构建通过。iOS 首轮 Fast-only UI 回归发现不可用收藏模型仍触发模型标题，修正后 Fast-only 与深色 Accessibility XXXL 两项 UI 测试通过，已检查截图。首轮失败测试的 xcodebuild 收尾停滞，后续独立重跑成功后停止了残留进程。未验证真实账号 capability 迁移或 Mac UI。
-- PR #50 第三轮审查：macOS 配置按钮在 model/reasoning 标题为空且 Fast 可用时显示 `Fast mode on/off`，不再回退到误导性的模型选择提示；已有模型与 reasoning 标题保持原样。本轮 Mac 构建通过，针对性参数化测试的 on/off 两种情况通过，同时检查原有标题保留。首次测试筛选未命中用例，修正为完整 Swift Testing 方法签名后实际执行通过；本轮未运行 UI 测试。
-- PR #50 第二轮审查：同步更新 iOS/macOS UI 回归中的 10 处精确标签期望，覆盖 Fast 关闭、开启、发送后保留、新会话、收藏模型与 New Tab。iOS 首轮 4 项用例中 3 项通过；New Tab 因 `Low` 同时匹配菜单项与 reasoning 入口而失败，收窄测试选择器后单独重跑通过。macOS 目标编译成功，但 UI 用例在初始 fixture 会话列表等待超时，尚未执行到标签断言；随后测试进程异常退出，截图附件未完成，原因未确定，不能视为 Mac UI 验证通过。
-- PR #50 辅助功能审查：已有会话与新会话的配置摘要在 Fast 可用时包含 `Fast mode on/off`，避免仅有 Fast 时出现空标签或错误的模型选择提示。本轮 iPhone 17／iOS 27 上 5 项 `FastModeRunConfigTests` 通过，其中新增两项参数化测试覆盖 12 种摘要组合；macOS 关闭签名的构建通过。未运行 UI 测试或手动验证 VoiceOver 朗读。
-- 已有会话的 Fast capability 缺失或类型变化时，写入前校验返回明确的 `rejected`，原生 outbox 按确定未送达处理并开放编辑，避免保留失效选择反复重试。同步异常仍走原有错误路径；已写入 turn 的重试继续保留原配置。
-- Fast 投影先验证保存值是否匹配当前 capability 的类型；旧 `on/off` 与 boolean 格式切换时，失配值回退到 capability 当前值，避免把开启状态误判为关闭。完整 runtime 快照省略该 key 时仍显示关闭，不恢复旧 turn 的值。
-- 本轮新增回归先复现原问题，修复后 frozen lockfile 安装、373 项 JavaScript 测试与 bundle 重建通过。iPhone 17／iOS 27 模拟器构建及 57 项 `HTTPLodyClientTests`／`OutgoingMessageTests`／`FastModeRunConfigTests` 通过，覆盖原生 pending 清理、编辑恢复及 Fast 选择消费。本轮未跑 UI 或 Mac 测试；真实账号 capability 迁移与网络恢复尚未实测。
+- iOS/macOS 已有会话、新会话与 New Tab 的运行配置入口支持 Fast；仅匹配 Agent capability 提供 `fast-mode`（Codex）或 `fast`（Claude）时展示，支持 boolean 与 `on/off` select。Fast 与 model/reasoning 独立选择，作用于下一条新 turn；保留原有 model/reasoning 编辑限制、Fast-only 显示、辅助功能状态及按会话/provider 隔离的选择消费。
+- 以本机 Lody `ea3d599e` 为协议参考：`packages/shared/src/acp-run-config.ts`、`packages/shared/src/ai.ts`、`packages/components/src/components/shared/acp-selector-options.ts`、`packages/components/src/lib/acp-session-config-selection.ts`、`apps/cli/src/session/acp-session-config-applier.ts` 与 `packages/acp-extension-codex/src/FastModeConfig.ts`。Lody 允许切换模型时携带 Fast，实际 speed tier 由机器按当前模型决定；客户端不根据 capability 的探测模型推断目标模型是否支持 Fast。
+- Fast 的界面投影与新会话基线共用一套解析规则：匹配 capability 的 `provenance == runtime` 才是权威目录，过滤不再提供或类型不符的已知 Fast 键；其它 capability 保留已有配置。两个 Fast ID 是不同 Agent 的配置标识，不作为迁移别名。展示回退与 wire 写入分开，不自动改写继承值，也不默认补回基线省略的键。与最新 user turn 匹配的 `acpRuntimeConfig.configOptionValues` 仍作为完整快照替换历史表。
+- 已有会话只有显式 Fast 选择才同步机器并校验当前 ID/wire type，缺失或失配时返回确定的 `rejected`，同步失败保持可重试。未编辑 Fast 的发送继承有效 runtime/turn 基线，不增加机器同步。新会话与 New Tab 使用现有机器读取解析基线，再共享校验并应用显式选择；已写入 turn 的重试继续沿用原 ID 与原配置。
+- 本轮删除多轮审查引入的自动 ID/type 迁移、模型相等推断和重复校验，以及对应的组合测试，改为覆盖权威/暂定 capability、boolean/select 编码、跨模型选择、完整 runtime 快照和未确认重试。4 项新增协议回归先复现失败，调整后 frozen-lockfile 安装、389 项 JavaScript 测试与 bundle 重建通过。iPhone 17 / iOS 27 上 6 项 Fast 状态与 WebKit bundle 加载测试、Mac 关闭签名的构建和 `git diff --check` 通过。未改原生消息契约或布局，本轮未运行 UI / Mac 测试。真实账号 Fast 应用、使用量与网络恢复尚未实测。

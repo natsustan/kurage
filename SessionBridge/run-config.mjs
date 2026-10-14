@@ -3,6 +3,7 @@
 
 const THOUGHT_LEVEL_CATEGORY = 'thought_level';
 const REASONING_EFFORT_CONFIG_ID = 'reasoning_effort';
+const FAST_MODE_CONFIG_IDS = ['fast-mode', 'fast'];
 // Display-only fallback when no capability names the reasoning option.
 const KNOWN_REASONING_CONFIG_IDS = [REASONING_EFFORT_CONFIG_ID, 'effort'];
 
@@ -83,19 +84,43 @@ function reasoningChoicesFor(usable, reasoningOption, modelValue) {
   }));
 }
 
-// Both ACP boolean options and the legacy on/off select representation are live.
-function projectFastMode(usable, values, allowDefault = true) {
+// Codex uses fast-mode, Claude uses fast; both boolean and on/off are live.
+function fastModeOption(usable) {
   const options = Array.isArray(usable?.configOptions) ? usable.configOptions : [];
-  const option = options.find(option =>
-    ['fast-mode', 'fast'].includes(option?.id) && (option.type === 'boolean' ||
+  return options.find(option =>
+    FAST_MODE_CONFIG_IDS.includes(option?.id) && (option.type === 'boolean' ||
       (option.type === 'select' && Array.isArray(option.options) && ['on', 'off'].every(value =>
-        option.options.some(choice => choice.value === value)))));
+        option.options.some(choice => choice?.value === value)))));
+}
+
+function validFastModeValue(isBoolean, value) {
+  return isBoolean ? typeof value === 'boolean' : ['on', 'off'].includes(value);
+}
+
+// Mirrors Lody's capability authority: runtime catalogs own the supported keys;
+// provisional/missing catalogs preserve preferences. Omitted keys stay omitted.
+function resolveFastModeValues(usable, inherited) {
+  const values = record(inherited);
+  if (usable?.provenance !== 'runtime' || !values) return values;
+  const option = fastModeOption(usable);
+  return Object.fromEntries(Object.entries(values).filter(([id, value]) =>
+    !FAST_MODE_CONFIG_IDS.includes(id) || (id === option?.id && validFastModeValue(option.type === 'boolean', value))));
+}
+
+export function resolveFastModeConfig(config, context) {
+  const { usable } = capabilityOptions(context);
+  const values = resolveFastModeValues(usable, config.configOptionValues);
+  return !values || values === config.configOptionValues ? config : { ...config, configOptionValues: values };
+}
+
+function projectFastMode(usable, values, allowDefault = true) {
+  const option = fastModeOption(usable);
   if (!option) return undefined;
   const stored = values[option.id];
-  const valid = option.type === 'boolean' ? typeof stored === 'boolean' : ['on', 'off'].includes(stored);
-  // Old turns may carry the previous wire type. Fall back to the capability,
-  // while preserving an omitted key in a complete runtime snapshot as off.
-  const raw = valid ? stored : (stored !== undefined || allowDefault ? option.currentValue : undefined);
+  // Display fallback does not rewrite an inherited preference. A complete
+  // runtime snapshot omitting this key remains off until explicitly selected.
+  const raw = validFastModeValue(option.type === 'boolean', stored) ? stored
+    : (stored !== undefined || allowDefault ? option.currentValue : undefined);
   return { configOptionID: option.id, isBoolean: option.type === 'boolean',
     value: (option.type === 'boolean' ? raw === true : raw === 'on') ? 'on' : 'off',
     description: text(option.description) ?? null };
@@ -106,7 +131,7 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
     capabilityOptions({ cliType, agentType, capability });
   const input = effectiveRunConfig(turn, runtimeConfig);
   const runtime = matchingRuntime(turn, runtimeConfig);
-  const values = record(input.configOptionValues) ?? {};
+  const values = resolveFastModeValues(usable, input.configOptionValues) ?? {};
 
   const modelValue = (probed && modelOption ? text(values[modelOption.id]) : undefined) ??
     text(runtime?.modelId) ?? text(input.modelId) ?? text(modelOption?.currentValue);
@@ -149,7 +174,7 @@ const pick = (options, ...candidates) =>
 export function projectNewSessionRunConfig({ cliType, agentType, capability, baseline }) {
   const { usable, probed, modelOption, reasoningOption } =
     capabilityOptions({ cliType, agentType, capability });
-  const values = record(baseline?.configOptionValues) ?? {};
+  const values = resolveFastModeValues(usable, baseline?.configOptionValues) ?? {};
   const modelChoices = modelOption ? choices(modelOption) : [];
   const model = modelChoices.length > 0 ? {
     configOptionID: probed ? modelOption.id : null,
@@ -173,18 +198,16 @@ export function projectNewSessionRunConfig({ cliType, agentType, capability, bas
 
 // Only values the projection offers may reach a new session's first turn.
 // Selections come model first, so reasoning is checked against the chosen model.
-export function applyNewSessionChoices(config, projection, selections, capability) {
+export function applyNewSessionChoices(config, projection, selections) {
   const model = projection?.model;
   const reasoning = projection?.reasoning;
   let modelValue = model?.value;
-  let result = normalizeInheritedFastMode(config, projection);
+  let result = config;
   for (const choice of (selections ?? []).flatMap(individualChoices)) {
     const id = choice?.configOptionID ?? null;
     const offers = options => options.some(option => option.value === choice?.value);
-    const fast = projection?.fastMode;
-    if (fast && id === fast.configOptionID &&
-        (fast.isBoolean ? typeof choice.value === 'boolean' : ['on', 'off'].includes(choice.value))) {
-      // Validated independently of model/reasoning, using the capability's wire type.
+    if (hasFastModeChoice(choice)) {
+      validateFastModeChoice(choice, projection);
     } else if (model && id === model.configOptionID && offers(model.options)) {
       modelValue = choice.value;
     } else {
@@ -210,45 +233,7 @@ export function applyNewSessionChoices(config, projection, selections, capabilit
       result = { ...result, configOptionValues: values };
     }
   }
-  // Fast support is per model, so check removal after applying the selection.
-  return removeUnsupportedFastMode(result, capability);
-}
-
-function withoutFastMode(config) {
-  const inherited = record(config.configOptionValues);
-  if (!['fast-mode', 'fast'].some(id => inherited?.[id] !== undefined)) return config;
-  const values = { ...inherited };
-  delete values.fast;
-  delete values['fast-mode'];
-  return { ...config, configOptionValues: values };
-}
-
-// A cache describes the model selected at probe time, not every model this
-// agent can run. Only a matching, explicit option table proves Fast was removed.
-export function removeUnsupportedFastMode(config, capability) {
-  const { usable } = capabilityOptions({ ...config, capability });
-  const options = usable?.configOptions;
-  if (!Array.isArray(options) || options.some(option => !text(option?.id) ||
-      !text(option.type) || ['fast-mode', 'fast'].includes(option.id))) return config;
-  const model = options.find(option => option.category === 'model');
-  if (model && (model.type !== 'select' || !Array.isArray(model.options) || !text(model.currentValue))) return config;
-  // Legacy model lists do not identify the model whose options were captured.
-  if (!model && usable.models?.length) return config;
-  const selectedModel = text(config.modelId) ?? (model ? text(config.configOptionValues?.[model.id]) : undefined);
-  if (selectedModel !== text(model?.currentValue)) return config;
-  return withoutFastMode(config);
-}
-
-// Both send paths use the current capability's Fast ID and wire type. Copy
-// before removing aliases so the source turn/runtime snapshot stays unchanged.
-export function normalizeInheritedFastMode(config, projection) {
-  const fast = projection?.fastMode;
-  const inherited = record(config.configOptionValues);
-  if (!fast || !['fast-mode', 'fast'].some(id => inherited?.[id] !== undefined)) return config;
-  return applyRunConfigChoice(withoutFastMode(config), {
-    configOptionID: fast.configOptionID,
-    value: fast.isBoolean ? fast.value === 'on' : fast.value,
-  });
+  return result;
 }
 
 function individualChoices(choice) {
@@ -264,7 +249,7 @@ export function applyRunConfigChoice(config, choice) {
 function applySingleChoice(config, choice) {
   if (choice == null) return config;
   if ((!text(choice.value) && !(typeof choice.value === 'boolean' &&
-       ['fast-mode', 'fast'].includes(choice.configOptionID))) ||
+       FAST_MODE_CONFIG_IDS.includes(choice.configOptionID))) ||
       (choice.configOptionID != null && !text(choice.configOptionID))) {
     throw new Error('Invalid run configuration');
   }
@@ -282,15 +267,15 @@ function applySingleChoice(config, choice) {
 // Recheck Fast's id and wire type against the machine capability at write time.
 export function validateFastModeChoice(choice, projection) {
   for (const selected of individualChoices(choice)) {
-    if (!['fast-mode', 'fast'].includes(selected.configOptionID)) continue;
+    if (!FAST_MODE_CONFIG_IDS.includes(selected.configOptionID)) continue;
     const fast = projection?.fastMode;
     if (!fast || selected.configOptionID !== fast.configOptionID ||
-        !(fast.isBoolean ? typeof selected.value === 'boolean' : ['on', 'off'].includes(selected.value))) {
+        !validFastModeValue(fast.isBoolean, selected.value)) {
       throw new Error('Fast mode is no longer available');
     }
   }
 }
 
 export function hasFastModeChoice(choice) {
-  return individualChoices(choice).some(value => ['fast-mode', 'fast'].includes(value.configOptionID));
+  return individualChoices(choice).some(value => FAST_MODE_CONFIG_IDS.includes(value.configOptionID));
 }
