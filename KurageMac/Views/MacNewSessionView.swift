@@ -212,15 +212,7 @@ struct MacNewSessionView: View {
                     if template.id == destination.template.id,
                        let start = destination.restoredStart,
                        start.request.agentConfigID == nil || result.agentConfigID == start.request.agentConfigID {
-                        for choice in start.request.selections {
-                            if let model = result.runConfig?.model, choice.configOptionID == model.configOptionID {
-                                result.runConfig?.selectModel(choice.value)
-                            } else if choice.configOptionID == result.runConfig?.fastMode?.configOptionID {
-                                result.runConfig?.selectFastMode(choice.value)
-                            } else if choice.configOptionID == result.runConfig?.reasoning?.configOptionID {
-                                result.runConfig?.selectReasoning(choice.value)
-                            }
-                        }
+                        result.runConfig?.restoreSelections(start.request.selections)
                     }
                     restoredConfiguration = true
                 }

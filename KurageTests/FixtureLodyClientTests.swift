@@ -1410,6 +1410,22 @@ struct ReasoningPresentationTests {
 }
 
 struct FastModeRunConfigTests {
+    @Test(arguments: [false, true], [false, true])
+    func editedMessageRestoresSupportedSelections(includesReasoning: Bool, fastAvailable: Bool) throws {
+        let config = SessionRunConfig.fixtureReasoning
+        var original = ConversationRunConfigState()
+        original.receive(config)
+        if includesReasoning { original.choose("low") }
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        var current = config
+        if !fastAvailable { current.fastMode = nil }
+        restored.receive(current)
+        restored.restore(choice)
+        #expect(restored.choice == (fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)))
+    }
+
     @Test(arguments: ["on", "off", nil] as [String?], [true, false])
     func sessionMenuAnnouncesFastState(value: String?, hasModelAndReasoning: Bool) {
         let config = SessionRunConfig(

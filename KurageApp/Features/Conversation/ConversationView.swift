@@ -69,7 +69,7 @@ struct ConversationContent: View {
     var dismissesComposerFocus = false
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
-    var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
+    var onEditSessionStart: ((OutgoingMessage, OutgoingSessionStart) -> Void)? = nil
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
     @State private var changesSelection: FileChangesSelection?
@@ -465,15 +465,16 @@ struct ConversationContent: View {
     }
 
     private func editMessage() {
-        let editsStart = isStarting
+        let start = model.pendingSessionStart(sessionID: sessionID)
         guard canEditMessage, let message = model.takeFailedOutgoingMessage(sessionID: sessionID) else { return }
-        if editsStart {
-            onEditSessionStart?(message)
+        if let start {
+            onEditSessionStart?(message, start)
             return
         }
         draft = message.composerText
         mentions = message.mentions
         attachments = message.attachments
+        runConfigState.restore(message.runConfig)
         banner = nil
     }
 

@@ -748,6 +748,18 @@ public struct NewSessionRunConfig: Codable, Equatable, Sendable {
         fastMode?.value = value
     }
 
+    public mutating func restoreSelections(_ selections: [RunConfigChoice]) {
+        for choice in selections.flatMap(\.individualChoices) {
+            if let model, choice.configOptionID == model.configOptionID {
+                selectModel(choice.value)
+            } else if let fastMode, choice.configOptionID == fastMode.configOptionID {
+                selectFastMode(choice.value)
+            } else if let reasoning, choice.configOptionID == reasoning.configOptionID {
+                selectReasoning(choice.value)
+            }
+        }
+    }
+
     /// Model first, so the bridge checks reasoning against the chosen model.
     public var selections: [RunConfigChoice] {
         var choices: [RunConfigChoice] = []

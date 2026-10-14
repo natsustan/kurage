@@ -29,6 +29,16 @@ public struct ConversationRunConfigState {
         select(selected)
     }
 
+    public mutating func restore(_ choice: RunConfigChoice?) {
+        for selection in choice?.individualChoices ?? [] {
+            if config?.choosing(selection.value) == selection {
+                choose(selection.value)
+            } else if config?.fastMode?.choosing(selection.value) == selection {
+                chooseFastMode(selection.value)
+            }
+        }
+    }
+
     private mutating func select(_ selected: RunConfigChoice) {
         var choices = choice?.individualChoices ?? []
         choices.removeAll { $0.configOptionID == selected.configOptionID }

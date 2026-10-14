@@ -41,7 +41,8 @@ struct NewSessionView: View {
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil, isReading: Bool = true,
+    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
+         restoredStart: OutgoingSessionStart? = nil, isReading: Bool = true,
          draftStore: ConversationDraftStore? = nil, onArchived: (() -> Void)? = nil,
          onStaged: ((SessionSummary.ID?) -> Void)? = nil) {
         self.route = route
@@ -53,6 +54,8 @@ struct NewSessionView: View {
         _draft = State(initialValue: restoredMessage?.composerText ?? "")
         _mentions = State(initialValue: restoredMessage?.mentions ?? .init())
         _attachments = State(initialValue: restoredMessage?.attachments ?? [])
+        _configuration = State(initialValue: NewSessionConfiguration(restoring: restoredStart?.request))
+        _request = State(initialValue: LoadRequest(agentConfigID: restoredStart?.request.agentConfigID))
     }
 
     private var isStarting: Bool { startedSessionID != nil }
@@ -343,14 +346,14 @@ struct NewSessionView: View {
         Task { try? await model.deliverOutgoingMessage(sessionID: id, workspaceID: workspaceID, turnID: turnID) }
     }
 
-    private func restoreDraft(_ message: OutgoingMessage) {
+    private func restoreDraft(_ message: OutgoingMessage, _ start: OutgoingSessionStart) {
         guard isCurrentWorkspace else { return }
         startedSessionID = nil
         draft = message.composerText
         mentions = message.mentions
         attachments = message.attachments
-        configuration = NewSessionConfiguration()
-        request = LoadRequest(attempt: request.attempt + 1)
+        configuration = NewSessionConfiguration(restoring: start.request)
+        request = LoadRequest(agentConfigID: start.request.agentConfigID, attempt: request.attempt + 1)
         banner = nil
         onStaged?(nil)
     }
@@ -383,6 +386,11 @@ final class NewSessionConfiguration {
     private var cached: [String: NewSessionOptions] = [:]
     @ObservationIgnored private var selections: [String: NewSessionRunConfig] = [:]
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var restoredRequest: SessionTabStart?
+
+    init(restoring request: SessionTabStart? = nil) {
+        restoredRequest = request
+    }
     private struct PendingLoad {
         let id = UUID()
         let task: Task<NewSessionOptions, Error>
@@ -536,8 +544,13 @@ final class NewSessionConfiguration {
             cached[loaded.agentConfigID] = loaded
             if options?.agentConfigID == loaded.agentConfigID { activate(loaded) }
         } catch {
+            guard request == generation, !Task.isCancelled else { return }
             // Keep the snapshot on a transient failure; a later load retries it.
             // Creation always validates again on an independent writing replica.
+            if restoredRequest != nil, options?.agentConfigID == id {
+                isLoading = false
+                loadFailed = true
+            }
         }
     }
 
@@ -581,8 +594,15 @@ final class NewSessionConfiguration {
                let value = selected.fastMode?.value { current?.selectFastMode(value) }
             selections[loaded.agentConfigID] = current
         }
+        if let restoredRequest, loaded.needsRefresh != true,
+           restoredRequest.agentConfigID == nil || restoredRequest.agentConfigID == loaded.agentConfigID {
+            current?.restoreSelections(restoredRequest.selections)
+            if let current { selections[loaded.agentConfigID] = current }
+            self.restoredRequest = nil
+        }
         runConfig = current
-        isLoading = false
+        isLoading = restoredRequest != nil && loaded.needsRefresh == true &&
+            (restoredRequest?.agentConfigID == nil || restoredRequest?.agentConfigID == loaded.agentConfigID)
         loadFailed = false
     }
 }

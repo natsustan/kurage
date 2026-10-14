@@ -426,6 +426,10 @@ public final class FixtureLodyClient: LodyClient {
             }
             return
         }
+        if rejectStartOnce {
+            rejectStartOnce = false
+            throw LodyClientError.sessionCreationRejected
+        }
         let options = try await newSessionOptions(templateSessionID: parentSessionID,
                                                   agentConfigID: request.agentConfigID,
                                                   isTab: true, workspaceID: workspaceID)
