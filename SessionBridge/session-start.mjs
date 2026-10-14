@@ -217,15 +217,17 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
         : await readBaseline(repo, rows, meta, agent.id, signal, cache));
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
+  const capability = flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined;
   return {
     meta: targetMeta,
     agent,
     baseline,
+    capability,
     machineName: machineName ?? meta.machineId,
     providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name, icon: provider.icon })),
     runConfig: projectNewSessionRunConfig({
       cliType: agent.cliType, agentType: agent.agentType,
-      capability: flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined,
+      capability,
       baseline,
     }),
   };
@@ -288,7 +290,7 @@ export async function startSession(repo, workspaceID, {
     if (!existing) config = applyNewSessionChoices({
       prompt, inputBlocks: [{ type: 'text', text: prompt }, ...attachments],
       cliType: template.agent.cliType, agentType: template.agent.agentType, ...template.baseline,
-    }, template.runConfig, selections);
+    }, template.runConfig, selections, template.capability);
   } catch (error) {
     // A synced empty document proves there is no first turn to preserve.
     // Once authored, any error must retain the original retry IDs/configuration.

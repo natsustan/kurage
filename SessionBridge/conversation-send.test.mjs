@@ -808,3 +808,72 @@ test('a failed Fast capability sync is not mistaken for a definite rejection', a
     { configOptionID: 'fast-mode', value: true }, [], undefined, 'workspace'), /capability sync failed/);
   assert.equal(doc.getList('history').length, 0);
 });
+
+for (const source of ['history', 'runtime']) {
+  test(`removed Fast is cleared from ${source} before sending and retry keeps the authored config`, async () => {
+    const { repo, doc, meta } = fixture();
+    Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+    const baseline = { modelId: source === 'runtime' ? 'old-model' : 'gpt-5.5',
+      configOptionValues: { fast: 'on', 'fast-mode': true, unrelated: 'keep' } };
+    doc.getList('history').push({ id: 'old', role: 'user', inputConfig: baseline });
+    if (source === 'runtime') {
+      doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+      doc.getMap('acpRuntimeConfig').set('modelId', 'gpt-5.5');
+      doc.getMap('acpRuntimeConfig').set('configOptionValues', baseline.configOptionValues);
+    }
+    const runtimeBefore = doc.getMap('acpRuntimeConfig').toJSON();
+    repo.openFlockDoc = async () => ({ flock: { get: () => ({
+      cliType: 'codex', agentType: 'codex', configOptions: [
+        { id: 'model', category: 'model', type: 'select', currentValue: 'gpt-5.5',
+          options: [{ value: 'gpt-5.5' }] },
+      ],
+    }) } });
+    let docSyncs = 0;
+    repo.sync = async options => ({ outcome: options.docIds && ++docSyncs === 2 ? 'failed' : 'synced' });
+    const send = () => sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace');
+    assert.equal(await send(), 'unconfirmed');
+    const written = doc.getList('history').toJSON()[1].inputConfig;
+    assert.equal(written.modelId, 'gpt-5.5');
+    assert.deepEqual(written.configOptionValues, { unrelated: 'keep' });
+    assert.deepEqual(doc.getList('history').toJSON()[0].inputConfig, baseline);
+    assert.deepEqual(doc.getMap('acpRuntimeConfig').toJSON(), runtimeBefore);
+    repo.openFlockDoc = async () => assert.fail('An authored retry must not reread capability');
+    assert.equal(await send(), 'sent');
+    assert.equal(doc.getList('history').length, 2);
+    assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig, written);
+  });
+}
+
+for (const selectedModel of ['gpt-5.5', 'gpt-5.4-mini']) {
+  test(`Fast removal is checked against the new turn's selected model ${selectedModel}`, async () => {
+    const { repo, doc, meta } = fixture();
+    Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+    doc.getList('history').push({ id: 'old', role: 'user', inputConfig: {
+      modelId: selectedModel === 'gpt-5.5' ? 'gpt-5.4-mini' : 'gpt-5.5', configOptionValues: { fast: 'on' },
+    } });
+    repo.openFlockDoc = async () => ({ flock: { get: () => ({
+      cliType: 'codex', agentType: 'codex', configOptions: [
+        { id: 'model', category: 'model', type: 'select', currentValue: 'gpt-5.5',
+          options: [{ value: 'gpt-5.5' }, { value: 'gpt-5.4-mini' }] },
+      ],
+    }) } });
+    assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now',
+      { configOptionID: null, value: selectedModel }, [], undefined, 'workspace'), 'sent');
+    const written = doc.getList('history').toJSON()[1].inputConfig;
+    assert.equal(written.modelId, selectedModel);
+    assert.deepEqual(written.configOptionValues, selectedModel === 'gpt-5.5' ? {} : { fast: 'on' });
+  });
+}
+
+test('missing or mismatched capabilities preserve inherited Fast when sending', async () => {
+  for (const capability of [undefined, { cliType: 'codex', agentType: 'claude', configOptions: [] },
+    { cliType: 'codex', agentType: 'codex' }]) {
+    const { repo, doc, meta } = fixture();
+    Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+    const values = { fast: 'on', 'fast-mode': true, unrelated: 'keep' };
+    doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: values } });
+    repo.openFlockDoc = async () => ({ flock: { get: () => capability } });
+    assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace'), 'sent');
+    assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig.configOptionValues, values);
+  }
+});

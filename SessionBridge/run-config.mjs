@@ -173,7 +173,7 @@ export function projectNewSessionRunConfig({ cliType, agentType, capability, bas
 
 // Only values the projection offers may reach a new session's first turn.
 // Selections come model first, so reasoning is checked against the chosen model.
-export function applyNewSessionChoices(config, projection, selections) {
+export function applyNewSessionChoices(config, projection, selections, capability) {
   const model = projection?.model;
   const reasoning = projection?.reasoning;
   let modelValue = model?.value;
@@ -210,7 +210,33 @@ export function applyNewSessionChoices(config, projection, selections) {
       result = { ...result, configOptionValues: values };
     }
   }
-  return result;
+  // Fast support is per model, so check removal after applying the selection.
+  return removeUnsupportedFastMode(result, capability);
+}
+
+function withoutFastMode(config) {
+  const inherited = record(config.configOptionValues);
+  if (!['fast-mode', 'fast'].some(id => inherited?.[id] !== undefined)) return config;
+  const values = { ...inherited };
+  delete values.fast;
+  delete values['fast-mode'];
+  return { ...config, configOptionValues: values };
+}
+
+// A cache describes the model selected at probe time, not every model this
+// agent can run. Only a matching, explicit option table proves Fast was removed.
+export function removeUnsupportedFastMode(config, capability) {
+  const { usable } = capabilityOptions({ ...config, capability });
+  const options = usable?.configOptions;
+  if (!Array.isArray(options) || options.some(option => !text(option?.id) ||
+      !text(option.type) || ['fast-mode', 'fast'].includes(option.id))) return config;
+  const model = options.find(option => option.category === 'model');
+  if (model && (model.type !== 'select' || !Array.isArray(model.options) || !text(model.currentValue))) return config;
+  // Legacy model lists do not identify the model whose options were captured.
+  if (!model && usable.models?.length) return config;
+  const selectedModel = text(config.modelId) ?? (model ? text(config.configOptionValues?.[model.id]) : undefined);
+  if (selectedModel !== text(model?.currentValue)) return config;
+  return withoutFastMode(config);
 }
 
 // Both send paths use the current capability's Fast ID and wire type. Copy
@@ -219,10 +245,7 @@ export function normalizeInheritedFastMode(config, projection) {
   const fast = projection?.fastMode;
   const inherited = record(config.configOptionValues);
   if (!fast || !['fast-mode', 'fast'].some(id => inherited?.[id] !== undefined)) return config;
-  const values = { ...inherited };
-  delete values.fast;
-  delete values['fast-mode'];
-  return applyRunConfigChoice({ ...config, configOptionValues: values }, {
+  return applyRunConfigChoice(withoutFastMode(config), {
     configOptionID: fast.configOptionID,
     value: fast.isBoolean ? fast.value === 'on' : fast.value,
   });

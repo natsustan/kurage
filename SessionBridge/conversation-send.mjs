@@ -1,5 +1,5 @@
 import { LoroList, LoroMap, LoroText } from 'loro-crdt';
-import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, normalizeInheritedFastMode, projectRunConfig, validateFastModeChoice } from './run-config.mjs';
+import { applyRunConfigChoice, effectiveRunConfig, latestUserTurn, hasFastModeChoice, normalizeInheritedFastMode, projectRunConfig, removeUnsupportedFastMode, validateFastModeChoice } from './run-config.mjs';
 import { isSessionTab } from './session-tabs.mjs';
 import { deliveryOutcome } from './conversation-delivery.mjs';
 
@@ -140,6 +140,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
       if (lastConfig[key] !== undefined) config[key] = lastConfig[key];
     }
     const inheritsFast = ['fast-mode', 'fast'].some(id => config.configOptionValues?.[id] !== undefined);
+    let capability;
     // Legacy sessions without a machine capability retain their opaque baseline.
     // Whenever a capability can be resolved, inherited Fast needs the same wire
     // type as the picker even when the user did not touch its switch.
@@ -153,8 +154,8 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
         requireTransports: ['cloud'], signal: steering?.signal });
       steering?.signal?.throwIfAborted();
       if (!report.ok && !synced(report)) throw new Error('Machine capability sync failed');
-      const projection = projectRunConfig({ cliType, agentType,
-        capability: machine.flock.get(['acpCapability', agentConfigId]),
+      capability = machine.flock.get(['acpCapability', agentConfigId]);
+      const projection = projectRunConfig({ cliType, agentType, capability,
         turn: latestUserTurn(entries), runtimeConfig: handle.doc.getMap('acpRuntimeConfig').toJSON() });
       try {
         validateFastModeChoice(runConfig, projection);
@@ -165,7 +166,7 @@ export async function sendText(repo, sessionID, turnID, userID, text, timestamp,
       }
       config = normalizeInheritedFastMode(config, projection);
     }
-    config = applyRunConfigChoice(config, runConfig);
+    config = removeUnsupportedFastMode(applyRunConfigChoice(config, runConfig), capability);
     if (typeof row.meta.acpSessionId === 'string' && row.meta.acpSessionId) {
       config.resume = row.meta.acpSessionId;
     }

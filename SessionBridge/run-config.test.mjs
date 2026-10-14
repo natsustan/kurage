@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyRunConfigChoice, latestUserTurn, projectRunConfig } from './run-config.mjs';
+import { applyRunConfigChoice, latestUserTurn, projectRunConfig, removeUnsupportedFastMode } from './run-config.mjs';
 
 const codexCapability = {
   cliType: 'builtin', agentType: 'codex',
@@ -172,3 +172,50 @@ for (const [type, oldValue, currentValue] of [['boolean', 'on', true], ['select'
     ]).configOptionValues['fast-mode'], currentValue);
   });
 }
+
+test('uncertain capability snapshots preserve inherited Fast', () => {
+  const config = { cliType: 'builtin', agentType: 'codex', modelId: 'gpt-5.5',
+    configOptionValues: { fast: 'on', 'fast-mode': true } };
+  for (const capability of [
+    undefined,
+    { ...codexCapability, agentType: 'claude' },
+    { ...codexCapability, cliType: 'registry' },
+    { ...codexCapability, configOptions: undefined },
+    { ...codexCapability, configOptions: {} },
+    { ...codexCapability, configOptions: [null] },
+    { ...codexCapability, configOptions: [{ id: 'model', category: 'model' }] },
+    { ...codexCapability, configOptions: [{ ...codexCapability.configOptions[0], currentValue: undefined }] },
+    { ...codexCapability, configOptions: [{ ...codexCapability.configOptions[0], options: undefined }] },
+    { ...codexCapability, configOptions: [{ ...codexCapability.configOptions[0], currentValue: 'gpt-5.4-mini' }] },
+    { ...codexCapability, configOptions: [], models: [{ modelId: 'gpt-5.5' }] },
+    { ...codexCapability, configOptions: [...codexCapability.configOptions,
+      { id: 'fast-mode', type: 'select', options: [] }] },
+  ]) {
+    assert.equal(removeUnsupportedFastMode(config, capability), config, JSON.stringify(capability));
+  }
+});
+
+for (const cliType of ['builtin', 'registry', 'custom']) {
+  test(`removed Fast is cleared for the probed ${cliType} model without mutating its baseline`, () => {
+    const config = { cliType, agentType: 'codex', modeId: 'bypass',
+      ...(cliType === 'builtin' ? { modelId: 'gpt-5.5' } : {}),
+      configOptionValues: { selected_model: 'gpt-5.5', fast: 'off', 'fast-mode': false, unrelated: 'keep' } };
+    const original = structuredClone(config);
+    const capability = { cliType, agentType: 'codex', configOptions: [
+      { ...codexCapability.configOptions[0], id: 'selected_model' },
+    ] };
+    assert.deepEqual(removeUnsupportedFastMode(config, capability), {
+      ...config, configOptionValues: { selected_model: 'gpt-5.5', unrelated: 'keep' },
+    });
+    assert.deepEqual(config, original);
+  });
+}
+
+test('an explicit empty option table clears Fast without any model controls', () => {
+  const config = { cliType: 'builtin', agentType: 'codex', configOptionValues: { fast: 'on' } };
+  assert.deepEqual(removeUnsupportedFastMode(config, { cliType: 'builtin', agentType: 'codex', configOptions: [] }),
+    { ...config, configOptionValues: {} });
+  assert.equal(removeUnsupportedFastMode(config, { ...codexCapability, configOptions: [
+    { ...codexCapability.configOptions[0], currentValue: 'gpt-5.5' },
+  ] }), config);
+});

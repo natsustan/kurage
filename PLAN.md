@@ -1286,6 +1286,8 @@
 
 ### Fast mode 分支审查修复（2026-10-11）
 
+- PR #50 最新审查修复（2026-10-14）：已有会话、新会话与 New Tab 在应用模型选择后，若同步 capability 与 Agent 匹配、显式配置表不含两个 Fast ID，且目标模型与探测模型一致，则删除继承的 `fast` / `fast-mode`；明确没有模型控件与模型值的配置表同样清理。Lody `packages/shared/src/acp-run-config.ts` 明确 Fast 能力仅描述探测时的模型，因此能力缺失、失配、配置表缺失或损坏、旧式模型列表及不同／无法确认的目标模型仍保留原配置。非 Fast 值、源历史/runtime 快照与已写入 turn 的重试配置不变，未修改原生消息契约。
+- 本轮新增 20 项回归，覆盖历史/runtime 来源、boolean/select 遗留值、builtin/registry/custom 模型值、两种创建路径、模型双向切换、空投影、能力不确定及未确认重试；其中 7 项清理场景在修复前复现失败。修复后 frozen-lockfile 安装、443 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，真实账号 capability 移除与模型切换尚未实测。
 - PR #50 第六轮审查：新会话与 New Tab 首轮在应用显式选择前，复用已有会话的 Fast 归一化逻辑，清除基线旧别名并写入当前 capability 的 ID、类型及投影值；显式选择优先，源模板与已写入首轮的重试配置不变。新增 16 个场景覆盖两种创建路径、双向 ID 迁移、boolean/select、有无显式选择及未确认重试，修复前全部复现失败，修复后 frozen-lockfile 安装、423 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，真实账号迁移尚未实测。
 - PR #50 第五轮审查：新 turn 继承 Fast 且匹配到当前 capability 时，同时归一化 Fast ID 与 wire type；复制配置后清除旧 Fast 键，再以当前 capability 的 ID 写入投影值，显式选择仍优先。保留完整 runtime 快照语义、非 Fast 配置、历史 turn 与已写入 turn 的重试配置。新增 24 个迁移场景先复现失败，修复后 frozen-lockfile 安装、407 项 JS 测试、bundle 重建与 `git diff --check` 通过。本轮未运行原生/UI 测试，未验证真实账号 ID 迁移。
 - PR #50 第四轮审查：已有会话创建新 turn 时，若继承 Fast 且可定位机器 capability，即使没有显式 Fast 选择也同步 capability，并按投影值归一化继承值的 wire type；完整 runtime 快照省略的键不恢复，已写入 turn 的重试不重新校验或改写。没有机器关联或匹配 Fast capability 的旧会话保留原有继承行为。iOS Fast-only 面板隐藏无效模型入口及不可用的收藏模型，保留通用 Advanced 入口与模型加载/失败恢复路径；新增 `--fixture-fast-only` 回归数据。
