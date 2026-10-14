@@ -8,6 +8,21 @@ import WebKit
 
 @MainActor
 struct MacClientTests {
+    @Test(arguments: ["on", "off"])
+    func fastOnlyConfigurationShowsItsStateInTheVisibleTitle(value: String) {
+        var menu = RunConfigMenu(accessibilitySummary: "Fast mode \(value)", sections: [
+            .init(kind: .fastMode, options: [.init(value: "off", label: "Off"), .init(value: "on", label: "On")],
+                  selection: value)
+        ])
+        let fastOnly = MacRunConfigButton(menu: menu, isPresented: .constant(false)) { _, _ in }
+        #expect(fastOnly.summary == "Fast mode \(value)")
+
+        menu.modelLabel = "gpt-5.5"
+        menu.reasoningLabel = "High"
+        let full = MacRunConfigButton(menu: menu, isPresented: .constant(false)) { _, _ in }
+        #expect(full.summary == "gpt-5.5 · High")
+    }
+
     @Test func titlebarRestoresHostStateWhenMovingBetweenWindows() throws {
         let first = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
                              styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -119,6 +134,57 @@ struct MacClientTests {
         try model.stageOutgoingMessage("Revised", composerText: "Revised", mentions: .init(),
             attachments: [], runConfig: nil, sessionID: "session-long")
         try await model.deliverOutgoingMessage(sessionID: "session-long")
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func editingRejectedMessageRestoresSupportedChoicesAfterWorkspaceChange(includesReasoning: Bool,
+                                                                          fastAvailable: Bool) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, rejectMissingHistoryOnce: true,
+            workspaceSummaries: [WorkspaceSummary(id: "ws-demo", name: "Demo", slug: "demo"),
+                                 WorkspaceSummary(id: "ws-other", name: "Other", slug: "other")])
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        let original = MacWindowState()
+        let initialStream = try await client.observeConversation(sessionID: "session-long", workspaceID: "ws-demo")
+        var initial = initialStream.makeAsyncIterator()
+        let config = try #require(try await initial.next()?.runConfig)
+        original[draft: "session-long"].runConfig.receive(config)
+        if includesReasoning { original[draft: "session-long"].runConfig.choose("low") }
+        original[draft: "session-long"].runConfig.chooseFastMode("on")
+        let choice = try #require(original[draft: "session-long"].runConfig.choice)
+        try model.stageOutgoingMessage("Rejected", composerText: "Rejected", mentions: .init(),
+            attachments: [], runConfig: choice, sessionID: "session-long")
+        await #expect(throws: LodyClientError.sendNotDelivered) {
+            try await model.deliverOutgoingMessage(sessionID: "session-long")
+        }
+
+        let generation = model.workspaceGeneration
+        await model.selectWorkspace("ws-other")
+        await model.selectWorkspace("ws-demo")
+        #expect(model.workspaceGeneration > generation)
+        #expect(model.outgoingMessage(sessionID: "session-long")?.runConfig == choice)
+        // MacWorkspaceView's generation identity replaces the window and drafts.
+        let restored = MacWindowState()
+        var current = config
+        if !fastAvailable { current.fastMode = nil }
+        #expect(restored.editFailedMessage(sessionID: "session-long", model: model))
+        #expect(restored[draft: "session-long"].runConfig.choice == choice)
+        restored[draft: "session-long"].runConfig.receive(nil)
+        #expect(restored[draft: "session-long"].runConfig.choice == choice)
+        restored[draft: "session-long"].runConfig.receive(current)
+        let expected = fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)
+        #expect(restored[draft: "session-long"].runConfig.choice == expected)
+        #expect(restored[draft: "session-long"].text == "Rejected")
+        #expect(model.outgoingMessage(sessionID: "session-long") == nil)
+
+        try model.stageOutgoingMessage("Revised", composerText: "Revised", mentions: .init(),
+            attachments: [], runConfig: restored[draft: "session-long"].runConfig.choice, sessionID: "session-long")
+        try await model.deliverOutgoingMessage(sessionID: "session-long")
+        let sentStream = try await client.observeConversation(sessionID: "session-long", workspaceID: "ws-demo")
+        var sentUpdates = sentStream.makeAsyncIterator()
+        let sent = try #require(try await sentUpdates.next()?.runConfig)
+        #expect(sent.fastMode?.value == (fastAvailable ? "on" : "off"))
+        if includesReasoning { #expect(sent.reasoning?.value == "low") }
     }
 
     @Test func unconfirmedRootCanReopenAfterLeavingEvenWithoutItsTemplate() async throws {

@@ -69,7 +69,7 @@ struct ConversationContent: View {
     var dismissesComposerFocus = false
     var closedTabs: [SessionSummary] = []
     var onReopenTab: (SessionSummary) -> Void = { _ in }
-    var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
+    var onEditSessionStart: ((OutgoingMessage, OutgoingSessionStart) -> Void)? = nil
     @State private var contextWindowUsage: ContextWindowUsage?
     @State private var previewImage: ConversationImage?
     @State private var changesSelection: FileChangesSelection?
@@ -465,15 +465,16 @@ struct ConversationContent: View {
     }
 
     private func editMessage() {
-        let editsStart = isStarting
+        let start = model.pendingSessionStart(sessionID: sessionID)
         guard canEditMessage, let message = model.takeFailedOutgoingMessage(sessionID: sessionID) else { return }
-        if editsStart {
-            onEditSessionStart?(message)
+        if let start {
+            onEditSessionStart?(message, start)
             return
         }
         draft = message.composerText
         mentions = message.mentions
         attachments = message.attachments
+        runConfigState.restore(message.runConfig)
         banner = nil
     }
 
@@ -494,8 +495,12 @@ struct ConversationContent: View {
         }
     }
 
-    private func chooseRunConfig(_ value: String) {
+    private func chooseRunConfig(_ kind: RunConfigMenu.Section.Kind, _ value: String) {
         guard isCurrentWorkspace else { return }
+        if kind == .fastMode {
+            runConfigState.chooseFastMode(value)
+            return
+        }
         runConfigState.choose(value)
         if let config = runConfigState.displayed, let editable = config.editable,
            editable.kind == .reasoning, editable.options.contains(where: { $0.value == value }),
@@ -899,7 +904,7 @@ private struct ConversationFooter: View {
     let loadMentionSkills: @MainActor () async throws -> [MentionSkill]
     let onSend: () -> Bool
     let onCancel: () -> Void
-    let onChooseRunConfig: (String) -> Void
+    let onChooseRunConfig: (RunConfigMenu.Section.Kind, String) -> Void
     let onDecision: (PermissionDecision, PermissionPrompt.ID) -> Void
 
     var body: some View {
@@ -953,7 +958,7 @@ private struct ConversationFooter: View {
                                     loadMentionSessions: loadMentionSessions,
                                     loadMentionSkills: loadMentionSkills,
                                     onSend: onSend, onCancel: onCancel,
-                                    onChooseRunConfig: { _, value in onChooseRunConfig(value) })
+                                    onChooseRunConfig: onChooseRunConfig)
                 } else {
                     Label("Read-only conversation", systemImage: "lock")
                         .font(.footnote)

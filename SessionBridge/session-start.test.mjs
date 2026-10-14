@@ -852,3 +852,64 @@ test('tab writes revalidate choices and never substitute the parent project', as
   assert.equal(rows.has('session-new'), false);
   await assert.rejects(newSessionOptions(repo, 'ws', 'template', undefined, undefined, 'local:mac:other', true), /inherits/);
 });
+
+test('new sessions validate Fast and preserve its boolean through first-turn retry', async () => {
+  const { repo, flock, docs } = fixture();
+  flock.set('acpCapability/cfg', { ...capability, configOptions: [...capability.configOptions,
+    { id: 'fast-mode', type: 'boolean', currentValue: false }] });
+  const selections = [{ configOptionID: null, value: 'gpt-5.5' },
+    { configOptionID: 'reasoning_effort', value: 'low' }, { configOptionID: 'fast-mode', value: true }];
+  const options = await newSessionOptions(repo, 'ws', 'template');
+  assert.equal(options.runConfig.fastMode.value, 'off');
+  assert.equal(await start(repo, { selections }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues['fast-mode'], true);
+  flock.set('acpCapability/cfg', capability);
+  assert.equal(await start(repo, { selections: [] }), 'sent');
+  assert.equal(docs.get('session-new').getList('history').toJSON().length, 1);
+  assert.equal(docs.get('session-new').getList('history').toJSON()[0].inputConfig.configOptionValues['fast-mode'], true);
+  const next = fixture();
+  assert.equal(await start(next.repo, { selections }), 'rejected');
+  assert.equal(next.docs.get('session-new').getList('history').toJSON().length, 0);
+  assert.equal(next.rows.has('session-new'), false);
+});
+
+for (const parentSessionID of [undefined, 'template']) {
+  for (const provenance of ['runtime', undefined]) {
+    test(`first-turn Fast follows ${provenance ?? 'provisional'} authority across model changes, tab=${Boolean(parentSessionID)}`, async () => {
+      const { repo, docs, flock } = fixture();
+      docs.get('session-template').getList('history').push({ id: 'latest', role: 'user', inputConfig: {
+        modelId: 'gpt-5.5', configOptionValues: { fast: 'on', unrelated: 'keep' },
+      } });
+      flock.set('acpCapability/cfg', { ...capability, provenance });
+      assert.equal(await start(repo, { parentSessionID,
+        selections: [{ configOptionID: null, value: 'gpt-5.4-mini' }] }), 'sent');
+      const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+      assert.deepEqual(written.configOptionValues, provenance === 'runtime'
+        ? { unrelated: 'keep' } : { fast: 'on', unrelated: 'keep' });
+    });
+
+    test(`first-turn Fast remains selectable across models with ${provenance ?? 'provisional'} capability, tab=${Boolean(parentSessionID)}`, async () => {
+      const { repo, docs, flock, rows } = fixture();
+      flock.set('acpCapability/cfg', { ...capability, provenance, configOptions: [...capability.configOptions,
+        { id: 'fast-mode', type: 'boolean', currentValue: true }] });
+      const options = await newSessionOptions(repo, 'ws', 'template');
+      // NewSessionRunConfig.selections includes the displayed Fast preference.
+      const selections = [{ configOptionID: null, value: 'gpt-5.4-mini' },
+        { configOptionID: 'fast-mode', value: options.runConfig.fastMode.value === 'on' }];
+      const sync = repo.sync;
+      repo.sync = async request => request.docIds?.includes('session-new') &&
+        docs.get('session-new')?.getList('history').length > 0
+        ? { outcome: 'failed' } : sync(request);
+      assert.equal(await start(repo, { parentSessionID, selections }), 'unconfirmed');
+      assert.equal(rows.has('session-new'), false);
+      const written = docs.get('session-new').getList('history').toJSON()[0].inputConfig;
+      assert.equal(written.modelId, 'gpt-5.4-mini');
+      assert.equal(written.configOptionValues['fast-mode'], true);
+      flock.set('acpCapability/cfg', capability);
+      repo.sync = sync;
+      assert.equal(await start(repo, { parentSessionID, selections: [] }), 'sent');
+      assert.equal(docs.get('session-new').getList('history').length, 1);
+      assert.deepEqual(docs.get('session-new').getList('history').toJSON()[0].inputConfig, written);
+    });
+  }
+}

@@ -11,37 +11,6 @@ struct NewSessionRoute: Hashable {
     var parentSessionID: String? = nil
 }
 
-extension NewSessionOptions {
-    /// Provider, model and reasoning for the first turn, in the composer's run-config menu.
-    func menu(_ runConfig: NewSessionRunConfig?) -> RunConfigMenu {
-        var sections: [RunConfigMenu.Section] = []
-        if providers.count > 1 {
-            sections.append(.init(kind: .provider, options: providers, selection: agentConfigID))
-        }
-        if let model = runConfig?.model {
-            sections.append(.init(
-                kind: .model,
-                options: model.options.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
-                selection: model.value
-            ))
-        }
-        if let runConfig, !runConfig.reasoningOptions.isEmpty {
-            sections.append(.init(kind: .reasoning, options: runConfig.reasoningOptions,
-                                  selection: runConfig.selectedReasoning?.value ?? ""))
-        }
-        let provider = provider?.label
-        let model = runConfig?.selectedModel?.label
-        let reasoning = runConfig?.selectedReasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
-        return RunConfigMenu(
-            modelLabel: model, reasoningLabel: reasoning, providerLabel: provider,
-            accessibilitySummary: [provider.map { "Provider \($0)" }, model.map { "model \($0)" },
-                                   reasoning.map { "reasoning \($0)" }]
-                .compactMap { $0 }.joined(separator: ", "),
-            sections: sections
-        )
-    }
-}
-
 /// Starts a session in a local project from its first message.
 struct NewSessionView: View {
     let route: NewSessionRoute
@@ -72,7 +41,8 @@ struct NewSessionView: View {
     @State private var banner: String?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil, isReading: Bool = true,
+    init(route: NewSessionRoute, model: AppModel, restoredMessage: OutgoingMessage? = nil,
+         restoredStart: OutgoingSessionStart? = nil, isReading: Bool = true,
          draftStore: ConversationDraftStore? = nil, onArchived: (() -> Void)? = nil,
          onStaged: ((SessionSummary.ID?) -> Void)? = nil) {
         self.route = route
@@ -84,6 +54,8 @@ struct NewSessionView: View {
         _draft = State(initialValue: restoredMessage?.composerText ?? "")
         _mentions = State(initialValue: restoredMessage?.mentions ?? .init())
         _attachments = State(initialValue: restoredMessage?.attachments ?? [])
+        _configuration = State(initialValue: NewSessionConfiguration(restoring: restoredStart?.request))
+        _request = State(initialValue: LoadRequest(agentConfigID: restoredStart?.request.agentConfigID))
     }
 
     private var isStarting: Bool { startedSessionID != nil }
@@ -306,6 +278,8 @@ struct NewSessionView: View {
         guard isCurrentWorkspace, !isStarting else { return }
         if kind != .reasoning { rememberCurrentReasoning(onlyIfMissing: true) }
         switch kind {
+        case .fastMode:
+            configuration.selectFastMode(value)
         case .provider:
             guard configuration.selectProvider(value) else { return }
             request = LoadRequest(agentConfigID: value, attempt: request.attempt + 1)
@@ -372,14 +346,14 @@ struct NewSessionView: View {
         Task { try? await model.deliverOutgoingMessage(sessionID: id, workspaceID: workspaceID, turnID: turnID) }
     }
 
-    private func restoreDraft(_ message: OutgoingMessage) {
+    private func restoreDraft(_ message: OutgoingMessage, _ start: OutgoingSessionStart) {
         guard isCurrentWorkspace else { return }
         startedSessionID = nil
         draft = message.composerText
         mentions = message.mentions
         attachments = message.attachments
-        configuration = NewSessionConfiguration()
-        request = LoadRequest(attempt: request.attempt + 1)
+        configuration = NewSessionConfiguration(restoring: start.request)
+        request = LoadRequest(agentConfigID: start.request.agentConfigID, attempt: request.attempt + 1)
         banner = nil
         onStaged?(nil)
     }
@@ -412,6 +386,11 @@ final class NewSessionConfiguration {
     private var cached: [String: NewSessionOptions] = [:]
     @ObservationIgnored private var selections: [String: NewSessionRunConfig] = [:]
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var restoredRequest: SessionTabStart?
+
+    init(restoring request: SessionTabStart? = nil) {
+        restoredRequest = request
+    }
     private struct PendingLoad {
         let id = UUID()
         let task: Task<NewSessionOptions, Error>
@@ -488,6 +467,12 @@ final class NewSessionConfiguration {
         rememberSelection()
     }
 
+    func selectFastMode(_ value: String) {
+        guard !isLoading, !loadFailed else { return }
+        runConfig?.selectFastMode(value)
+        rememberSelection()
+    }
+
     func selectReasoning(_ value: String) {
         guard !isLoading, !loadFailed else { return }
         runConfig?.selectReasoning(value)
@@ -559,8 +544,13 @@ final class NewSessionConfiguration {
             cached[loaded.agentConfigID] = loaded
             if options?.agentConfigID == loaded.agentConfigID { activate(loaded) }
         } catch {
+            guard request == generation, !Task.isCancelled else { return }
             // Keep the snapshot on a transient failure; a later load retries it.
             // Creation always validates again on an independent writing replica.
+            if restoredRequest != nil, options?.agentConfigID == id {
+                isLoading = false
+                loadFailed = true
+            }
         }
     }
 
@@ -600,10 +590,19 @@ final class NewSessionConfiguration {
             if let value = selected.model?.value { current?.selectModel(value) }
             current?.reasoning?.value = nil
             if let value = selected.reasoning?.value { current?.selectReasoning(value) }
+            if selected.fastMode?.configOptionID == current?.fastMode?.configOptionID,
+               let value = selected.fastMode?.value { current?.selectFastMode(value) }
             selections[loaded.agentConfigID] = current
         }
+        if let restoredRequest, loaded.needsRefresh != true,
+           restoredRequest.agentConfigID == nil || restoredRequest.agentConfigID == loaded.agentConfigID {
+            current?.restoreSelections(restoredRequest.selections)
+            if let current { selections[loaded.agentConfigID] = current }
+            self.restoredRequest = nil
+        }
         runConfig = current
-        isLoading = false
+        isLoading = restoredRequest != nil && loaded.needsRefresh == true &&
+            (restoredRequest?.agentConfigID == nil || restoredRequest?.agentConfigID == loaded.agentConfigID)
         loadFailed = false
     }
 }

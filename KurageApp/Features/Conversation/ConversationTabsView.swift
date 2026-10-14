@@ -42,12 +42,13 @@ struct ConversationTabsContent: View {
     var isReading = true
     var draftStore: ConversationDraftStore? = nil
     var onArchived: (() -> Void)? = nil
-    var onEditSessionStart: ((OutgoingMessage) -> Void)? = nil
+    var onEditSessionStart: ((OutgoingMessage, OutgoingSessionStart) -> Void)? = nil
     @Environment(\.scenePhase) private var scenePhase
     @State private var localDrafts = ConversationDraftStore()
     @State private var showsNewTab = false
     @State private var preparingQuickAction = false
     @State private var restoredTabMessage: OutgoingMessage?
+    @State private var restoredTabStart: OutgoingSessionStart?
     @State private var errorMessage: String?
     @State private var changingTab = false
 
@@ -67,11 +68,13 @@ struct ConversationTabsContent: View {
                     projectID: model.sessionSummary(rootID)?.projectID ?? "",
                     projectName: model.sessionSummary(rootID)?.projectName ?? "Shared working directory",
                     templateSessionID: rootID, workspaceGeneration: workspaceGeneration, parentSessionID: rootID
-                ), model: model, restoredMessage: restoredTabMessage, isReading: isReading, onStaged: { id in
+                ), model: model, restoredMessage: restoredTabMessage, restoredStart: restoredTabStart,
+                   isReading: isReading, onStaged: { id in
                     guard let id else { return }
                     model.setActiveSessionTab(id, rootID: rootID)
                     showsNewTab = false
                     restoredTabMessage = nil
+                    restoredTabStart = nil
                 })
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -88,6 +91,7 @@ struct ConversationTabsContent: View {
                     rootSessionID: rootID, onArchived: onArchived,
                     onNewTab: !isReadOnly && model.supportsSessionTabs ? {
                         restoredTabMessage = nil
+                        restoredTabStart = nil
                         showsNewTab = true
                     } : nil,
                     onQuickActionStarted: !isReadOnly && model.supportsQuickActions(rootID: rootID) ? { id in
@@ -97,11 +101,12 @@ struct ConversationTabsContent: View {
                     quickActionPreparation: $preparingQuickAction,
                     dismissesComposerFocus: preparingQuickAction,
                     closedTabs: closedTabs, onReopenTab: { setClosed(false, tab: $0) },
-                    onEditSessionStart: { message in
-                        if activeID == rootID {
-                            onEditSessionStart?(message)
+                    onEditSessionStart: { message, start in
+                        if start.summary.parentSessionID == nil {
+                            onEditSessionStart?(message, start)
                         } else {
                             restoredTabMessage = message
+                            restoredTabStart = start
                             showsNewTab = true
                         }
                     })

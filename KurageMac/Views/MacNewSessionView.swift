@@ -19,6 +19,7 @@ struct MacNewSessionView: View {
     @State private var importing = false
     @State private var restoredConfiguration = false
     @State private var measuredHeight: CGFloat = 64
+    @State private var showsRunConfig = false
 
     private var canStart: Bool {
         pendingStart == nil && !loading && !draft.isLoadingAttachments && options != nil &&
@@ -125,7 +126,9 @@ struct MacNewSessionView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         MacMessageEditor(text: $draft.text, accessibilityLabel: "First message",
                             accessibilityIdentifier: "new-message", initiallyFocused: true,
-                            onContentHeight: { measuredHeight = $0 }) {
+                            onContentHeight: { measuredHeight = $0 },
+                            onStepReasoning: loading ? nil : options.map { $0.menu($0.runConfig) }?
+                                .reasoningStepper { _, value in options?.runConfig?.selectReasoning(value) }) {
                             draft.pendingAttachments.append(contentsOf: $0)
                         }
                         .frame(height: min(200, max(64, measuredHeight)))
@@ -157,12 +160,12 @@ struct MacNewSessionView: View {
                             .disabled(draft.isLoadingAttachments)
                             .accessibilityLabel("Attach files")
                             .accessibilityIdentifier("attach-images")
+                            Spacer(minLength: 8)
                             if loading {
                                 ProgressView().controlSize(.small).accessibilityLabel("Loading configuration")
                             } else {
-                                MacNewSessionConfiguration(options: $options)
+                                MacNewSessionConfiguration(options: $options, isPresented: $showsRunConfig)
                             }
-                            Spacer(minLength: 8)
                             Button(action: start) {
                                 MacComposerSendMark(enabled: canStart)
                             }
@@ -184,6 +187,10 @@ struct MacNewSessionView: View {
         .frame(width: 720)
         .onExitCommand { dismiss() }
         .background { SheetScrimDismiss() }
+        .onChange(of: loading) { _, loading in
+            // The anchor leaves with the old configuration; do not reopen it on the new one.
+            if loading { showsRunConfig = false }
+        }
         .onChange(of: model.sessions, initial: true) { _, sessions in
             projects = NewSessionDestination.projectTemplates(in: sessions)
         }
@@ -205,13 +212,7 @@ struct MacNewSessionView: View {
                     if template.id == destination.template.id,
                        let start = destination.restoredStart,
                        start.request.agentConfigID == nil || result.agentConfigID == start.request.agentConfigID {
-                        for choice in start.request.selections {
-                            if let model = result.runConfig?.model, choice.configOptionID == model.configOptionID {
-                                result.runConfig?.selectModel(choice.value)
-                            } else if choice.configOptionID == result.runConfig?.reasoning?.configOptionID {
-                                result.runConfig?.selectReasoning(choice.value)
-                            }
-                        }
+                        result.runConfig?.restoreSelections(start.request.selections)
                     }
                     restoredConfiguration = true
                 }
@@ -247,30 +248,26 @@ struct MacNewSessionView: View {
     }
 }
 
+/// The first turn's model and reasoning, in the same control as the conversation composer.
 private struct MacNewSessionConfiguration: View {
     @Binding var options: NewSessionOptions?
+    @Binding var isPresented: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            if let config = options?.runConfig {
-                if let model = config.model {
-                    Picker("Model", selection: Binding(get: { model.value }, set: { options?.runConfig?.selectModel($0) })) {
-                        ForEach(model.options) { Text($0.label).tag($0.value) }
-                    }.accessibilityIdentifier("new-model")
+        if let options, options.runConfig != nil {
+            MacRunConfigButton(menu: options.menu(options.runConfig), isPresented: $isPresented) { kind, value in
+                switch kind {
+                case .fastMode: self.options?.runConfig?.selectFastMode(value)
+                case .model: self.options?.runConfig?.selectModel(value)
+                case .reasoning: self.options?.runConfig?.selectReasoning(value)
+                case .provider: break
                 }
-                if !config.reasoningOptions.isEmpty {
-                    Picker("Reasoning", selection: Binding(get: { config.selectedReasoning?.value ?? "" },
-                        set: { options?.runConfig?.selectReasoning($0) })) {
-                        ForEach(config.reasoningOptions) { Text($0.label).tag($0.value) }
-                    }.accessibilityIdentifier("new-reasoning")
-                }
-            } else {
-                Text("This agent's configuration is read-only.").foregroundStyle(.secondary)
             }
+        } else {
+            Text("This agent's configuration is read-only.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
         }
-        .controlSize(.small)
-        .labelsHidden()
-        .fixedSize()
     }
 }
 

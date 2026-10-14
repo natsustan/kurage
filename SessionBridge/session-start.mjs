@@ -1,7 +1,7 @@
 import { activityTime, canRestoreArchivedSession, readLocalProjectState } from './session-archive.mjs';
 import { appendUserTurn, assertSameTurn, sendText, synced } from './conversation-send.mjs';
 import {
-  applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig,
+  applyNewSessionChoices, effectiveRunConfig, latestUserTurn, projectNewSessionRunConfig, resolveFastModeConfig,
 } from './run-config.mjs';
 
 const text = value => typeof value === 'string' && value.length > 0 ? value : undefined;
@@ -207,7 +207,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
   const inheritsAgent = !text(agentConfigID) || agentConfigID === meta.agentConfigId;
   // A confirmed retry only needs the meta/agent halves; the baseline doc sync
   // serves the first turn's inherited configuration and can be skipped.
-  const baseline = !includeBaseline ? {}
+  const inherited = !includeBaseline ? {}
     : !tab
     ? (text(agent.id)
         ? await readBaseline(repo, rows, meta, agent.id, signal, cache)
@@ -217,6 +217,8 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
         : await readBaseline(repo, rows, meta, agent.id, signal, cache));
   signal?.throwIfAborted();
   const machineName = text(rows.find(entry => entry.docId === `machine-${meta.machineId}`)?.meta?.name);
+  const capability = flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined;
+  const baseline = resolveFastModeConfig(inherited, { cliType: agent.cliType, agentType: agent.agentType, capability });
   return {
     meta: targetMeta,
     agent,
@@ -225,7 +227,7 @@ async function readTemplate(repo, workspaceID, templateSessionID, agentConfigID,
     providers: providers.map(provider => ({ value: provider.id ?? '', label: provider.name, icon: provider.icon })),
     runConfig: projectNewSessionRunConfig({
       cliType: agent.cliType, agentType: agent.agentType,
-      capability: flock && text(agent.id) ? flock.get(['acpCapability', agent.id]) : undefined,
+      capability,
       baseline,
     }),
   };

@@ -754,6 +754,101 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedFastMessageRestoresSelectionAfterWorkspaceChange() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-send-not-delivered", "--fixture-settings"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        tap(field)
+        field.typeText("Recover Fast selection")
+        let menu = app.buttons["run-config-menu"]
+        tap(menu)
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        tap(app.buttons["run-config-close"])
+        tap(app.buttons["send-follow-up"])
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "edit-message-")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        for workspace in ["ws-studio", "ws-demo"] {
+            tap(app.buttons["account-menu"])
+            tap(app.buttons["settings-workspace"])
+            tap(app.buttons["workspace-option-\(workspace)"])
+            XCTAssertTrue(app.descendants(matching: .any)["workspace-picker"].waitForNonExistence(timeout: 5))
+            tap(app.buttons["settings-close"])
+        }
+        tap(app.descendants(matching: .any)["session-session-long"])
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        let transcript = app.tables["conversation-transcript"]
+        for _ in 0..<4 where edit.frame.isEmpty || edit.frame.maxY > field.frame.minY {
+            transcript.swipeUp()
+        }
+        tap(edit)
+        XCTAssertEqual(field.value as? String, "Recover Fast selection")
+        tap(field)
+        XCTAssertTrue(menu.wait(for: \.label, toEqual: "Model gpt-5.5, reasoning High, Fast mode on", timeout: 5))
+        attachScreen(app, name: "Failed Fast message restored after workspace change")
+        tap(app.buttons["send-follow-up"])
+        XCTAssertTrue(edit.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testRejectedFirstSessionRestoresAgentAndFastSelection() {
+        verifyRejectedFirstTurnRestoresFast(isTab: false)
+    }
+
+    @MainActor
+    func testRejectedFirstTabRestoresAgentAndFastSelection() {
+        verifyRejectedFirstTurnRestoresFast(isTab: true)
+    }
+
+    @MainActor
+    private func verifyRejectedFirstTurnRestoresFast(isTab: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-start-rejected"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        if isTab {
+            tap(app.descendants(matching: .any)["session-session-pr"])
+            tap(app.buttons["new-session-tab"])
+        } else {
+            tap(app.buttons["new-session-local:machine-1:prism"])
+        }
+        let field = app.descendants(matching: .any)["new-session-field"]
+        tap(field)
+        field.typeText("Recover first Fast turn")
+        let menu = app.buttons["run-config-menu"]
+        tap(menu)
+        tap(app.buttons["run-config-advanced"])
+        tap(app.buttons["run-config-provider"])
+        tap(app.buttons["Codex"])
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
+        tap(app.buttons["run-config-done"])
+        tap(field)
+        let selected = menu.label
+        XCTAssertTrue(selected.contains("Provider Codex"))
+        XCTAssertTrue(selected.contains("Fast mode on"))
+        tap(app.buttons["new-session-send"])
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "edit-message-")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5))
+        tap(edit)
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Recover first Fast turn")
+        tap(field)
+        XCTAssertTrue(menu.wait(for: \.label, toEqual: selected, timeout: 5))
+        attachScreen(app, name: isTab ? "Rejected first tab restores Fast" : "Rejected first session restores Fast")
+        tap(app.buttons["new-session-send"])
+        XCTAssertTrue(app.descendants(matching: .any)["follow-up-field"].waitForExistence(timeout: 5))
+        XCTAssertFalse(edit.exists)
+    }
+
+    @MainActor
     func testRetryKeepsNextDraftAndConfirmsOnlyOneMessage() {
         for editDraft in [false, true] {
             let app = XCUIApplication()
@@ -1407,6 +1502,68 @@ final class ShellFlowTests: XCTestCase {
     }
 
     @MainActor
+    func testFastOnlyPanelHasNoModelEntrypoints() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "--fixture-fast-only"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        tap(app.descendants(matching: .any)["session-session-long"])
+        tap(app.descendants(matching: .any)["follow-up-field"])
+        let menu = app.buttons["run-config-menu"]
+        tap(menu)
+        XCTAssertFalse(app.buttons["run-config-choose-model"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "model-shortcut-")).firstMatch.exists)
+        let advanced = app.buttons["run-config-advanced"]
+        XCTAssertEqual(advanced.label, "Advanced")
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
+        attachScreen(app, name: "fast-only-panel")
+        tap(advanced)
+        XCTAssertFalse(app.buttons["run-config-model"].exists)
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        XCTAssertEqual(fast.value as? String, "1")
+        tap(app.buttons["run-config-done"])
+        tap(app.descendants(matching: .any)["follow-up-field"])
+        XCTAssertEqual(menu.label, "Fast mode on")
+    }
+
+    @MainActor
+    func testFastModePanelPreservesSelectionInDarkLargeText() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--fixture", "-appTheme", "dark",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        tap(app.buttons["sign-in-button"])
+        let session = app.descendants(matching: .any)["session-session-long"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        tap(session)
+        let field = app.descendants(matching: .any)["follow-up-field"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        tap(field)
+        let menu = app.buttons["run-config-menu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 5))
+        tap(menu)
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        let panel = app.scrollViews["run-config-scroll"]
+        for _ in 0..<4 where !fast.isHittable { panel.swipeUp() }
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
+        attachScreen(app, name: "fast-mode-panel-dark-large")
+        let close = app.buttons["run-config-close"]
+        for _ in 0..<4 where !close.isHittable { panel.swipeDown() }
+        tap(close)
+        tap(menu)
+        XCTAssertTrue(fast.waitForExistence(timeout: 5))
+        XCTAssertEqual(fast.value as? String, "1")
+        for _ in 0..<4 where !fast.isHittable { panel.swipeUp() }
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "0")
+    }
+
+    @MainActor
     func testFocusedComposerShowsRunConfigAndChangesReasoning() {
         let app = XCUIApplication()
         app.launchArguments = ["--fixture"]
@@ -1437,7 +1594,7 @@ final class ShellFlowTests: XCTestCase {
         tap(field)
         XCTAssertGreaterThan(menu.frame.minY, field.frame.minY)
         XCTAssertGreaterThan(app.buttons["send-follow-up"].frame.minY, field.frame.minY)
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning High, Fast mode off")
         attachScreen(app, name: "run-config-row")
 
         tap(menu)
@@ -1467,21 +1624,23 @@ final class ShellFlowTests: XCTestCase {
         attachScreen(app, name: "run-config-menu")
         tap(low)
         XCTAssertTrue(app.keyboards.firstMatch.wait(for: \.exists, toEqual: false, timeout: 5))
-        let speed = app.descendants(matching: .any)["run-config-speed"]
+        let speed = app.switches["run-config-fast-mode"]
         XCTAssertTrue(speed.exists)
         XCTAssertFalse(speed.frame.isEmpty)
         XCTAssertTrue(app.frame.contains(speed.frame))
+        speed.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(speed.value as? String, "1")
         attachScreen(app, name: "run-config-advanced")
         tap(app.buttons["run-config-done"])
         tap(field)
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low, Fast mode on")
 
         tap(field)
         field.typeText("go faster")
         tap(app.buttons["send-follow-up"])
         XCTAssertTrue(app.staticTexts["go faster"].waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low")
+        XCTAssertEqual(menu.label, "Model gpt-5.5, reasoning Low, Fast mode on")
     }
 
     @MainActor
@@ -1768,11 +1927,15 @@ final class ShellFlowTests: XCTestCase {
         let medium = app.buttons["Medium"]
         XCTAssertTrue(medium.waitForExistence(timeout: 5))
         tap(medium)
+        let fast = app.switches["run-config-fast-mode"]
+        XCTAssertTrue(fast.exists)
+        fast.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.5)).tap()
+        XCTAssertEqual(fast.value as? String, "1")
         attachScreen(app, name: "new-session-advanced-neutral")
         tap(app.buttons["run-config-done"])
         tap(field)
         XCTAssertTrue(menu.waitForExistence(timeout: 5))
-        XCTAssertEqual(menu.label, "Provider Codex, model gpt-5.5, reasoning Medium")
+        XCTAssertEqual(menu.label, "Provider Codex, model gpt-5.5, reasoning Medium, Fast mode on")
         attachScreen(app, name: "new-session")
 
         tap(field)

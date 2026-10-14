@@ -1,8 +1,9 @@
 // Mirrors Lody's selector resolution (`acp-selector-options.ts`,
-// `acp-run-config.ts`) for the two values Kurage exposes per session.
+// `acp-run-config.ts`) for the configuration values Kurage exposes per session.
 
 const THOUGHT_LEVEL_CATEGORY = 'thought_level';
 const REASONING_EFFORT_CONFIG_ID = 'reasoning_effort';
+const FAST_MODE_CONFIG_IDS = ['fast-mode', 'fast'];
 // Display-only fallback when no capability names the reasoning option.
 const KNOWN_REASONING_CONFIG_IDS = [REASONING_EFFORT_CONFIG_ID, 'effort'];
 
@@ -83,12 +84,54 @@ function reasoningChoicesFor(usable, reasoningOption, modelValue) {
   }));
 }
 
+// Codex uses fast-mode, Claude uses fast; both boolean and on/off are live.
+function fastModeOption(usable) {
+  const options = Array.isArray(usable?.configOptions) ? usable.configOptions : [];
+  return options.find(option =>
+    FAST_MODE_CONFIG_IDS.includes(option?.id) && (option.type === 'boolean' ||
+      (option.type === 'select' && Array.isArray(option.options) && ['on', 'off'].every(value =>
+        option.options.some(choice => choice?.value === value)))));
+}
+
+function validFastModeValue(isBoolean, value) {
+  return isBoolean ? typeof value === 'boolean' : ['on', 'off'].includes(value);
+}
+
+// Mirrors Lody's capability authority: runtime catalogs own the supported keys;
+// provisional/missing catalogs preserve preferences. Omitted keys stay omitted.
+function resolveFastModeValues(usable, inherited) {
+  const values = record(inherited);
+  if (usable?.provenance !== 'runtime' || !values) return values;
+  const option = fastModeOption(usable);
+  return Object.fromEntries(Object.entries(values).filter(([id, value]) =>
+    !FAST_MODE_CONFIG_IDS.includes(id) || (id === option?.id && validFastModeValue(option.type === 'boolean', value))));
+}
+
+export function resolveFastModeConfig(config, context) {
+  const { usable } = capabilityOptions(context);
+  const values = resolveFastModeValues(usable, config.configOptionValues);
+  return !values || values === config.configOptionValues ? config : { ...config, configOptionValues: values };
+}
+
+function projectFastMode(usable, values, allowDefault = true) {
+  const option = fastModeOption(usable);
+  if (!option) return undefined;
+  const stored = values[option.id];
+  // Display fallback does not rewrite an inherited preference. A complete
+  // runtime snapshot omitting this key remains off until explicitly selected.
+  const raw = validFastModeValue(option.type === 'boolean', stored) ? stored
+    : (stored !== undefined || allowDefault ? option.currentValue : undefined);
+  return { configOptionID: option.id, isBoolean: option.type === 'boolean',
+    value: (option.type === 'boolean' ? raw === true : raw === 'on') ? 'on' : 'off',
+    description: text(option.description) ?? null };
+}
+
 export function projectRunConfig({ cliType, agentType, capability, turn, runtimeConfig }) {
   const { usable, probed, modelOption, reasoningOption } =
     capabilityOptions({ cliType, agentType, capability });
   const input = effectiveRunConfig(turn, runtimeConfig);
   const runtime = matchingRuntime(turn, runtimeConfig);
-  const values = record(input.configOptionValues) ?? {};
+  const values = resolveFastModeValues(usable, input.configOptionValues) ?? {};
 
   const modelValue = (probed && modelOption ? text(values[modelOption.id]) : undefined) ??
     text(runtime?.modelId) ?? text(input.modelId) ?? text(modelOption?.currentValue);
@@ -117,8 +160,9 @@ export function projectRunConfig({ cliType, agentType, capability, turn, runtime
   } else if (!reasoningOption && modelOption && modelChoices.length > 0) {
     editable = { kind: 'model', configOptionID: probed ? modelOption.id : null, options: modelChoices };
   }
-  if (!model && !reasoning && !editable) return null;
-  return { model, reasoning, editable };
+  const fastMode = projectFastMode(usable, values, !record(runtime?.configOptionValues));
+  if (!model && !reasoning && !editable && !fastMode) return null;
+  return { model, reasoning, editable, ...(fastMode ? { fastMode } : {}) };
 }
 
 const pick = (options, ...candidates) =>
@@ -130,7 +174,7 @@ const pick = (options, ...candidates) =>
 export function projectNewSessionRunConfig({ cliType, agentType, capability, baseline }) {
   const { usable, probed, modelOption, reasoningOption } =
     capabilityOptions({ cliType, agentType, capability });
-  const values = record(baseline?.configOptionValues) ?? {};
+  const values = resolveFastModeValues(usable, baseline?.configOptionValues) ?? {};
   const modelChoices = modelOption ? choices(modelOption) : [];
   const model = modelChoices.length > 0 ? {
     configOptionID: probed ? modelOption.id : null,
@@ -147,8 +191,9 @@ export function projectNewSessionRunConfig({ cliType, agentType, capability, bas
     // Used when there is no model list to carry per-model choices.
     options: reasoningChoicesFor(usable, reasoningOption, model?.value),
   } : null;
-  if (!model && !reasoning?.options.length) return null;
-  return { model, reasoning };
+  const fastMode = projectFastMode(usable, values);
+  if (!model && !reasoning?.options.length && !fastMode) return null;
+  return { model, reasoning, ...(fastMode ? { fastMode } : {}) };
 }
 
 // Only values the projection offers may reach a new session's first turn.
@@ -158,10 +203,12 @@ export function applyNewSessionChoices(config, projection, selections) {
   const reasoning = projection?.reasoning;
   let modelValue = model?.value;
   let result = config;
-  for (const choice of selections ?? []) {
+  for (const choice of (selections ?? []).flatMap(individualChoices)) {
     const id = choice?.configOptionID ?? null;
     const offers = options => options.some(option => option.value === choice?.value);
-    if (model && id === model.configOptionID && offers(model.options)) {
+    if (hasFastModeChoice(choice)) {
+      validateFastModeChoice(choice, projection);
+    } else if (model && id === model.configOptionID && offers(model.options)) {
       modelValue = choice.value;
     } else {
       const options = model
@@ -189,9 +236,20 @@ export function applyNewSessionChoices(config, projection, selections) {
   return result;
 }
 
+function individualChoices(choice) {
+  if (!choice) return [];
+  const { additionalChoices = [], ...first } = choice;
+  return [first, ...additionalChoices.flatMap(individualChoices)];
+}
+
 export function applyRunConfigChoice(config, choice) {
+  return individualChoices(choice).reduce(applySingleChoice, config);
+}
+
+function applySingleChoice(config, choice) {
   if (choice == null) return config;
-  if (!text(choice.value) ||
+  if ((!text(choice.value) && !(typeof choice.value === 'boolean' &&
+       FAST_MODE_CONFIG_IDS.includes(choice.configOptionID))) ||
       (choice.configOptionID != null && !text(choice.configOptionID))) {
     throw new Error('Invalid run configuration');
   }
@@ -204,4 +262,20 @@ export function applyRunConfigChoice(config, choice) {
     };
   }
   return { ...config, modelId: choice.value };
+}
+
+// Recheck Fast's id and wire type against the machine capability at write time.
+export function validateFastModeChoice(choice, projection) {
+  for (const selected of individualChoices(choice)) {
+    if (!FAST_MODE_CONFIG_IDS.includes(selected.configOptionID)) continue;
+    const fast = projection?.fastMode;
+    if (!fast || selected.configOptionID !== fast.configOptionID ||
+        !validFastModeValue(fast.isBoolean, selected.value)) {
+      throw new Error('Fast mode is no longer available');
+    }
+  }
+}
+
+export function hasFastModeChoice(choice) {
+  return individualChoices(choice).some(value => FAST_MODE_CONFIG_IDS.includes(value.configOptionID));
 }

@@ -8,12 +8,14 @@ public struct RunConfigMenu: Equatable {
             case provider
             case model
             case reasoning
+            case fastMode
 
             public var title: String {
                 switch self {
                 case .provider: "Provider"
                 case .model: "Model"
                 case .reasoning: "Reasoning"
+                case .fastMode: "Fast mode"
                 }
             }
         }
@@ -202,8 +204,9 @@ extension SessionRunConfig {
     public var menu: RunConfigMenu? {
         let reasoningLabel = reasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
         let parts = [model?.label, reasoningLabel].compactMap { $0 }
-        guard !parts.isEmpty else { return nil }
-        let accessibility = [model.map { "Model \($0.label)" }, reasoningLabel.map { "reasoning \($0)" }]
+        guard !parts.isEmpty || fastMode != nil else { return nil }
+        let accessibility = [model.map { "Model \($0.label)" }, reasoningLabel.map { "reasoning \($0)" },
+                             fastMode.map { "Fast mode \($0.value)" }]
             .compactMap { $0 }.joined(separator: ", ")
         var sections: [RunConfigMenu.Section] = []
         if let editable {
@@ -213,6 +216,7 @@ extension SessionRunConfig {
                 selection: (isReasoning ? reasoning : model)?.value ?? ""
             ))
         }
+        if let fastMode { sections.append(fastMode.menuSection) }
         return RunConfigMenu(
             modelLabel: model?.label, reasoningLabel: reasoningLabel,
             accessibilitySummary: accessibility,
@@ -242,5 +246,45 @@ extension SessionRunConfig {
         }
         if saved.isEmpty { menu.modelShortcuts = Array(menu.modelShortcuts.prefix(DefaultModel.limit)) }
         return menu
+    }
+}
+
+extension NewSessionOptions {
+    /// Provider, model and reasoning for the first turn, in the composer's run-config menu.
+    public func menu(_ runConfig: NewSessionRunConfig?) -> RunConfigMenu {
+        var sections: [RunConfigMenu.Section] = []
+        if providers.count > 1 {
+            sections.append(.init(kind: .provider, options: providers, selection: agentConfigID))
+        }
+        if let model = runConfig?.model {
+            sections.append(.init(
+                kind: .model,
+                options: model.options.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
+                selection: model.value
+            ))
+        }
+        if let runConfig, !runConfig.reasoningOptions.isEmpty {
+            sections.append(.init(kind: .reasoning, options: runConfig.reasoningOptions,
+                                  selection: runConfig.selectedReasoning?.value ?? ""))
+        }
+        if let fastMode = runConfig?.fastMode { sections.append(fastMode.menuSection) }
+        let provider = provider?.label
+        let model = runConfig?.selectedModel?.label
+        let reasoning = runConfig?.selectedReasoning.map { RunConfigMenu.displayReasoningLabel($0.label) }
+        return RunConfigMenu(
+            modelLabel: model, reasoningLabel: reasoning, providerLabel: provider,
+            accessibilitySummary: [provider.map { "Provider \($0)" }, model.map { "model \($0)" },
+                                   reasoning.map { "reasoning \($0)" },
+                                   runConfig?.fastMode.map { "Fast mode \($0.value)" }]
+                .compactMap { $0 }.joined(separator: ", "),
+            sections: sections
+        )
+    }
+}
+
+extension SessionRunConfig.FastMode {
+    public var menuSection: RunConfigMenu.Section {
+        .init(kind: .fastMode, options: [.init(value: "off", label: "Off"), .init(value: "on", label: "On")],
+              selection: value)
     }
 }

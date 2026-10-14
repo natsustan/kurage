@@ -541,7 +541,7 @@ window.kurageSendText = async (workspaceID, sessionID, gatewayBaseURL, turnID, u
     const steering = { state, signal: controller.signal, request: (machineID, params) => requestMachine(access, workspaceID, machineID,
       'session/steer', params, controller.signal, 5000) };
     result = await withSyncedIsolatedRepo(workspaceID, gatewayBaseURL,
-      repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering),
+      repo => sendText(repo, sessionID, turnID, userID, text, timestamp, runConfig, attachments, steering, workspaceID),
       { operationID, signal: controller.signal }, controller.signal);
     return result;
   } finally {

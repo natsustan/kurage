@@ -53,10 +53,7 @@ final class MacWindowState {
             self[draft: sessionID].text = message.composerText
             self[draft: sessionID].attachments = message.attachments
             self[draft: sessionID].pendingAttachments = []
-            if let choice = message.runConfig,
-               self[draft: sessionID].runConfig.config?.choosing(choice.value) == choice {
-                self[draft: sessionID].runConfig.choose(choice.value)
-            }
+            self[draft: sessionID].runConfig.restore(message.runConfig)
         }
         return true
     }

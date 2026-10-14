@@ -1408,3 +1408,173 @@ struct ReasoningPresentationTests {
         #expect(models.options.map(\.value) == ["max", "opaque-high", "low", "custom"])
     }
 }
+
+struct FastModeRunConfigTests {
+    @Test(arguments: [false, true], [false, true])
+    func editedMessageWaitsForConfiguration(includesReasoning: Bool, fastAvailable: Bool) throws {
+        var original = ConversationRunConfigState()
+        var config = SessionRunConfig.fixtureReasoning
+        original.receive(config)
+        if includesReasoning { original.choose("low") }
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        restored.restore(choice)
+        #expect(restored.choice == choice)
+        restored.receive(nil)
+        restored.receive(nil)
+        #expect(restored.choice == choice)
+        if !fastAvailable { config.fastMode = nil }
+        restored.receive(config)
+        #expect(restored.choice == (fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)))
+        restored.receive(nil)
+        #expect(restored.choice == nil)
+    }
+
+    @MainActor
+    @Test func editedMessageCanResendBeforeConfigurationArrives() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var original = ConversationRunConfigState()
+        original.receive(.fixtureReasoning)
+        original.choose("low")
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        restored.restore(choice)
+        restored.receive(nil)
+        let sentChoice = try await stageAndDeliverMessage(model, "Resend before observation", runConfig: restored.choice,
+            sessionID: "session-long")
+        #expect(sentChoice == choice)
+        restored.didSend(sentChoice)
+        restored.receive(nil)
+        #expect(restored.choice == nil)
+        let updates = try await client.observeConversation(sessionID: "session-long", workspaceID: "ws-demo")
+        var iterator = updates.makeAsyncIterator()
+        let config = try #require(try await iterator.next()?.runConfig)
+        #expect(config.reasoning?.value == "low")
+        #expect(config.fastMode?.value == "on")
+        restored.receive(config)
+        #expect(restored.choice == nil)
+    }
+
+    @Test func earlyRetryLeavesUnsentRestoredChoicesPending() throws {
+        let config = SessionRunConfig.fixtureReasoning
+        let reasoning = try #require(config.choosing("low"))
+        let fast = try #require(config.fastMode?.choosing("on"))
+        var restored = ConversationRunConfigState()
+        restored.restore(.combining([reasoning, fast]))
+        restored.didSend(reasoning)
+        restored.receive(nil)
+        #expect(restored.choice == fast)
+        restored.receive(config)
+        #expect(restored.choice == fast)
+        restored.chooseFastMode("off")
+        restored.receive(config)
+        #expect(restored.choice == config.fastMode?.choosing("off"))
+    }
+
+    @Test(arguments: [false, true], [false, true])
+    func editedMessageRestoresSupportedSelections(includesReasoning: Bool, fastAvailable: Bool) throws {
+        let config = SessionRunConfig.fixtureReasoning
+        var original = ConversationRunConfigState()
+        original.receive(config)
+        if includesReasoning { original.choose("low") }
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        var current = config
+        if !fastAvailable { current.fastMode = nil }
+        restored.receive(current)
+        restored.restore(choice)
+        #expect(restored.choice == (fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)))
+    }
+
+    @Test(arguments: ["on", "off", nil] as [String?], [true, false])
+    func sessionMenuAnnouncesFastState(value: String?, hasModelAndReasoning: Bool) {
+        let config = SessionRunConfig(
+            model: hasModelAndReasoning ? .init(value: "big", label: "Big") : nil,
+            reasoning: hasModelAndReasoning ? .init(value: "high", label: "High") : nil,
+            editable: nil,
+            fastMode: value.map { .init(configOptionID: "fast-mode", value: $0, isBoolean: true) }
+        )
+        let expected = switch (hasModelAndReasoning, value) {
+        case (true, .some(let value)): "Model Big, reasoning High, Fast mode \(value)"
+        case (true, .none): "Model Big, reasoning High"
+        case (false, .some(let value)): "Fast mode \(value)"
+        case (false, .none): nil as String?
+        }
+        #expect(config.menu?.accessibilitySummary == expected)
+    }
+
+    @Test(arguments: ["on", "off", nil] as [String?], [true, false])
+    func newSessionMenuAnnouncesFastState(value: String?, hasModelAndReasoning: Bool) {
+        let config = NewSessionRunConfig(
+            fastMode: value.map { .init(configOptionID: "fast-mode", value: $0, isBoolean: true) },
+            model: hasModelAndReasoning ? .init(configOptionID: nil, value: "big", options: [
+                .init(value: "big", label: "Big", reasoning: [.init(value: "high", label: "High")])
+            ]) : nil,
+            reasoning: hasModelAndReasoning ? .init(configOptionID: "reasoning_effort", value: "high", options: []) : nil
+        )
+        let options = NewSessionOptions(machineName: "Mac", agentConfigID: "codex",
+            providers: [.init(value: "codex", label: "Codex")], runConfig: config)
+        let expected = switch (hasModelAndReasoning, value) {
+        case (true, .some(let value)): "Provider Codex, model Big, reasoning High, Fast mode \(value)"
+        case (true, .none): "Provider Codex, model Big, reasoning High"
+        case (false, .some(let value)): "Provider Codex, Fast mode \(value)"
+        case (false, .none): "Provider Codex"
+        }
+        #expect(options.menu(config).accessibilitySummary == expected)
+    }
+
+    @Test func combinedChoiceKeepsNewFastSelectionAfterRetry() throws {
+        var state = ConversationRunConfigState()
+        state.receive(.fixtureReasoning)
+        state.choose("low")
+        state.chooseFastMode("on")
+        let sent = try #require(state.choice)
+        #expect(sent.individualChoices.count == 2)
+        let payload = sent.bridgeValue()
+        let additional = try #require(payload["additionalChoices"] as? [[String: Any]])
+        #expect(additional.first?["value"] as? Bool == true)
+        state.chooseFastMode("off")
+        state.didSend(sent)
+        #expect(state.config?.reasoning?.value == "low")
+        #expect(state.config?.fastMode?.value == "on")
+        #expect(state.displayed?.fastMode?.value == "off")
+        #expect(state.choice?.individualChoices.count == 1)
+        state.didSend(state.choice)
+        #expect(state.choice == nil)
+        #expect(state.config?.fastMode?.value == "off")
+    }
+
+    @Test func capabilityLossDropsOnlyFastAndLegacyValueStaysString() throws {
+        var state = ConversationRunConfigState()
+        var config = SessionRunConfig.fixtureReasoning
+        state.receive(config)
+        state.chooseFastMode("on")
+        state.choose("low")
+        config.fastMode = nil
+        state.receive(config)
+        #expect(state.choice == config.choosing("low"))
+        config.fastMode = .init(configOptionID: "fast", value: "off", isBoolean: false)
+        state.receive(config)
+        state.chooseFastMode("on")
+        let fast = try #require(state.choice?.individualChoices.last)
+        #expect(fast.bridgeValue()["value"] as? String == "on")
+        state.receive(nil)
+        #expect(state.choice == nil)
+    }
+
+    @Test func firstTurnIncludesFastAndDecodesBooleanCapability() throws {
+        var config = NewSessionRunConfig.fixture
+        config.fastMode = .init(configOptionID: "fast-mode", value: "off", isBoolean: true)
+        config.selectReasoning("low")
+        config.selectFastMode("on")
+        #expect(config.selections.count == 3)
+        #expect(config.selections.last?.bridgeValue()["value"] as? Bool == true)
+        let decoded = try JSONDecoder().decode(NewSessionRunConfig.self, from: JSONEncoder().encode(config))
+        #expect(decoded == config)
+    }
+}

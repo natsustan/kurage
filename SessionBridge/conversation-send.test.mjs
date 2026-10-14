@@ -653,3 +653,126 @@ test('losing an unconfirmed steer target never guesses from concurrent history',
   assert.equal(await state.send(), 'unconfirmed');
   assert.equal(state.meta.latestUserMsgId, 'active-user');
 });
+
+test('Fast is checked before authoring and retries retain the original typed configuration', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  let capability = { cliType: 'codex', agentType: 'codex', configOptions: [
+    { id: 'fast-mode', type: 'boolean', currentValue: false },
+  ] };
+  repo.openFlockDoc = async id => {
+    assert.equal(id, 'workspace:mf:machine');
+    return { flock: { get: () => capability } };
+  };
+  const choice = { configOptionID: 'reasoning_effort', value: 'low',
+    additionalChoices: [{ configOptionID: 'fast-mode', value: true }] };
+  assert.equal(await sendText(repo, 'chat', 'fast-turn', 'user', 'Hello', 'now', choice, [], undefined, 'workspace'), 'sent');
+  capability = undefined;
+  assert.equal(await sendText(repo, 'chat', 'fast-turn', 'user', 'Hello', 'now',
+    { configOptionID: 'fast-mode', value: false }, [], undefined, 'workspace'), 'sent');
+  assert.equal(doc.getList('history').toJSON().length, 1);
+  assert.deepEqual(doc.getList('history').toJSON()[0].inputConfig.configOptionValues,
+    { reasoning_effort: 'low', 'fast-mode': true });
+  meta.lastHandledUserMsgId = 'fast-turn';
+  assert.equal(await sendText(repo, 'chat', 'second', 'user', 'Next', 'now', choice, [], undefined, 'workspace'), 'rejected');
+  assert.equal(doc.getList('history').toJSON().length, 1);
+});
+
+for (const kind of ['missing capability', 'changed type', 'missing agent']) {
+  test(`Fast ${kind} rejects an unauthored turn and allows a corrected send`, async () => {
+    const { repo, doc, meta } = fixture();
+    Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+    const capability = kind === 'missing capability' ? undefined : {
+      cliType: 'codex', agentType: 'codex', configOptions: [
+        { id: 'fast-mode', type: 'select', currentValue: 'off', options: [{ value: 'on' }, { value: 'off' }] },
+      ],
+    };
+    if (kind === 'missing agent') delete meta.agentConfigId;
+    repo.openFlockDoc = async () => ({ flock: { get: () => capability } });
+    const choice = { configOptionID: 'fast-mode', value: true };
+    assert.equal(await sendText(repo, 'chat', 'rejected-turn', 'user', 'Hello', 'now',
+      choice, [], undefined, 'workspace'), 'rejected');
+    assert.equal(doc.getList('history').length, 0);
+    assert.equal(meta.latestUserMsgId, undefined);
+    assert.equal(await sendText(repo, 'chat', 'corrected-turn', 'user', 'Edited', 'now'), 'sent');
+    assert.equal(doc.getList('history').length, 1);
+    assert.equal(meta.latestUserMsgId, 'corrected-turn');
+  });
+}
+
+test('a complete runtime snapshot does not restore inherited Fast from history', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: { 'fast-mode': 'on' } } });
+  doc.getMap('acpRuntimeConfig').set('basedOnUserTurnId', 'old');
+  doc.getMap('acpRuntimeConfig').set('configOptionValues', {});
+  repo.openFlockDoc = async () => assert.fail('No inherited Fast to normalize');
+  assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace'), 'sent');
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig.configOptionValues, {});
+});
+
+test('a failed Fast capability sync is not mistaken for a definite rejection', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  repo.openFlockDoc = async () => ({ flock: { get: () => undefined } });
+  repo.sync = async options => ({ outcome: options.flockDocIds ? 'failed' : 'synced' });
+  await assert.rejects(sendText(repo, 'chat', 'turn', 'user', 'Hello', 'now',
+    { configOptionID: 'fast-mode', value: true }, [], undefined, 'workspace'), /capability sync failed/);
+  assert.equal(doc.getList('history').length, 0);
+});
+
+test('an untouched Fast preference does not add a machine sync to an ordinary send', async () => {
+  const { repo, doc, meta, calls } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  const values = { 'fast-mode': 'off', unrelated: 'keep' };
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: { configOptionValues: values } });
+  repo.openFlockDoc = async () => assert.fail('Inherited preferences do not need a capability probe');
+  assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', undefined, [], undefined, 'workspace'), 'sent');
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig.configOptionValues, values);
+  assert.equal(calls.some(call => call.flockDocIds), false);
+});
+
+test('a provisional Fast catalog preserves inherited keys when an explicit choice is sent', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: {
+    configOptionValues: { fast: 'on', unrelated: 'keep' },
+  } });
+  repo.openFlockDoc = async () => ({ flock: { get: () => ({
+    cliType: 'codex', agentType: 'codex', configOptions: [
+      { id: 'fast-mode', type: 'boolean', currentValue: false },
+    ],
+  }) } });
+  assert.equal(await sendText(repo, 'chat', 'new', 'user', 'Hello', 'now',
+    { configOptionID: 'fast-mode', value: true }, [], undefined, 'workspace'), 'sent');
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig.configOptionValues,
+    { fast: 'on', 'fast-mode': true, unrelated: 'keep' });
+});
+
+test('an explicit model switch keeps Fast for the machine to apply and retry preserves its configuration', async () => {
+  const { repo, doc, meta } = fixture();
+  Object.assign(meta, { machineId: 'machine', agentConfigId: 'agent' });
+  doc.getList('history').push({ id: 'old', role: 'user', inputConfig: {
+    modelId: 'gpt-5.5', configOptionValues: { 'fast-mode': false, unrelated: 'keep' },
+  } });
+  repo.openFlockDoc = async () => ({ flock: { get: () => ({
+    cliType: 'codex', agentType: 'codex', provenance: 'runtime', configOptions: [
+      { id: 'model', category: 'model', type: 'select', currentValue: 'gpt-5.5',
+        options: [{ value: 'gpt-5.5' }, { value: 'gpt-5.4-mini' }] },
+      { id: 'fast-mode', type: 'boolean', currentValue: false },
+    ],
+  }) } });
+  const choice = { configOptionID: null, value: 'gpt-5.4-mini',
+    additionalChoices: [{ configOptionID: 'fast-mode', value: true }] };
+  let docSyncs = 0;
+  repo.sync = async options => ({ outcome: options.docIds && ++docSyncs === 2 ? 'failed' : 'synced' });
+  const send = () => sendText(repo, 'chat', 'new', 'user', 'Hello', 'now', choice, [], undefined, 'workspace');
+  assert.equal(await send(), 'unconfirmed');
+  const written = doc.getList('history').toJSON()[1].inputConfig;
+  assert.equal(written.modelId, 'gpt-5.4-mini');
+  assert.deepEqual(written.configOptionValues, { 'fast-mode': true, unrelated: 'keep' });
+  repo.openFlockDoc = async () => assert.fail('An authored retry must not reread capability');
+  assert.equal(await send(), 'sent');
+  assert.equal(doc.getList('history').length, 2);
+  assert.deepEqual(doc.getList('history').toJSON()[1].inputConfig, written);
+});

@@ -383,16 +383,16 @@ public final class FixtureLodyClient: LodyClient {
 
     public var supportsSessionTabs: Bool { true }
 
-    /// Applies requested choices the way the service does: model and reasoning
-    /// only, and only when they match what the options offered.
+    /// Applies model, reasoning and Fast choices only when the capability offers them.
     private func appliedRunConfig(_ options: NewSessionOptions, selections: [RunConfigChoice],
                                   mismatch: LodyClientError = .sessionCreationRejected) throws -> NewSessionRunConfig {
         var config = options.runConfig ?? NewSessionRunConfig()
-        for choice in selections {
+        for choice in selections.flatMap(\.individualChoices) {
             if choice.configOptionID == config.model?.configOptionID { config.selectModel(choice.value) }
+            else if choice.configOptionID == config.fastMode?.configOptionID { config.selectFastMode(choice.value) }
             else { config.selectReasoning(choice.value) }
         }
-        guard selections.isEmpty || config.selections == selections else { throw mismatch }
+        guard selections.flatMap(\.individualChoices).allSatisfy({ config.selections.contains($0) }) else { throw mismatch }
         return config
     }
 
@@ -426,6 +426,10 @@ public final class FixtureLodyClient: LodyClient {
             }
             return
         }
+        if rejectStartOnce {
+            rejectStartOnce = false
+            throw LodyClientError.sessionCreationRejected
+        }
         let options = try await newSessionOptions(templateSessionID: parentSessionID,
                                                   agentConfigID: request.agentConfigID,
                                                   isTab: true, workspaceID: workspaceID)
@@ -439,7 +443,7 @@ public final class FixtureLodyClient: LodyClient {
             turns: [ConversationTurn(id: request.turnID, author: .user, text: request.text,
                                      parts: attachmentParts(request.attachments, text: request.text))],
             runConfig: SessionRunConfig(model: config.selectedModel.map { .init(value: $0.value, label: $0.label) },
-                                        reasoning: config.selectedReasoning, editable: nil)))
+                                        reasoning: config.selectedReasoning, editable: nil, fastMode: config.fastMode)))
         if failTabStartOnce {
             failTabStartOnce = false
             throw LodyClientError.deliveryUnconfirmed
@@ -504,7 +508,9 @@ public final class FixtureLodyClient: LodyClient {
             if record.turns.contains(where: { $0.id == effectiveTurnID }) { return }
             if let runConfig = effectiveRunConfig {
                 guard let current = record.runConfig,
-                      current.choosing(runConfig.value) == runConfig else { throw LodyClientError.notConnected }
+                      runConfig.individualChoices.allSatisfy({
+                          current.choosing($0.value) == $0 || current.fastMode?.choosing($0.value) == $0
+                      }) else { throw LodyClientError.notConnected }
                 record.runConfig = current.applying(runConfig)
             }
             let turn = ConversationTurn(id: effectiveTurnID, author: .user, text: trimmed, parts: attachmentParts(attachments, text: trimmed))
@@ -569,6 +575,9 @@ public final class FixtureLodyClient: LodyClient {
         let chosen = agentConfigID ?? template.summary.agentName
         guard availableProviders.contains(where: { $0.value == chosen }) else { throw LodyClientError.notConnected }
         var runConfig: NewSessionRunConfig = chosen == "codex" ? .fixture : .fixtureModelOnly
+        if chosen == "codex" {
+            runConfig.fastMode = .init(configOptionID: "fast-mode", value: "off", isBoolean: true)
+        }
         if !hasModelHistory { runConfig.model?.value = "" }
         return NewSessionOptions(machineName: isTab ? template.summary.machineName ?? "Machine" : "spike@mac",
                                  agentConfigID: chosen, providers: availableProviders,
@@ -711,7 +720,7 @@ public final class FixtureLodyClient: LodyClient {
             runConfig: SessionRunConfig(
                 model: runConfig.selectedModel.map { SessionRunConfig.Value(value: $0.value, label: $0.label) },
                 reasoning: runConfig.selectedReasoning,
-                editable: nil
+                editable: nil, fastMode: runConfig.fastMode
             )
         )
         if failStartAndArchiveProjectOnce {
@@ -950,6 +959,15 @@ public final class FixtureLodyClient: LodyClient {
 }
 
 public struct SessionRecord: Equatable, Sendable {
+    public static var samplesWithFastOnly: [SessionRecord] {
+        samples.map { sample in
+            var record = sample
+            record.runConfig = SessionRunConfig(model: nil, reasoning: nil, editable: nil,
+                fastMode: .init(configOptionID: "fast-mode", value: "off", isBoolean: true))
+            return record
+        }
+    }
+
     public var summary: SessionSummary
     public var turns: [ConversationTurn]
     public var permission: PermissionPrompt?
@@ -987,7 +1005,8 @@ extension SessionRunConfig {
             Value(value: "low", label: "Low"),
             Value(value: "medium", label: "Medium"),
             Value(value: "high", label: "High"),
-        ])
+        ]),
+        fastMode: .init(configOptionID: "fast-mode", value: "off", isBoolean: true)
     )
 
     public static let fixtureModel = SessionRunConfig(

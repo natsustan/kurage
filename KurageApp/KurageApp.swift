@@ -9,7 +9,9 @@ struct KurageApp: App {
     init() {
         let usesFixtures = ProcessInfo.processInfo.arguments.contains("--fixture")
         let client: any LodyClient = ProcessInfo.processInfo.arguments.contains("--fixture")
-            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-agent-error")
+            ? FixtureLodyClient(records: ProcessInfo.processInfo.arguments.contains("--fixture-fast-only")
+                ? SessionRecord.samplesWithFastOnly
+                : ProcessInfo.processInfo.arguments.contains("--fixture-agent-error")
                 ? [SessionRecord.errorSample] + SessionRecord.samples
                 : ProcessInfo.processInfo.arguments.contains("--fixture-subtask-statuses")
                 ? SessionRecord.samplesWithSubtaskStatuses

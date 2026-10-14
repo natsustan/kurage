@@ -9,6 +9,100 @@ struct DefaultModelTests {
         DefaultModel(agentConfigID: provider, modelID: model, providerName: provider, modelName: model)
     }
 
+    @Test(arguments: [false, true])
+    func rejectedFirstTurnRestoresOriginalAgentAndChoices(isTab: Bool) async throws {
+        let client = FixtureLodyClient(startsSignedIn: true, rejectStartOnce: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var selected = NewSessionRunConfig.fixture
+        selected.fastMode = .init(configOptionID: "fast-mode", value: "on", isBoolean: true)
+        selected.selectModel("gpt-5.4-mini")
+        selected.selectReasoning("low")
+        let id = try model.stageSessionStart("First", composerText: "First", mentions: .init(), attachments: [],
+            agentConfigID: "codex", selections: selected.selections, projectID: "local:machine-1:prism",
+            projectName: "prism", templateSessionID: "session-pr", parentSessionID: isTab ? "session-pr" : nil)
+        await #expect(throws: LodyClientError.sessionCreationRejected) {
+            try await model.deliverOutgoingMessage(sessionID: id)
+        }
+        let start = try #require(model.pendingSessionStart(sessionID: id))
+        let message = try #require(model.takeFailedOutgoingMessage(sessionID: id))
+        #expect(message.runConfig == nil)
+        #expect(model.pendingSessionStart(sessionID: id) == nil)
+        let configuration = NewSessionConfiguration(restoring: start.request)
+        await configuration.load(providerID: start.request.agentConfigID) { provider in
+            try await model.newSessionOptions(templateSessionID: start.templateSessionID, agentConfigID: provider,
+                projectID: start.summary.projectID, isTab: isTab)
+        }
+        #expect(configuration.options?.agentConfigID == "codex")
+        #expect(configuration.runConfig?.selections == selected.selections)
+        let next = try model.stageSessionStart(message.text, composerText: message.composerText,
+            mentions: message.mentions, attachments: message.attachments, agentConfigID: "codex",
+            selections: configuration.runConfig?.selections ?? [], projectID: "local:machine-1:prism",
+            projectName: "prism", templateSessionID: "session-pr", parentSessionID: isTab ? "session-pr" : nil)
+        try await model.deliverOutgoingMessage(sessionID: next)
+    }
+
+    @Test func restoredCreationChoicesWaitForTheirAgentAndDoNotOverrideLaterEdits() async throws {
+        let request = SessionTabStart(text: "First", selections: [
+            .init(configOptionID: nil, value: "removed-model"),
+            .init(configOptionID: "reasoning_effort", value: "low"),
+            .init(configOptionID: "fast-mode", value: "on", isBoolean: true)
+        ], agentConfigID: "codex")
+        let configuration = NewSessionConfiguration(restoring: request)
+        await configuration.load(providerID: "claude") { provider in
+            var run = provider == "codex" ? NewSessionRunConfig.fixture : .fixtureModelOnly
+            run.fastMode = nil
+            return NewSessionOptions(machineName: "Machine", agentConfigID: provider ?? "claude",
+                providers: [.init(value: "claude", label: "Claude"), .init(value: "codex", label: "Codex")], runConfig: run)
+        }
+        #expect(configuration.options?.agentConfigID == "claude")
+        #expect(configuration.runConfig?.selectedModel?.value == "sonnet")
+        #expect(configuration.selectProvider("codex"))
+        #expect(configuration.runConfig?.selectedModel?.value == "gpt-5.5")
+        #expect(configuration.runConfig?.selectedReasoning?.value == "low")
+        #expect(configuration.runConfig?.fastMode == nil)
+        configuration.selectReasoning("high")
+        #expect(configuration.selectProvider("claude"))
+        #expect(configuration.selectProvider("codex"))
+        #expect(configuration.runConfig?.selectedReasoning?.value == "high")
+    }
+
+    @Test func firstTurnRestorationWaitsForFreshCapabilities() async throws {
+        let request = SessionTabStart(text: "First", selections: [
+            .init(configOptionID: "fast-mode", value: "on", isBoolean: true)
+        ], agentConfigID: "codex")
+        let configuration = NewSessionConfiguration(restoring: request)
+        var cached = NewSessionRunConfig.fixture
+        cached.fastMode = nil
+        var fresh = cached
+        fresh.fastMode = .init(configOptionID: "fast-mode", value: "off", isBoolean: true)
+        await configuration.load(providerID: "codex", refresh: { _ in
+            #expect(configuration.isLoading)
+            return NewSessionOptions(machineName: "Machine", agentConfigID: "codex",
+                providers: [.init(value: "codex", label: "Codex")], runConfig: fresh)
+        }, using: { _ in
+            NewSessionOptions(machineName: "Machine", agentConfigID: "codex",
+                providers: [.init(value: "codex", label: "Codex")], runConfig: cached, needsRefresh: true)
+        })
+        #expect(!configuration.isLoading)
+        #expect(configuration.runConfig?.fastMode?.value == "on")
+    }
+
+    @Test func failedOldRefreshDoesNotChangeTheNewProvider() async throws {
+        let configuration = NewSessionConfiguration(restoring: .init(text: "First", agentConfigID: "codex"))
+        let providers: [SessionRunConfig.Value] = [.init(value: "codex", label: "Codex"), .init(value: "claude", label: "Claude")]
+        await configuration.load(providerID: "codex", refresh: { _ in
+            #expect(configuration.selectProvider("claude"))
+            throw LodyClientError.notConnected
+        }, using: { _ in
+            NewSessionOptions(machineName: "Machine", agentConfigID: "codex", providers: providers,
+                runConfig: .fixture, needsRefresh: true)
+        })
+        #expect(configuration.options?.agentConfigID == "claude")
+        #expect(configuration.isLoading)
+        #expect(!configuration.loadFailed)
+    }
+
     @Test func orderLimitDeduplicationAndScopePersist() async throws {
         let suite = "DefaultModelTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -135,7 +229,8 @@ struct DefaultModelTests {
             try await fixture.newSessionOptions(templateSessionID: "session-pr", agentConfigID: id, workspaceID: "ws-demo")
         }
         #expect(configuration.runConfig?.selectedReasoning?.value == "low")
-        #expect(configuration.runConfig?.selections.count == 2)
+        #expect(configuration.runConfig?.selections.count == 3)
+        #expect(configuration.runConfig?.selections.last?.configOptionID == "fast-mode")
         #expect(configuration.selectDefaultModel(full, saved: saved))
         #expect(configuration.runConfig?.selectedReasoning?.value == "high")
     }

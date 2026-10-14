@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyRunConfigChoice, latestUserTurn, projectRunConfig } from './run-config.mjs';
+import { applyRunConfigChoice, latestUserTurn, projectRunConfig, resolveFastModeConfig } from './run-config.mjs';
 
 const codexCapability = {
   cliType: 'builtin', agentType: 'codex',
@@ -115,4 +115,95 @@ test('an empty global reasoning list does not enable model switching', () => {
   const projected = projectRunConfig({ cliType: 'builtin', agentType: 'codex', capability,
     turn: { id: 'u1', inputConfig: { modelId: 'gpt-5.5' } } });
   assert.equal(projected.editable, null);
+});
+
+for (const [id, type, enabled] of [['fast-mode', 'boolean', true], ['fast', 'select', 'on']]) {
+  test(`Fast projects and writes ${id} as ${type} alongside reasoning`, async () => {
+    const { projectNewSessionRunConfig, applyNewSessionChoices, validateFastModeChoice } = await import('./run-config.mjs');
+    const capability = { ...codexCapability, configOptions: [...codexCapability.configOptions,
+      { id, type, currentValue: enabled, options: [{ value: 'on' }, { value: 'off' }] }] };
+    const args = { cliType: 'builtin', agentType: 'codex', capability,
+      turn: { id: 'u', inputConfig: { modelId: 'gpt-5.5', configOptionValues: {} } } };
+    const projected = projectRunConfig(args);
+    assert.equal(projected.fastMode.value, 'on');
+    assert.equal(projected.fastMode.isBoolean, type === 'boolean');
+    const off = type === 'boolean' ? false : 'off';
+    const choice = { configOptionID: 'reasoning_effort', value: 'low',
+      additionalChoices: [{ configOptionID: id, value: off }] };
+    validateFastModeChoice(choice, projected);
+    assert.deepEqual(applyRunConfigChoice({}, choice).configOptionValues, { reasoning_effort: 'low', [id]: off });
+    const initial = projectNewSessionRunConfig({ ...args, baseline: {} });
+    assert.equal(applyNewSessionChoices({}, initial, [choice]).configOptionValues[id], off);
+    assert.throws(() => validateFastModeChoice(choice, { ...projected, fastMode: undefined }));
+    assert.throws(() => applyNewSessionChoices({}, initial, [{ configOptionID: id, value: type === 'boolean' ? 'on' : true }]));
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: { basedOnUserTurnId: 'u', configOptionValues: { [id]: off } } }).fastMode.value, 'off');
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: { basedOnUserTurnId: 'u', configOptionValues: {} } }).fastMode.value, 'off');
+    assert.equal(projectRunConfig({ ...args, capability: { ...capability, agentType: 'different' } }).fastMode, undefined);
+  });
+}
+
+
+test('malformed Fast options do not prevent conversation projection', () => {
+  for (const configOptions of [{}, [null], [{ id: 'fast', type: 'select', options: {} }]]) {
+    const result = projectRunConfig({ cliType: 'builtin', agentType: 'codex',
+      capability: { ...codexCapability, configOptions }, turn: { inputConfig: { modelId: 'gpt-5.5' } } });
+    assert.equal(result.model.value, 'gpt-5.5');
+    assert.equal(result.fastMode, undefined);
+  }
+});
+
+for (const [type, oldValue, currentValue] of [['boolean', 'on', true], ['select', true, 'on']]) {
+  test(`Fast falls back to the current capability when stored values predate ${type} support`, async () => {
+    const { projectNewSessionRunConfig, applyNewSessionChoices } = await import('./run-config.mjs');
+    const capability = { ...codexCapability, configOptions: [...codexCapability.configOptions,
+      { id: 'fast-mode', type, currentValue, options: [{ value: 'on' }, { value: 'off' }] }] };
+    const baseline = { configOptionValues: { 'fast-mode': oldValue } };
+    const args = { cliType: 'builtin', agentType: 'codex', capability,
+      turn: { id: 'u', inputConfig: baseline } };
+    assert.equal(projectRunConfig(args).fastMode.value, 'on');
+    assert.equal(projectRunConfig({ ...args, runtimeConfig: {
+      basedOnUserTurnId: 'u', configOptionValues: baseline.configOptionValues,
+    } }).fastMode.value, 'on');
+    const initial = projectNewSessionRunConfig({ ...args, baseline });
+    assert.equal(initial.fastMode.value, 'on');
+    const selectedValue = initial.fastMode.isBoolean ? initial.fastMode.value === 'on' : initial.fastMode.value;
+    assert.equal(applyNewSessionChoices(baseline, initial, [
+      { configOptionID: 'fast-mode', value: selectedValue },
+    ]).configOptionValues['fast-mode'], currentValue);
+  });
+}
+
+for (const provenance of ['runtime', undefined]) {
+  test(`Fast preferences follow catalog authority ${provenance ?? 'provisional'} without migration or defaults`, () => {
+    const capability = { ...codexCapability, provenance, configOptions: [...codexCapability.configOptions,
+      { id: 'fast-mode', type: 'boolean', currentValue: true }] };
+    const context = { cliType: 'builtin', agentType: 'codex', capability };
+    const config = { configOptionValues: { fast: 'on', 'fast-mode': 'off', unrelated: 'keep' } };
+    const original = structuredClone(config);
+    assert.deepEqual(resolveFastModeConfig(config, context).configOptionValues,
+      provenance === 'runtime' ? { unrelated: 'keep' } : config.configOptionValues);
+    assert.deepEqual(config, original);
+    assert.deepEqual(resolveFastModeConfig({ configOptionValues: {} }, context).configOptionValues, {});
+  });
+}
+
+test('an authoritative catalog clears removed Fast controls without predicting model support', () => {
+  const context = { cliType: 'builtin', agentType: 'codex', capability: { ...codexCapability, provenance: 'runtime' } };
+  const config = { modelId: 'gpt-5.4-mini', configOptionValues: { fast: 'on', 'fast-mode': true, unrelated: 'keep' } };
+  assert.deepEqual(resolveFastModeConfig(config, context), { ...config, configOptionValues: { unrelated: 'keep' } });
+  for (const capability of [undefined, { ...context.capability, agentType: 'claude' },
+    { ...context.capability, cliType: 'registry' }]) {
+    assert.equal(resolveFastModeConfig(config, { ...context, capability }), config);
+  }
+});
+
+test('an authoritative runtime table never backfills missing or invalid Fast values', () => {
+  const capability = { ...codexCapability, provenance: 'runtime', configOptions: [...codexCapability.configOptions,
+    { id: 'fast-mode', type: 'boolean', currentValue: true }] };
+  const turn = { id: 'u', inputConfig: { configOptionValues: { 'fast-mode': true } } };
+  for (const values of [{}, { 'fast-mode': 'on' }]) {
+    const projected = projectRunConfig({ cliType: 'builtin', agentType: 'codex', capability, turn,
+      runtimeConfig: { basedOnUserTurnId: 'u', configOptionValues: values } });
+    assert.equal(projected.fastMode.value, 'off');
+  }
 });

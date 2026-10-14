@@ -564,7 +564,7 @@ public enum LodyClientError: Error, Equatable {
     case codeExpired
 }
 
-/// Model and reasoning for the session's next turn, as projected from the
+/// Model, reasoning and Fast mode for the session's next turn, as projected from the
 /// latest user turn, the CLI's applied config and the agent's capabilities.
 public struct SessionRunConfig: Codable, Equatable, Sendable {
     public struct Value: Codable, Equatable, Sendable, Identifiable {
@@ -599,14 +599,35 @@ public struct SessionRunConfig: Codable, Equatable, Sendable {
         }
     }
 
+    public struct FastMode: Codable, Equatable, Sendable {
+        public var configOptionID: String
+        public var value: String
+        public var isBoolean: Bool
+        public var description: String?
+
+        public init(configOptionID: String, value: String, isBoolean: Bool, description: String? = nil) {
+            self.configOptionID = configOptionID
+            self.value = value
+            self.isBoolean = isBoolean
+            self.description = description
+        }
+
+        public func choosing(_ value: String) -> RunConfigChoice? {
+            guard value == "on" || value == "off" else { return nil }
+            return RunConfigChoice(configOptionID: configOptionID, value: value, isBoolean: isBoolean)
+        }
+    }
+
+    public var fastMode: FastMode? = nil
     public var model: Value?
     public var reasoning: Value?
     public var editable: Editable?
 
-    public init(model: Value?, reasoning: Value?, editable: Editable?) {
+    public init(model: Value?, reasoning: Value?, editable: Editable?, fastMode: FastMode? = nil) {
         self.model = model
         self.reasoning = reasoning
         self.editable = editable
+        self.fastMode = fastMode
     }
 
     public func choosing(_ value: String) -> RunConfigChoice? {
@@ -615,7 +636,16 @@ public struct SessionRunConfig: Codable, Equatable, Sendable {
     }
 
     public func applying(_ choice: RunConfigChoice?) -> SessionRunConfig {
-        guard let choice, let editable, editable.configOptionID == choice.configOptionID,
+        guard let choice else { return self }
+        if !choice.additionalChoices.isEmpty {
+            return choice.individualChoices.reduce(self) { $0.applying($1) }
+        }
+        if fastMode?.choosing(choice.value) == choice {
+            var copy = self
+            copy.fastMode?.value = choice.value
+            return copy
+        }
+        guard let editable, editable.configOptionID == choice.configOptionID,
               let option = editable.options.first(where: { $0.value == choice.value }) else { return self }
         var copy = self
         switch editable.kind {
@@ -626,14 +656,30 @@ public struct SessionRunConfig: Codable, Equatable, Sendable {
     }
 }
 
-/// A single model or reasoning change applied to the next new turn.
+/// A next-turn selection, optionally accompanied by independent configuration changes.
 public struct RunConfigChoice: Equatable, Sendable {
     public var configOptionID: String?
     public var value: String
 
-    public init(configOptionID: String?, value: String) {
+    public var isBoolean: Bool = false
+    public var additionalChoices: [RunConfigChoice] = []
+
+    public init(configOptionID: String?, value: String, isBoolean: Bool = false) {
         self.configOptionID = configOptionID
         self.value = value
+        self.isBoolean = isBoolean
+    }
+
+    public var individualChoices: [RunConfigChoice] {
+        var first = self
+        first.additionalChoices = []
+        return [first] + additionalChoices.flatMap(\.individualChoices)
+    }
+
+    public static func combining(_ choices: [RunConfigChoice]) -> RunConfigChoice? {
+        guard var first = choices.first else { return nil }
+        first.additionalChoices = Array(choices.dropFirst())
+        return first
     }
 }
 
@@ -664,6 +710,7 @@ public struct NewSessionRunConfig: Codable, Equatable, Sendable {
         public var defaultValue: String? = nil
     }
 
+    public var fastMode: SessionRunConfig.FastMode? = nil
     public var model: Model?
     public var reasoning: Reasoning?
 
@@ -696,6 +743,23 @@ public struct NewSessionRunConfig: Codable, Equatable, Sendable {
     }
 
 
+    public mutating func selectFastMode(_ value: String) {
+        guard fastMode?.choosing(value) != nil else { return }
+        fastMode?.value = value
+    }
+
+    public mutating func restoreSelections(_ selections: [RunConfigChoice]) {
+        for choice in selections.flatMap(\.individualChoices) {
+            if let model, choice.configOptionID == model.configOptionID {
+                selectModel(choice.value)
+            } else if let fastMode, choice.configOptionID == fastMode.configOptionID {
+                selectFastMode(choice.value)
+            } else if let reasoning, choice.configOptionID == reasoning.configOptionID {
+                selectReasoning(choice.value)
+            }
+        }
+    }
+
     /// Model first, so the bridge checks reasoning against the chosen model.
     public var selections: [RunConfigChoice] {
         var choices: [RunConfigChoice] = []
@@ -703,6 +767,7 @@ public struct NewSessionRunConfig: Codable, Equatable, Sendable {
         if let reasoning, let selectedReasoning {
             choices.append(RunConfigChoice(configOptionID: reasoning.configOptionID, value: selectedReasoning.value))
         }
+        if let fastMode, let choice = fastMode.choosing(fastMode.value) { choices.append(choice) }
         return choices
     }
 }
