@@ -167,8 +167,11 @@ struct MacClientTests {
         let restored = MacWindowState()
         var current = config
         if !fastAvailable { current.fastMode = nil }
-        restored[draft: "session-long"].runConfig.receive(current)
         #expect(restored.editFailedMessage(sessionID: "session-long", model: model))
+        #expect(restored[draft: "session-long"].runConfig.choice == choice)
+        restored[draft: "session-long"].runConfig.receive(nil)
+        #expect(restored[draft: "session-long"].runConfig.choice == choice)
+        restored[draft: "session-long"].runConfig.receive(current)
         let expected = fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)
         #expect(restored[draft: "session-long"].runConfig.choice == expected)
         #expect(restored[draft: "session-long"].text == "Rejected")

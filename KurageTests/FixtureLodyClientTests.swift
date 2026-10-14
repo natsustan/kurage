@@ -1411,6 +1411,71 @@ struct ReasoningPresentationTests {
 
 struct FastModeRunConfigTests {
     @Test(arguments: [false, true], [false, true])
+    func editedMessageWaitsForConfiguration(includesReasoning: Bool, fastAvailable: Bool) throws {
+        var original = ConversationRunConfigState()
+        var config = SessionRunConfig.fixtureReasoning
+        original.receive(config)
+        if includesReasoning { original.choose("low") }
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        restored.restore(choice)
+        #expect(restored.choice == choice)
+        restored.receive(nil)
+        restored.receive(nil)
+        #expect(restored.choice == choice)
+        if !fastAvailable { config.fastMode = nil }
+        restored.receive(config)
+        #expect(restored.choice == (fastAvailable ? choice : (includesReasoning ? config.choosing("low") : nil)))
+        restored.receive(nil)
+        #expect(restored.choice == nil)
+    }
+
+    @MainActor
+    @Test func editedMessageCanResendBeforeConfigurationArrives() async throws {
+        let client = FixtureLodyClient(startsSignedIn: true)
+        let model = AppModel(client: client)
+        await model.adoptExistingAccount()
+        var original = ConversationRunConfigState()
+        original.receive(.fixtureReasoning)
+        original.choose("low")
+        original.chooseFastMode("on")
+        let choice = try #require(original.choice)
+        var restored = ConversationRunConfigState()
+        restored.restore(choice)
+        restored.receive(nil)
+        let sentChoice = try await stageAndDeliverMessage(model, "Resend before observation", runConfig: restored.choice,
+            sessionID: "session-long")
+        #expect(sentChoice == choice)
+        restored.didSend(sentChoice)
+        restored.receive(nil)
+        #expect(restored.choice == nil)
+        let updates = try await client.observeConversation(sessionID: "session-long", workspaceID: "ws-demo")
+        var iterator = updates.makeAsyncIterator()
+        let config = try #require(try await iterator.next()?.runConfig)
+        #expect(config.reasoning?.value == "low")
+        #expect(config.fastMode?.value == "on")
+        restored.receive(config)
+        #expect(restored.choice == nil)
+    }
+
+    @Test func earlyRetryLeavesUnsentRestoredChoicesPending() throws {
+        let config = SessionRunConfig.fixtureReasoning
+        let reasoning = try #require(config.choosing("low"))
+        let fast = try #require(config.fastMode?.choosing("on"))
+        var restored = ConversationRunConfigState()
+        restored.restore(.combining([reasoning, fast]))
+        restored.didSend(reasoning)
+        restored.receive(nil)
+        #expect(restored.choice == fast)
+        restored.receive(config)
+        #expect(restored.choice == fast)
+        restored.chooseFastMode("off")
+        restored.receive(config)
+        #expect(restored.choice == config.fastMode?.choosing("off"))
+    }
+
+    @Test(arguments: [false, true], [false, true])
     func editedMessageRestoresSupportedSelections(includesReasoning: Bool, fastAvailable: Bool) throws {
         let config = SessionRunConfig.fixtureReasoning
         var original = ConversationRunConfigState()

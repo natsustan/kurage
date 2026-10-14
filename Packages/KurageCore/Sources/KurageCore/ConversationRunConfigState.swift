@@ -6,11 +6,15 @@ public struct ConversationRunConfigState {
 
     public private(set) var config: SessionRunConfig?
     public private(set) var choice: RunConfigChoice?
+    private var awaitsRestoredConfig = false
 
     public var displayed: SessionRunConfig? { config?.applying(choice) }
 
     public mutating func receive(_ config: SessionRunConfig?) {
         self.config = config
+        // Observation can emit an empty configuration before capabilities arrive.
+        guard config != nil || !awaitsRestoredConfig else { return }
+        awaitsRestoredConfig = false
         // Drop a choice the agent no longer offers in the same place.
         choice = RunConfigChoice.combining(choice?.individualChoices.filter {
             config?.choosing($0.value) == $0 || config?.fastMode?.choosing($0.value) == $0
@@ -31,12 +35,13 @@ public struct ConversationRunConfigState {
 
     public mutating func restore(_ choice: RunConfigChoice?) {
         for selection in choice?.individualChoices ?? [] {
-            if config?.choosing(selection.value) == selection {
-                choose(selection.value)
-            } else if config?.fastMode?.choosing(selection.value) == selection {
-                chooseFastMode(selection.value)
+            if config == nil || config?.choosing(selection.value) == selection ||
+                config?.fastMode?.choosing(selection.value) == selection {
+                select(selection)
             }
         }
+        // An early resend carries the original choices through the normal sending path.
+        awaitsRestoredConfig = config == nil && self.choice != nil
     }
 
     private mutating func select(_ selected: RunConfigChoice) {
@@ -51,5 +56,6 @@ public struct ConversationRunConfigState {
         // A retry can send an older choice. Keep any unused selection for the next turn.
         let sent = sentChoice?.individualChoices ?? []
         choice = RunConfigChoice.combining(choice?.individualChoices.filter { !sent.contains($0) } ?? [])
+        awaitsRestoredConfig = awaitsRestoredConfig && choice != nil
     }
 }
